@@ -15,10 +15,7 @@ import {
   type TrelloCard,
   type TrelloClient,
 } from "../../src/trello/trello-client.js";
-import {
-  RunStore,
-  type RunStoreLease,
-} from "../../src/task-session/run-store.js";
+import { RunStore, type RunStoreLease } from "../../src/task-session/run-store.js";
 import { ProjectRunAuthority } from "../../src/task-session/project-run-authority.js";
 import type { RunRecord } from "../../src/task-session/run-record.js";
 import { TaskExecutionStore } from "../../src/task-session/task-execution-store.js";
@@ -70,10 +67,7 @@ export class PublicationServices {
     ) as ServiceState;
   }
   save(state: ServiceState) {
-    fs.writeFileSync(
-      path.join(this.root, "services.json"),
-      JSON.stringify(state),
-    );
+    fs.writeFileSync(path.join(this.root, "services.json"), JSON.stringify(state));
   }
   change(update: Partial<ServiceState>) {
     this.save({ ...this.read(), ...update });
@@ -101,8 +95,7 @@ export class PublicationServices {
   acceptLateMoves() {
     const state = this.read();
     for (const move of state.pendingMoves ?? []) {
-      if (move.cardId !== "card")
-        throw new Error("Unexpected pending card move");
+      if (move.cardId !== "card") throw new Error("Unexpected pending card move");
       state.list = move.listId;
       this.ledger("move-accept-late");
     }
@@ -156,8 +149,7 @@ export class PublicationServices {
     getPullRequestPublicationFields: async () => {
       this.ledger("pr-fields-read");
       const state = this.read();
-      if (state.githubOutage || !state.prs[0])
-        throw new Error("PR unavailable");
+      if (state.githubOutage || !state.prs[0]) throw new Error("PR unavailable");
       const pr = state.prs[0];
       return { title: pr.title, body: pr.body, isDraft: pr.draft };
     },
@@ -212,20 +204,13 @@ export class PublicationServices {
       const state = this.read();
       if (state.trelloOutage) throw new Error("Trello unavailable");
       if (state.rejectMove)
-        throw new TrelloRequestError(
-          "card move",
-          "fixture authorization rejection",
-          { status: 401 },
-        );
+        throw new TrelloRequestError("card move", "fixture authorization rejection", {
+          status: 401,
+        });
       if (state.delayMove) {
-        state.pendingMoves = [
-          ...(state.pendingMoves ?? []),
-          { cardId: _card, listId: list },
-        ];
+        state.pendingMoves = [...(state.pendingMoves ?? []), { cardId: _card, listId: list }];
         this.save(state);
-        throw new Error(
-          "Move acceptance is still in flight after response loss",
-        );
+        throw new Error("Move acceptance is still in flight after response loss");
       }
       if (!state.wrongMove) {
         state.list = list;
@@ -247,8 +232,7 @@ export class PublicationServices {
       state.comments.push({ id: `comment-${state.comments.length + 1}`, text });
       this.save(state);
       this.ledger("comment-accept");
-      if (state.loseCommentResponse)
-        throw new Error("Comment response lost after acceptance");
+      if (state.loseCommentResponse) throw new Error("Comment response lost after acceptance");
       return {
         id: state.comments.at(-1)!.id,
         type: "commentCard",
@@ -258,11 +242,7 @@ export class PublicationServices {
   } as unknown as TrelloClient;
 }
 
-export function reopenPublicationFixture(
-  root: string,
-  token = "lease",
-  heldLease?: RunStoreLease,
-) {
+export function reopenPublicationFixture(root: string, token = "lease", heldLease?: RunStoreLease) {
   const project = JSON.parse(
     fs.readFileSync(path.join(root, "project.json"), "utf8"),
   ) as ProjectConfig & { contextRoot: string };
@@ -298,23 +278,11 @@ export function reopenPublicationFixture(
     token,
     assertHeld() {},
   };
-  const store = RunStore.openWithPersistedIdentity(
-    project.contextRoot,
-    "attempt",
-    lease,
-  )!;
+  const store = RunStore.openWithPersistedIdentity(project.contextRoot, "attempt", lease)!;
   let record = store.read()!;
   if (record.owner.token !== lease.token)
-    record = store.takeOwnership(
-      record.revision,
-      record.owner.generation,
-      lease.token,
-    );
-  const authority = new ProjectRunAuthority(
-    project.id,
-    store,
-    record.owner.generation,
-  );
+    record = store.takeOwnership(record.revision, record.owner.generation, lease.token);
+  const authority = new ProjectRunAuthority(project.id, store, record.owner.generation);
   const services = new PublicationServices(root, git, project);
   return {
     project,
@@ -326,11 +294,7 @@ export function reopenPublicationFixture(
   };
 }
 
-export function createPublicationFixture(
-  root: string,
-  heldLease?: RunStoreLease,
-  projectId = "p",
-) {
+export function createPublicationFixture(root: string, heldLease?: RunStoreLease, projectId = "p") {
   const isolated = createIsolatedGitFixture(root);
   const source = path.join(root, "source"),
     remote = path.join(root, "remote.git"),
@@ -346,25 +310,9 @@ export function createPublicationFixture(
   isolated.git(source, "remote", "add", "origin", remote);
   isolated.git(source, "push", "origin", "main");
   isolated.git(source, "fetch", "origin", "main");
-  isolated.git(
-    source,
-    "remote",
-    "set-url",
-    "origin",
-    "https://github.com/owner/repo.git",
-  );
-  isolated.git(
-    source,
-    "worktree",
-    "add",
-    "-b",
-    "agent/card",
-    path.join(worktrees, "card"),
-  );
-  fs.writeFileSync(
-    path.join(worktrees, "card", "source.txt"),
-    "meaningful task implementation\n",
-  );
+  isolated.git(source, "remote", "set-url", "origin", "https://github.com/owner/repo.git");
+  isolated.git(source, "worktree", "add", "-b", "agent/card", path.join(worktrees, "card"));
+  fs.writeFileSync(path.join(worktrees, "card", "source.txt"), "meaningful task implementation\n");
   const project = {
     id: projectId,
     contextRoot: state,
@@ -393,10 +341,7 @@ export function createPublicationFixture(
     opencode: { timeoutMinutes: 1 },
   } as ProjectConfig & { contextRoot: string };
   fs.writeFileSync(path.join(root, "project.json"), JSON.stringify(project));
-  fs.writeFileSync(
-    path.join(root, "git-env.json"),
-    JSON.stringify(isolated.env),
-  );
+  fs.writeFileSync(path.join(root, "git-env.json"), JSON.stringify(isolated.env));
   const pinned: RunRecord["pinned"] = {
     integrationId: heldLease?.integrationId ?? "integration",
     projectId,

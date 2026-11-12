@@ -7,10 +7,7 @@ import { RunStore } from "../src/task-session/run-store.js";
 import type { RunRecord } from "../src/task-session/run-record.js";
 import { ProjectRunAuthority } from "../src/task-session/project-run-authority.js";
 import { TrelloClient } from "../src/trello/trello-client.js";
-import {
-  GitHubClient,
-  type RunGitHubCommand,
-} from "../src/github/github-client.js";
+import { GitHubClient, type RunGitHubCommand } from "../src/github/github-client.js";
 import { GitClient } from "../src/git/git-client.js";
 import {
   WorkflowMutationWaitingError,
@@ -32,8 +29,7 @@ const roots: string[] = [];
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
-  for (const root of roots.splice(0))
-    fs.rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 function fixture(refinement = false) {
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -160,8 +156,7 @@ function fixture(refinement = false) {
       url.searchParams.get("filter")?.includes("updateCard:name")
     )
       return Response.json([]);
-    if (method === "GET" && url.pathname === "/1/cards/card")
-      return Response.json(card);
+    if (method === "GET" && url.pathname === "/1/cards/card") return Response.json(card);
     if (method === "GET" && url.pathname === "/1/boards/board/labels")
       return Response.json(
         ["feature", "improvement", "bug", "refinement"].map((id) => ({
@@ -208,16 +203,13 @@ function fixture(refinement = false) {
       return Response.json({});
     }
     if (method === "DELETE") {
-      card.idLabels = card.idLabels.filter(
-        (id) => !url.pathname.endsWith(`/${id}`),
-      );
+      card.idLabels = card.idLabels.filter((id) => !url.pathname.endsWith(`/${id}`));
       return new Response(null, { status: 200 });
     }
     throw new Error(`Unhandled fixture request ${method} ${url.pathname}`);
   });
   const run = <T>(fn: () => T) => authority.run(fn);
-  const reconcile = () =>
-    run(() => reconcileWorkflowMutations({ project, trello, github, git }));
+  const reconcile = () => run(() => reconcileWorkflowMutations({ project, trello, github, git }));
   const tick = () => vi.setSystemTime(Date.now() + 15_001);
   return {
     root,
@@ -257,10 +249,7 @@ function intent(
   payload: unknown,
   dispatch = false,
 ) {
-  const reference = f.store.writeArtifact(
-    Buffer.from(JSON.stringify(payload)),
-    "application/json",
-  );
+  const reference = f.store.writeArtifact(Buffer.from(JSON.stringify(payload)), "application/json");
   f.store.referenceMutationArtifact(f.store.read()!.revision, 1, reference);
   f.store.persistMutationIntent(
     f.store.read()!.revision,
@@ -312,9 +301,7 @@ function realGit(f: ReturnType<typeof fixture>) {
     command(
       repository,
       ...args.map((arg) =>
-        ["push", "fetch", "ls-remote"].includes(args[0]!) && arg === destination
-          ? remote
-          : arg,
+        ["push", "fetch", "ls-remote"].includes(args[0]!) && arg === destination ? remote : arg,
       ),
     );
   return { command, execute, cwd, source, remote, destination, parent };
@@ -324,19 +311,8 @@ describe("production workflow client journal", () => {
   it("allows only terminal consistency and exact owned-status removal after verified writer stop", async () => {
     const f = fixture();
     const url = f.url.replace("owner/repo", "Owner/Repo");
-    const authority = new ProjectRunAuthority(
-      "p",
-      f.store,
-      1,
-      undefined,
-      undefined,
-      "card",
-    );
-    const tasks = new TaskExecutionStore(
-      f.pinned.storageRoot,
-      f.project,
-      authority,
-    );
+    const authority = new ProjectRunAuthority("p", f.store, 1, undefined, undefined, "card");
+    const tasks = new TaskExecutionStore(f.pinned.storageRoot, f.project, authority);
     const head = "a".repeat(40);
     tasks.create({
       version: 1,
@@ -370,11 +346,7 @@ describe("production workflow client journal", () => {
     );
     let edits = 0;
     const github = new GitHubClient(async (_cwd, args) => {
-      if (
-        args[0] === "pr" &&
-        args[1] === "view" &&
-        args[args.indexOf("--json") + 1] === "body"
-      )
+      if (args[0] === "pr" && args[1] === "view" && args[args.indexOf("--json") + 1] === "body")
         return JSON.stringify({ body });
       if (args[0] === "pr" && args[1] === "edit") {
         edits++;
@@ -396,11 +368,7 @@ describe("production workflow client journal", () => {
         github.updatePullRequestDescriptionStatus({ ...request, status: null }),
       ).rejects.toThrow("supersedes automated work");
       expect(edits).toBe(0);
-      const queue = new TaskMutationQueue(
-        f.pinned.storageRoot,
-        f.project,
-        authority,
-      );
+      const queue = new TaskMutationQueue(f.pinned.storageRoot, f.project, authority);
       const ready = await prepareTerminalTaskSession({
         project: f.project,
         taskStore: tasks,
@@ -439,11 +407,7 @@ describe("production workflow client journal", () => {
     let race = true;
     let edits = 0;
     const github = new GitHubClient(async (_cwd, args) => {
-      if (
-        args[0] === "pr" &&
-        args[1] === "view" &&
-        args[args.indexOf("--json") + 1] === "body"
-      ) {
+      if (args[0] === "pr" && args[1] === "view" && args[args.indexOf("--json") + 1] === "body") {
         const snapshot = body;
         if (race) {
           race = false;
@@ -468,9 +432,9 @@ describe("production workflow client journal", () => {
       project: f.project,
       status: "addressing-review-feedback" as const,
     };
-    await expect(
-      f.run(() => github.updatePullRequestDescriptionStatus(options)),
-    ).rejects.toThrow("External fields changed");
+    await expect(f.run(() => github.updatePullRequestDescriptionStatus(options))).rejects.toThrow(
+      "External fields changed",
+    );
     expect(edits).toBe(0);
     expect(f.store.read()!.pendingOperations[0]).toMatchObject({
       status: "cancelled",
@@ -482,9 +446,7 @@ describe("production workflow client journal", () => {
     f.restart();
     await f.run(() => github.updatePullRequestDescriptionStatus(options));
     expect(edits).toBe(1);
-    expect(body.startsWith("<!-- agent-orchestrator-status:start -->")).toBe(
-      true,
-    );
+    expect(body.startsWith("<!-- agent-orchestrator-status:start -->")).toBe(true);
     expect(body).toContain("Human original\nHuman concurrent addition");
     expect(f.store.read()!.pendingOperations.at(-1)?.status).toBe("completed");
     // A human may remove the owned status after a verified completed write.
@@ -492,13 +454,9 @@ describe("production workflow client journal", () => {
     body = "Human original\nHuman concurrent addition";
     await f.run(() => github.updatePullRequestDescriptionStatus(options));
     expect(edits).toBe(2);
-    expect(body.startsWith("<!-- agent-orchestrator-status:start -->")).toBe(
-      true,
-    );
+    expect(body.startsWith("<!-- agent-orchestrator-status:start -->")).toBe(true);
     expect(
-      f.store
-        .read()!
-        .pendingOperations.filter((entry) => entry.status === "completed"),
+      f.store.read()!.pendingOperations.filter((entry) => entry.status === "completed"),
     ).toHaveLength(2);
   });
 
@@ -527,9 +485,7 @@ describe("production workflow client journal", () => {
       await gate;
       return { mode: "ambient", environment: {}, secretValues: [] };
     });
-    const transport = vi.fn<RunGitHubCommand>(
-      async () => "https://github.com/owner/repo/pull/2",
-    );
+    const transport = vi.fn<RunGitHubCommand>(async () => "https://github.com/owner/repo/pull/2");
     const github = new GitHubClient(transport, credentials);
     let unawaited!: Promise<unknown>;
     await f.run(() =>
@@ -584,15 +540,8 @@ describe("production workflow client journal", () => {
     );
     await f.run(() =>
       withJournaledDispatch(authority, "initial:comment", async () => {
-        const reference = f.store.writeArtifact(
-          Buffer.from("accepted response"),
-          "text/plain",
-        );
-        f.store.referenceMutationArtifact(
-          f.store.read()!.revision,
-          1,
-          reference,
-        );
+        const reference = f.store.writeArtifact(Buffer.from("accepted response"), "text/plain");
+        f.store.referenceMutationArtifact(f.store.read()!.revision, 1, reference);
         f.store.recordMutationEvent(
           f.store.read()!.revision,
           1,
@@ -660,17 +609,8 @@ describe("production workflow client journal", () => {
   it("limits a valid T2 dispatch to its exact authority/card/route/payload and one use", async () => {
     const f = fixture();
     const authority = f.authority();
-    intent(
-      f,
-      "initial:comment",
-      "trello-comment",
-      "card",
-      { text: "Original publication" },
-      true,
-    );
-    const transport = vi.fn<RunGitHubCommand>(
-      async () => "https://github.com/owner/repo/pull/2",
-    );
+    intent(f, "initial:comment", "trello-comment", "card", { text: "Original publication" }, true);
+    const transport = vi.fn<RunGitHubCommand>(async () => "https://github.com/owner/repo/pull/2");
     const github = new GitHubClient(transport);
     const pr = {
       cwd: f.pinned.repositoryPath,
@@ -686,21 +626,15 @@ describe("production workflow client journal", () => {
     await f.run(() =>
       withJournaledDispatch(authority, "initial:comment", async () => {
         await expect(
-          Promise.resolve().then(() =>
-            f.trello.addComment("other-card", "Original publication"),
-          ),
+          Promise.resolve().then(() => f.trello.addComment("other-card", "Original publication")),
         ).rejects.toThrow("capability");
         await expect(
-          Promise.resolve().then(() =>
-            f.trello.addComment("card", "Changed payload"),
-          ),
+          Promise.resolve().then(() => f.trello.addComment("card", "Changed payload")),
         ).rejects.toThrow("capability");
         await expect(
           Promise.resolve().then(() => f.trello.moveCard("card", "working")),
         ).rejects.toThrow("capability");
-        await expect(github.createPullRequest(pr)).rejects.toThrow(
-          "capability",
-        );
+        await expect(github.createPullRequest(pr)).rejects.toThrow("capability");
         await expect(
           github.createPullRequest({ ...pr, repository: "elsewhere/repo" }),
         ).rejects.toThrow("capability");
@@ -713,18 +647,10 @@ describe("production workflow client journal", () => {
         await expect(
           withJournaledDispatch(authority, "initial:comment", async () => {}),
         ).rejects.toThrow("Nested");
-        await expect(f.git.stageAll("unrelated-repository")).rejects.toThrow(
-          "forbidden",
-        );
-        await expect(f.git.resetHard("unrelated-repository")).rejects.toThrow(
-          "forbidden",
-        );
+        await expect(f.git.stageAll("unrelated-repository")).rejects.toThrow("forbidden");
+        await expect(f.git.resetHard("unrelated-repository")).rejects.toThrow("forbidden");
         await expect(
-          f.git.createRefIfAbsent(
-            "unrelated-repository",
-            "refs/heads/other",
-            "a".repeat(40),
-          ),
+          f.git.createRefIfAbsent("unrelated-repository", "refs/heads/other", "a".repeat(40)),
         ).rejects.toThrow("forbidden");
         await expect(
           f.git.fetch("unrelated-repository", "unrelated-remote", "other"),
@@ -733,9 +659,7 @@ describe("production workflow client journal", () => {
         expect(transport).not.toHaveBeenCalled();
         await f.trello.addComment("card", "Original publication");
         await expect(
-          Promise.resolve().then(() =>
-            f.trello.addComment("card", "Original publication"),
-          ),
+          Promise.resolve().then(() => f.trello.addComment("card", "Original publication")),
         ).rejects.toThrow("consumed");
         escaped = new Promise<void>((resolve) => {
           release = resolve;
@@ -773,9 +697,7 @@ describe("production workflow client journal", () => {
       },
       true,
     );
-    const transport = vi.fn<RunGitHubCommand>(
-      async () => "https://github.com/owner/repo/pull/2",
-    );
+    const transport = vi.fn<RunGitHubCommand>(async () => "https://github.com/owner/repo/pull/2");
     const github = new GitHubClient(transport);
     const input = {
       cwd,
@@ -798,14 +720,14 @@ describe("production workflow client journal", () => {
           { body: "Other" },
           { draft: false },
         ]) {
-          await expect(
-            github.createPullRequest({ ...input, ...changed }),
-          ).rejects.toThrow("capability");
+          await expect(github.createPullRequest({ ...input, ...changed })).rejects.toThrow(
+            "capability",
+          );
         }
         const otherAuthority = new ProjectRunAuthority("p", f.store, 1);
-        await expect(
-          otherAuthority.run(() => github.createPullRequest(input)),
-        ).rejects.toThrow("capability");
+        await expect(otherAuthority.run(() => github.createPullRequest(input))).rejects.toThrow(
+          "capability",
+        );
         expect(transport).not.toHaveBeenCalled();
         const authorized = github.createPullRequest(input);
         input.body = "Changed after capability consumption";
@@ -858,9 +780,9 @@ describe("production workflow client journal", () => {
     );
     expect(pushes).toBe(1);
     expect(f.store.read()!.pendingOperations[0]!.status).toBe("completed");
-    expect(
-      g.command(g.source, "ls-remote", g.remote, "refs/heads/agent/card"),
-    ).toBe(`${sha}\trefs/heads/agent/card`);
+    expect(g.command(g.source, "ls-remote", g.remote, "refs/heads/agent/card")).toBe(
+      `${sha}\trefs/heads/agent/card`,
+    );
   });
 
   it.each(["switched", "detached"] as const)(
@@ -881,13 +803,7 @@ describe("production workflow client journal", () => {
           identity: { name: "Test", email: "test@example.com" },
         },
       };
-      intent(
-        f,
-        "workflow:commit-race",
-        "git-commit",
-        "git:agent/card",
-        request,
-      );
+      intent(f, "workflow:commit-race", "git-commit", "git:agent/card", request);
       if (race === "switched") g.command(g.cwd, "checkout", "-b", "other");
       else g.command(g.cwd, "checkout", "--detach", g.parent);
       let commits = 0;
@@ -915,9 +831,7 @@ describe("production workflow client journal", () => {
           git,
         }),
       );
-      expect(f.store.read()!.pendingOperations[0]!.status).not.toBe(
-        "completed",
-      );
+      expect(f.store.read()!.pendingOperations[0]!.status).not.toBe("completed");
       expect(commits).toBe(0);
     },
   );
@@ -941,13 +855,7 @@ describe("production workflow client journal", () => {
           fetch: g.destination,
         },
       };
-      intent(
-        f,
-        "workflow:push-race",
-        "git-push",
-        `git:${g.destination}:agent/card`,
-        request,
-      );
+      intent(f, "workflow:push-race", "git-push", `git:${g.destination}:agent/card`, request);
       if (race === "switched") g.command(g.cwd, "checkout", "-b", "other");
       if (race === "detached") g.command(g.cwd, "checkout", "--detach", sha);
       let changeRef = race === "ref-changed";
@@ -970,9 +878,7 @@ describe("production workflow client journal", () => {
         }),
       );
       expect(mutations).toHaveLength(0);
-      expect(
-        g.command(g.source, "ls-remote", g.remote, "refs/heads/agent/card"),
-      ).toBe("");
+      expect(g.command(g.source, "ls-remote", g.remote, "refs/heads/agent/card")).toBe("");
       f.restart();
       f.tick();
       await f.run(() =>
@@ -983,9 +889,7 @@ describe("production workflow client journal", () => {
           git,
         }),
       );
-      expect(f.store.read()!.pendingOperations[0]!.status).not.toBe(
-        "completed",
-      );
+      expect(f.store.read()!.pendingOperations[0]!.status).not.toBe("completed");
       expect(mutations).toHaveLength(0);
     },
   );
@@ -998,15 +902,7 @@ describe("production workflow client journal", () => {
     g.command(g.cwd, "commit", "-m", "Intended");
     const sha = g.command(g.cwd, "rev-parse", "HEAD");
     g.command(g.cwd, "config", "push.followTags", "true");
-    g.command(
-      g.cwd,
-      "tag",
-      "-a",
-      "unintended-tag",
-      "-m",
-      "Do not publish this tag",
-      sha,
-    );
+    g.command(g.cwd, "tag", "-a", "unintended-tag", "-m", "Do not publish this tag", sha);
     const sent: string[][] = [];
     const git = new GitClient(async (cwd, args) => {
       if (args[0] === "push") {
@@ -1023,16 +919,12 @@ describe("production workflow client journal", () => {
     });
     await f.run(() => git.push(g.cwd, "origin", "agent/card", f.project));
     expect(sent).toHaveLength(1);
-    expect(
-      g.command(g.source, "ls-remote", g.remote, "refs/heads/agent/card"),
-    ).toBe(`${sha}\trefs/heads/agent/card`);
-    expect(f.store.read()!.pendingOperations[0]!.status).toBe("completed");
-    expect(
-      g.command(g.source, "ls-remote", g.remote, "refs/tags/unintended-tag"),
-    ).toBe("");
-    expect(g.command(g.cwd, "rev-parse", "refs/heads/agent/card")).toBe(
-      g.parent,
+    expect(g.command(g.source, "ls-remote", g.remote, "refs/heads/agent/card")).toBe(
+      `${sha}\trefs/heads/agent/card`,
     );
+    expect(f.store.read()!.pendingOperations[0]!.status).toBe("completed");
+    expect(g.command(g.source, "ls-remote", g.remote, "refs/tags/unintended-tag")).toBe("");
+    expect(g.command(g.cwd, "rev-parse", "refs/heads/agent/card")).toBe(g.parent);
   });
 
   it.each(["switched", "detached", "wrong-task-ref"] as const)(
@@ -1068,14 +960,10 @@ describe("production workflow client journal", () => {
       f.restart();
       f.tick();
       await f.reconcile();
-      expect(f.store.read()!.pendingOperations[0]!.status).not.toBe(
-        "completed",
-      );
+      expect(f.store.read()!.pendingOperations[0]!.status).not.toBe("completed");
       expect(commits).toBe(1);
       expect(g.command(g.cwd, "rev-parse", "HEAD")).toBe(actual);
-      expect(
-        g.command(g.source, "ls-remote", g.remote, "refs/heads/agent/card"),
-      ).toBe("");
+      expect(g.command(g.source, "ls-remote", g.remote, "refs/heads/agent/card")).toBe("");
     },
   );
   it("discovers an accepted owned-worktree creation without a second branch creation", async () => {
@@ -1090,12 +978,7 @@ describe("production workflow client journal", () => {
       }).trim();
     command(f.pinned.repositoryPath, "init", "-b", "main");
     command(f.pinned.repositoryPath, "config", "user.name", "Test");
-    command(
-      f.pinned.repositoryPath,
-      "config",
-      "user.email",
-      "test@example.com",
-    );
+    command(f.pinned.repositoryPath, "config", "user.email", "test@example.com");
     fs.writeFileSync(path.join(f.pinned.repositoryPath, "app"), "initial\n");
     command(f.pinned.repositoryPath, "add", "app");
     command(f.pinned.repositoryPath, "commit", "-m", "Initial");
@@ -1104,9 +987,7 @@ describe("production workflow client journal", () => {
     let creations = 0;
     const git = new GitClient(async (cwd, args) => {
       if (args[0] === "worktree" && args[1] === "add") {
-        expect(
-          f.store.read()!.pendingOperations[0]!.mutation!.dispatches,
-        ).toHaveLength(1);
+        expect(f.store.read()!.pendingOperations[0]!.mutation!.dispatches).toHaveLength(1);
         creations++;
         command(cwd, ...args);
         throw new Error("creation accepted without acknowledgment");
@@ -1115,12 +996,7 @@ describe("production workflow client journal", () => {
     });
     await expect(
       f.run(() =>
-        git.addWorktreeWithNewBranch(
-          f.pinned.repositoryPath,
-          worktree,
-          "agent/card",
-          "main",
-        ),
+        git.addWorktreeWithNewBranch(f.pinned.repositoryPath, worktree, "agent/card", "main"),
       ),
     ).rejects.toBeInstanceOf(WorkflowMutationWaitingError);
     f.restart();
@@ -1206,19 +1082,16 @@ describe("production workflow client journal", () => {
     f.tick();
     await reconcile();
     expect(f.store.read()!.pendingOperations[0]!.status).not.toBe("completed");
-    comments
-      .get("target")!
-      .push({ databaseId: 100, body: `Wrong text\n${pending}` });
+    comments.get("target")!.push({ databaseId: 100, body: `Wrong text\n${pending}` });
     f.tick();
     await reconcile();
     expect(f.store.read()!.pendingOperations[0]!.status).not.toBe("completed");
     comments.set("target", [{ databaseId: 100, body: pending }]);
     f.tick();
     await reconcile();
-    expect(
-      f.store.read()!.pendingOperations[0]!.mutation!.observations.at(-1)!
-        .resourceId,
-    ).toBe("100");
+    expect(f.store.read()!.pendingOperations[0]!.mutation!.observations.at(-1)!.resourceId).toBe(
+      "100",
+    );
     expect(sends).toBe(1);
   });
   it("discovers an accepted correction commit after restart without a second commit", async () => {
@@ -1233,24 +1106,12 @@ describe("production workflow client journal", () => {
       }).trim();
     command(f.pinned.repositoryPath, "init", "-b", "main");
     command(f.pinned.repositoryPath, "config", "user.name", "Test");
-    command(
-      f.pinned.repositoryPath,
-      "config",
-      "user.email",
-      "test@example.com",
-    );
+    command(f.pinned.repositoryPath, "config", "user.email", "test@example.com");
     fs.writeFileSync(path.join(f.pinned.repositoryPath, "app"), "initial\n");
     command(f.pinned.repositoryPath, "add", "app");
     command(f.pinned.repositoryPath, "commit", "-m", "Initial");
     const worktree = path.join(f.pinned.worktreeRoot, "card");
-    command(
-      f.pinned.repositoryPath,
-      "worktree",
-      "add",
-      "-b",
-      "agent/card",
-      worktree,
-    );
+    command(f.pinned.repositoryPath, "worktree", "add", "-b", "agent/card", worktree);
     fs.writeFileSync(path.join(worktree, "app"), "correction\n");
     command(worktree, "add", "app");
     const message = path.join(f.root, "message");
@@ -1258,9 +1119,7 @@ describe("production workflow client journal", () => {
     let commits = 0;
     const git = new GitClient(async (cwd, args) => {
       if (args.includes("commit")) {
-        expect(
-          f.store.read()!.pendingOperations.at(-1)!.mutation!.dispatches,
-        ).toHaveLength(1);
+        expect(f.store.read()!.pendingOperations.at(-1)!.mutation!.dispatches).toHaveLength(1);
         commits++;
         command(cwd, ...args);
         throw new Error("accepted commit, lost acknowledgment");
@@ -1298,30 +1157,16 @@ describe("production workflow client journal", () => {
       }).trim();
     command(f.pinned.repositoryPath, "init", "-b", "main");
     command(f.pinned.repositoryPath, "config", "user.name", "Test");
-    command(
-      f.pinned.repositoryPath,
-      "config",
-      "user.email",
-      "test@example.com",
-    );
+    command(f.pinned.repositoryPath, "config", "user.email", "test@example.com");
     fs.writeFileSync(path.join(f.pinned.repositoryPath, "app"), "preserved\n");
     command(f.pinned.repositoryPath, "add", "app");
     command(f.pinned.repositoryPath, "commit", "-m", "Initial");
     const worktree = path.join(f.pinned.worktreeRoot, "card");
-    command(
-      f.pinned.repositoryPath,
-      "worktree",
-      "add",
-      "-b",
-      "agent/card",
-      worktree,
-    );
+    command(f.pinned.repositoryPath, "worktree", "add", "-b", "agent/card", worktree);
     let removals = 0;
     const git = new GitClient(async (cwd, args) => {
       if (args[0] === "worktree" && args[1] === "remove") {
-        expect(
-          f.store.read()!.pendingOperations[0]!.mutation!.dispatches,
-        ).toHaveLength(1);
+        expect(f.store.read()!.pendingOperations[0]!.mutation!.dispatches).toHaveLength(1);
         removals++;
         command(cwd, ...args);
         throw new Error("accepted removal, lost acknowledgment");
@@ -1338,25 +1183,18 @@ describe("production workflow client journal", () => {
     await f.reconcile();
     expect(removals).toBe(1);
     expect(f.store.read()!.pendingOperations[0]!.status).toBe("completed");
-    expect(command(f.pinned.repositoryPath, "show", "agent/card:app")).toBe(
-      "preserved",
-    );
+    expect(command(f.pinned.repositoryPath, "show", "agent/card:app")).toBe("preserved");
     await expect(
-      f.run(() =>
-        git.removeWorktree(
-          f.pinned.repositoryPath,
-          path.join(f.root, "unknown"),
-        ),
-      ),
+      f.run(() => git.removeWorktree(f.pinned.repositoryPath, path.join(f.root, "unknown"))),
     ).rejects.toThrow("not owned");
     expect(removals).toBe(1);
   });
   it("retains a late Trello comment through negative reads/restart without another request", async () => {
     const f = fixture();
     f.delay();
-    await expect(
-      f.run(() => f.trello.addComment("card", "Outcome")),
-    ).rejects.toBeInstanceOf(WorkflowMutationWaitingError);
+    await expect(f.run(() => f.trello.addComment("card", "Outcome"))).rejects.toBeInstanceOf(
+      WorkflowMutationWaitingError,
+    );
     expect(f.store.read()!.pendingOperations[0]!.status).not.toBe("completed");
     expect(() => f.authority().assertHeld()).not.toThrow();
     const reads = f.ledger.length;
@@ -1375,12 +1213,10 @@ describe("production workflow client journal", () => {
     expect(f.comments).toHaveLength(1);
     expect(f.commentEffects).toHaveLength(1);
     expect(f.commentEffects[0]?.effectId).toBe("trello-effect-1");
-    expect(f.commentEffects[0]?.text).toMatch(
-      /^Outcome\n\n<!-- agent-orchestrator-mutation:/,
+    expect(f.commentEffects[0]?.text).toMatch(/^Outcome\n\n<!-- agent-orchestrator-mutation:/);
+    expect(f.ledger.filter((item) => item === "POST:/1/cards/card/actions/comments")).toHaveLength(
+      1,
     );
-    expect(
-      f.ledger.filter((item) => item === "POST:/1/cards/card/actions/comments"),
-    ).toHaveLength(1);
     expect(f.store.read()!.pendingOperations[0]!.status).toBe("completed");
     expect(() => f.authority().assertHeld()).not.toThrow();
     await f.run(() => f.trello.addComment("card", "Outcome"));
@@ -1399,22 +1235,19 @@ describe("production workflow client journal", () => {
       }
       return service(input, init);
     });
-    await expect(
-      f.run(() => f.trello.addComment("card", "Outcome")),
-    ).rejects.toBeInstanceOf(WorkflowMutationWaitingError);
-    expect(
-      f.store.read()!.pendingOperations[0]!.mutation!.dispatches[0]!.response!
-        .outcome,
-    ).toBe("not-delivered");
+    await expect(f.run(() => f.trello.addComment("card", "Outcome"))).rejects.toBeInstanceOf(
+      WorkflowMutationWaitingError,
+    );
+    expect(f.store.read()!.pendingOperations[0]!.mutation!.dispatches[0]!.response!.outcome).toBe(
+      "not-delivered",
+    );
     await f.reconcile();
     expect(f.comments).toHaveLength(0);
     f.restart();
     f.tick();
     await f.reconcile();
     expect(f.comments).toHaveLength(1);
-    expect(
-      f.store.read()!.pendingOperations[0]!.mutation!.dispatches,
-    ).toHaveLength(2);
+    expect(f.store.read()!.pendingOperations[0]!.mutation!.dispatches).toHaveLength(2);
     expect(f.store.read()!.pendingOperations[0]!.status).toBe("completed");
   });
 
@@ -1426,26 +1259,15 @@ describe("production workflow client journal", () => {
     ).rejects.toBeInstanceOf(WorkflowMutationWaitingError);
     const current = f.store.read()!;
     const now = new Date().toISOString();
-    f.store.transition(
-      current.revision,
-      1,
-      null,
-      "merged",
-      "human-review",
-      "done",
-      (run) => run,
-      {
-        prOutcome: "merged",
-        prObservationId: "pr-1",
-        prVerifiedAt: now,
-        trelloListId: "done",
-        trelloObservationId: "card",
-        trelloVerifiedAt: now,
-      },
-    );
-    await expect(f.authority().releaseVerifiedTerminal()).rejects.toThrow(
-      "synchronization",
-    );
+    f.store.transition(current.revision, 1, null, "merged", "human-review", "done", (run) => run, {
+      prOutcome: "merged",
+      prObservationId: "pr-1",
+      prVerifiedAt: now,
+      trelloListId: "done",
+      trelloObservationId: "card",
+      trelloVerifiedAt: now,
+    });
+    await expect(f.authority().releaseVerifiedTerminal()).rejects.toThrow("synchronization");
     f.tick();
     await f.reconcile();
     expect(f.store.read()!.pendingOperations[0]!.status).not.toBe("completed");
@@ -1455,9 +1277,9 @@ describe("production workflow client journal", () => {
     await f.reconcile();
     expect(f.store.read()!.pendingOperations[0]!.status).toBe("completed");
     await f.authority().releaseVerifiedTerminal();
-    await expect(
-      f.run(() => f.trello.addComment("card", "Unsafe new write")),
-    ).rejects.toThrow("terminal");
+    await expect(f.run(() => f.trello.addComment("card", "Unsafe new write"))).rejects.toThrow(
+      "terminal",
+    );
     expect(f.comments).toHaveLength(1);
     expect(f.ledger.filter((item) => item.startsWith("POST:"))).toHaveLength(1);
   });
@@ -1490,11 +1312,8 @@ describe("production workflow client journal", () => {
     const requests: string[] = [];
     const github = new GitHubClient(async (_cwd, args) => {
       requests.push(args.slice(0, 2).join(" "));
-      expect(
-        f.store.read()!.pendingOperations.at(-1)!.mutation!.dispatches,
-      ).toHaveLength(1);
-      if (args[0] === "pr" && args[1] === "view" && args.includes("isDraft"))
-        return String(draft);
+      expect(f.store.read()!.pendingOperations.at(-1)!.mutation!.dispatches).toHaveLength(1);
+      if (args[0] === "pr" && args[1] === "view" && args.includes("isDraft")) return String(draft);
       if (args[0] === "pr" && args[1] === "edit") {
         pendingBody = args[args.indexOf("--body") + 1]!;
         outbound.push(pendingBody);
@@ -1514,15 +1333,13 @@ describe("production workflow client journal", () => {
     vi.spyOn(github, "getPullRequestStateByNumber").mockResolvedValue({
       state: "OPEN",
     } as Awaited<ReturnType<GitHubClient["getPullRequestStateByNumber"]>>);
-    vi.spyOn(github, "getPullRequestDescription").mockImplementation(
-      async () => body,
-    );
-    vi.spyOn(github, "getPullRequestPublicationFields").mockImplementation(
-      async () => ({ title: "Task", body, isDraft: draft }),
-    );
-    vi.spyOn(github, "getPullRequestConversationComments").mockImplementation(
-      async () => comments,
-    );
+    vi.spyOn(github, "getPullRequestDescription").mockImplementation(async () => body);
+    vi.spyOn(github, "getPullRequestPublicationFields").mockImplementation(async () => ({
+      title: "Task",
+      body,
+      isDraft: draft,
+    }));
+    vi.spyOn(github, "getPullRequestConversationComments").mockImplementation(async () => comments);
     const input = {
       cwd: f.pinned.repositoryPath,
       repository: "owner/repo",
@@ -1580,24 +1397,17 @@ describe("production workflow client journal", () => {
     f.tick();
     await reconcile();
     expect(f.store.read()!.pendingOperations[2]!.status).toBe("completed");
-    expect(
-      requests.filter((request) => request === "api --method"),
-    ).toHaveLength(1);
+    expect(requests.filter((request) => request === "api --method")).toHaveLength(1);
     expect(requests.filter((request) => request === "pr edit")).toHaveLength(1);
-    await f.run(() =>
-      f.trello.addComment("card", `Outcome\n${sensitiveInput}`),
-    );
+    await f.run(() => f.trello.addComment("card", `Outcome\n${sensitiveInput}`));
     const record = f.store.read()!;
     const surfaces = [
       JSON.stringify(record),
-      ...record.artifacts.map((artifact) =>
-        fs.readFileSync(artifact.path, "utf8"),
-      ),
+      ...record.artifacts.map((artifact) => fs.readFileSync(artifact.path, "utf8")),
       ...outbound,
       ...f.comments.map((comment) => comment.text),
     ];
-    for (const surface of surfaces)
-      for (const form of forms) expect(surface).not.toContain(form);
+    for (const surface of surfaces) for (const form of forms) expect(surface).not.toContain(form);
     expect(outbound.every((text) => text.includes("[REDACTED]"))).toBe(true);
   });
 
@@ -1611,9 +1421,7 @@ describe("production workflow client journal", () => {
     f.tick();
     await f.reconcile();
     expect(f.store.read()!.pendingOperations[0]!.status).not.toBe("completed");
-    await expect(f.authority().releaseVerifiedTerminal()).rejects.toThrow(
-      "verified terminal",
-    );
+    await expect(f.authority().releaseVerifiedTerminal()).rejects.toThrow("verified terminal");
     f.card.dueComplete = true;
     f.restart();
     f.tick();
@@ -1634,9 +1442,7 @@ describe("production workflow client journal", () => {
         }),
       ),
     ).rejects.toBeInstanceOf(WorkflowMutationWaitingError);
-    expect(
-      f.store.read()!.compatibility["refinement-mutation-foundation-v1"],
-    ).toMatchObject({
+    expect(f.store.read()!.compatibility["refinement-mutation-foundation-v1"]).toMatchObject({
       original: {
         title: "Task",
         description: "Description",

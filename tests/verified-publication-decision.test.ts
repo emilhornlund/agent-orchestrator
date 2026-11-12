@@ -47,9 +47,7 @@ const review: ImplementationReviewResult = {
   reviewedContentIdentity: identity,
 };
 
-function input(
-  overrides: Partial<Parameters<typeof decideVerifiedPublication>[0]> = {},
-) {
+function input(overrides: Partial<Parameters<typeof decideVerifiedPublication>[0]> = {}) {
   return {
     currentContentIdentity: identity,
     validationCommand: "yarn validate",
@@ -90,9 +88,7 @@ describe("decideVerifiedPublication", () => {
         review: {
           ...review,
           verdict: "fail" as const,
-          blockingFindings: [
-            { kind: "defect" as const, summary: "Bug", detail: "Broken" },
-          ],
+          blockingFindings: [{ kind: "defect" as const, summary: "Bug", detail: "Broken" }],
         },
       },
     ],
@@ -120,25 +116,17 @@ describe("decideVerifiedPublication", () => {
 
   it("requires configured coverage and rejects stale evidence after a source edit", () => {
     expect(
-      decideVerifiedPublication(
-        input({ coverageCommand: "yarn coverage", coverage }),
-      ).allowed,
+      decideVerifiedPublication(input({ coverageCommand: "yarn coverage", coverage })).allowed,
     ).toBe(true);
     expect(
-      decideVerifiedPublication(
-        input({ currentContentIdentity: `sha256:${"b".repeat(64)}` }),
-      ),
+      decideVerifiedPublication(input({ currentContentIdentity: `sha256:${"b".repeat(64)}` })),
     ).toMatchObject({
       allowed: false,
-      reasons: [
-        "Local validation evidence is stale",
-        "Final implementation review is stale",
-      ],
+      reasons: ["Local validation evidence is stale", "Final implementation review is stale"],
     });
     expect(
-      decideVerifiedPublication(
-        input({ coverageCommand: "yarn coverage", coverage: null }),
-      ).reasons,
+      decideVerifiedPublication(input({ coverageCommand: "yarn coverage", coverage: null }))
+        .reasons,
     ).toContain("Configured coverage evidence is missing");
   });
 });
@@ -147,9 +135,7 @@ describe("PR-first human-review publication", () => {
   const failedReview: ImplementationReviewResult = {
     ...review,
     verdict: "fail",
-    blockingFindings: [
-      { kind: "defect", summary: "Unresolved", detail: "Needs human review" },
-    ],
+    blockingFindings: [{ kind: "defect", summary: "Unresolved", detail: "Needs human review" }],
   };
 
   it("allows a human-review PR despite missing or failed quality evidence", () => {
@@ -162,12 +148,8 @@ describe("PR-first human-review publication", () => {
     const decision = decideHumanReviewPublication(failing, failedReview);
     expect(decision.allowed).toBe(true);
     expect(decision.reasons).toContain("Local validation did not pass");
-    expect(decision.reasons).toContain(
-      "Configured coverage evidence is missing",
-    );
-    expect(decision.reasons).toContain(
-      "Final implementation review did not pass",
-    );
+    expect(decision.reasons).toContain("Configured coverage evidence is missing");
+    expect(decision.reasons).toContain("Final implementation review did not pass");
     expect(decideVerifiedPublication(failing).allowed).toBe(false);
   });
 
@@ -178,42 +160,29 @@ describe("PR-first human-review publication", () => {
       validation: null,
       review: null,
     });
-    expect(decideHumanReviewPublication(incomplete, undefined).allowed).toBe(
+    expect(decideHumanReviewPublication(incomplete, undefined).allowed).toBe(true);
+    expect(decideHumanReviewPublication(input({ review: failedReview }), undefined).allowed).toBe(
       true,
     );
-    expect(
-      decideHumanReviewPublication(input({ review: failedReview }), undefined)
-        .allowed,
-    ).toBe(true);
     expect(decideVerifiedPublication(incomplete).allowed).toBe(false);
   });
 
   it("still requires a usable source identity to authorize publication", () => {
     const missingIdentity = input({ currentContentIdentity: " " });
-    expect(
-      decideHumanReviewPublication(missingIdentity, undefined).allowed,
-    ).toBe(false);
+    expect(decideHumanReviewPublication(missingIdentity, undefined).allowed).toBe(false);
   });
 });
 
 describe("validated advisory review policy", () => {
   it("permits missing and failing AI reviews without weakening automated approval", () => {
     for (const result of [null, { ...review, verdict: "fail" as const }]) {
-      expect(
-        decideValidatedHumanReviewPublication(input({ review: result }))
-          .allowed,
-      ).toBe(true);
-      expect(decideVerifiedPublication(input({ review: result })).allowed).toBe(
-        false,
-      );
+      expect(decideValidatedHumanReviewPublication(input({ review: result })).allowed).toBe(true);
+      expect(decideVerifiedPublication(input({ review: result })).allowed).toBe(false);
     }
   });
 
   it("requires passing local validation and configured coverage", () => {
-    expect(
-      decideValidatedHumanReviewPublication(input({ validation: null }))
-        .allowed,
-    ).toBe(false);
+    expect(decideValidatedHumanReviewPublication(input({ validation: null })).allowed).toBe(false);
     expect(
       decideValidatedHumanReviewPublication(
         input({ validation: { ...validation, status: "failed", exitCode: 1 } }),

@@ -32,16 +32,13 @@ function expectNoLiveProcessGroup(pid: number): void {
       }
       const closeParen = stat.lastIndexOf(")");
       if (closeParen < 0)
-        throw new Error(
-          `Malformed /proc/${entry}/stat during process-group inspection`,
-        );
+        throw new Error(`Malformed /proc/${entry}/stat during process-group inspection`);
       const fields = stat.slice(closeParen + 2).split(" ");
       const state = fields[0];
       const processGroup = Number(fields[2]);
       if (!state || !Number.isSafeInteger(processGroup) || processGroup < 0)
         throw new Error(`Malformed /proc/${entry}/stat process-group fields`);
-      if (processGroup === pid && state !== "Z" && state !== "X")
-        liveMembers.push(entry);
+      if (processGroup === pid && state !== "Z" && state !== "X") liveMembers.push(entry);
     }
     expect(liveMembers).toEqual([]);
     return;
@@ -59,9 +56,7 @@ describe("managed process descendants", () => {
   });
 
   it("terminates a surviving descendant when the command leader exits", async () => {
-    const artifactDirectory = fs.mkdtempSync(
-      path.join(os.tmpdir(), "process-descendant-test-"),
-    );
+    const artifactDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "process-descendant-test-"));
     directories.push(artifactDirectory);
     const runner = new CommandRunner();
     const command = `node -e 'require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: "ignore" }).unref()'`;
@@ -73,10 +68,7 @@ describe("managed process descendants", () => {
     const [executionId] = fs.readdirSync(artifactDirectory);
     expect(executionId).toBeDefined();
     const metadata = JSON.parse(
-      fs.readFileSync(
-        path.join(artifactDirectory, executionId!, "execution.json"),
-        "utf8",
-      ),
+      fs.readFileSync(path.join(artifactDirectory, executionId!, "execution.json"), "utf8"),
     ) as { pid: number; status: string };
     expect(metadata.status).toBe("success");
 
@@ -86,9 +78,7 @@ describe("managed process descendants", () => {
   }, 10_000);
 
   it("does not settle while a SIGTERM-resistant pipe-closed descendant can write", async () => {
-    const directory = fs.mkdtempSync(
-      path.join(os.tmpdir(), "process-sentinel-test-"),
-    );
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "process-sentinel-test-"));
     directories.push(directory);
     const sentinel = path.join(directory, "sentinel");
     const leader = spawn(
@@ -117,9 +107,7 @@ describe("managed process descendants", () => {
   }, 5_000);
 
   it("captures evidence and cleans descendant groups for Git, gh and OpenCode", async () => {
-    const runtimeRoot = fs.mkdtempSync(
-      path.join(os.tmpdir(), "process-families-"),
-    );
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "process-families-"));
     directories.push(runtimeRoot);
     const binaries = path.join(runtimeRoot, "bin");
     fs.mkdirSync(binaries);
@@ -134,9 +122,7 @@ describe("managed process descendants", () => {
     const controller = new AbortController();
     configureProcessRuntime({ runtimeRoot, signal: controller.signal });
     try {
-      await expect(new GitClient().getStatus(process.cwd())).resolves.toBe(
-        "git-status",
-      );
+      await expect(new GitClient().getStatus(process.cwd())).resolves.toBe("git-status");
       await expect(
         new GitHubClient().findPullRequest({
           cwd: process.cwd(),
@@ -160,10 +146,7 @@ describe("managed process descendants", () => {
       expect(executionDirectories).toHaveLength(3);
       for (const directoryName of executionDirectories) {
         const evidence = JSON.parse(
-          fs.readFileSync(
-            path.join(executionsRoot, directoryName, "execution.json"),
-            "utf8",
-          ),
+          fs.readFileSync(path.join(executionsRoot, directoryName, "execution.json"), "utf8"),
         ) as {
           pid: number;
           status: string;
@@ -186,9 +169,7 @@ describe("managed process descendants", () => {
   }, 20_000);
 
   it("keeps nonzero Git and gh stderr in execution artifacts, not public errors", async () => {
-    const runtimeRoot = fs.mkdtempSync(
-      path.join(os.tmpdir(), "safe-process-errors-"),
-    );
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "safe-process-errors-"));
     directories.push(runtimeRoot);
     const binaries = path.join(runtimeRoot, "bin");
     fs.mkdirSync(binaries);
@@ -225,30 +206,18 @@ describe("managed process descendants", () => {
         expect(error.message).not.toContain(marker);
         expect(JSON.stringify(error)).not.toContain(marker);
       }
-      const executionDirectories = fs.readdirSync(
-        path.join(runtimeRoot, "process-executions"),
-      );
+      const executionDirectories = fs.readdirSync(path.join(runtimeRoot, "process-executions"));
       expect(executionDirectories).toHaveLength(2);
       for (const executionId of executionDirectories) {
         expect(
           fs.readFileSync(
-            path.join(
-              runtimeRoot,
-              "process-executions",
-              executionId,
-              "stderr.txt",
-            ),
+            path.join(runtimeRoot, "process-executions", executionId, "stderr.txt"),
             "utf8",
           ),
         ).toContain(marker);
         const metadata = JSON.parse(
           fs.readFileSync(
-            path.join(
-              runtimeRoot,
-              "process-executions",
-              executionId,
-              "execution.json",
-            ),
+            path.join(runtimeRoot, "process-executions", executionId, "execution.json"),
             "utf8",
           ),
         ) as { status: string; exitCode: number };
@@ -266,9 +235,7 @@ describe("managed process descendants", () => {
   it.each([0, 7])(
     "flushes and redacts exact no-newline Git and gh output on exit %s",
     async (exitCode) => {
-      const runtimeRoot = fs.mkdtempSync(
-        path.join(os.tmpdir(), "partial-process-evidence-"),
-      );
+      const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "partial-process-evidence-"));
       directories.push(runtimeRoot);
       const binaries = path.join(runtimeRoot, "bin");
       fs.mkdirSync(binaries);
@@ -297,9 +264,7 @@ describe("managed process descendants", () => {
             }),
           ).resolves.toBe("before [REDACTED] after");
         } else {
-          await expect(
-            new GitClient().getStatus(process.cwd()),
-          ).rejects.toThrow();
+          await expect(new GitClient().getStatus(process.cwd())).rejects.toThrow();
           await expect(
             new GitHubClient().getPullRequestDescription({
               cwd: process.cwd(),
@@ -313,14 +278,9 @@ describe("managed process descendants", () => {
         expect(executions).toHaveLength(2);
         for (const id of executions) {
           const metadata = JSON.parse(
-            fs.readFileSync(
-              path.join(executionRoot, id, "execution.json"),
-              "utf8",
-            ),
+            fs.readFileSync(path.join(executionRoot, id, "execution.json"), "utf8"),
           ) as { command: string; status: string; exitCode: number };
-          expect(
-            fs.readFileSync(path.join(executionRoot, id, "stdout.txt"), "utf8"),
-          ).toBe(
+          expect(fs.readFileSync(path.join(executionRoot, id, "stdout.txt"), "utf8")).toBe(
             metadata.command.startsWith("gh ")
               ? '{"body":"before [REDACTED] after"}'
               : "before [REDACTED] after",
@@ -341,9 +301,7 @@ describe("managed process descendants", () => {
   );
 
   it("rejects GitHub evidence overflow even when SIGTERM makes gh exit zero", async () => {
-    const runtimeRoot = fs.mkdtempSync(
-      path.join(os.tmpdir(), "gh-evidence-overflow-"),
-    );
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "gh-evidence-overflow-"));
     directories.push(runtimeRoot);
     const binaries = path.join(runtimeRoot, "bin");
     fs.mkdirSync(binaries);
@@ -366,17 +324,12 @@ describe("managed process descendants", () => {
           repository: "owner/repository",
           headBranch: "agent/test",
         }),
-      ).rejects.toThrow(
-        "Process stdout exceeded the 16777216-byte output limit",
-      );
+      ).rejects.toThrow("Process stdout exceeded the 16777216-byte output limit");
       const executionRoot = path.join(runtimeRoot, "process-executions");
       const [id] = fs.readdirSync(executionRoot);
       expect(id).toBeDefined();
       const metadata = JSON.parse(
-        fs.readFileSync(
-          path.join(executionRoot, id!, "execution.json"),
-          "utf8",
-        ),
+        fs.readFileSync(path.join(executionRoot, id!, "execution.json"), "utf8"),
       ) as { status: string; exitCode: number };
       expect(metadata).toMatchObject({
         status: "evidence-failure",
@@ -392,9 +345,7 @@ describe("managed process descendants", () => {
   }, 20_000);
 
   it("aborts actual Git, gh and OpenCode process trees through runtime lifecycle", async () => {
-    const runtimeRoot = fs.mkdtempSync(
-      path.join(os.tmpdir(), "process-abort-"),
-    );
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "process-abort-"));
     directories.push(runtimeRoot);
     const binaries = path.join(runtimeRoot, "bin");
     fs.mkdirSync(binaries);
@@ -452,10 +403,7 @@ describe("managed process descendants", () => {
       expect(executionDirectories).toHaveLength(3);
       for (const directoryName of executionDirectories) {
         const evidence = JSON.parse(
-          fs.readFileSync(
-            path.join(executionsRoot, directoryName, "execution.json"),
-            "utf8",
-          ),
+          fs.readFileSync(path.join(executionsRoot, directoryName, "execution.json"), "utf8"),
         ) as { pid: number; status: string };
         expect(evidence.status).toBe("interrupted");
         await new Promise((resolve) => setTimeout(resolve, 100));

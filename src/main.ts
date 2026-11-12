@@ -8,11 +8,7 @@ import { parseEnvironment } from "./config/environment.js";
 import { GitClient } from "./git/git-client.js";
 import { GitHubClient } from "./github/github-client.js";
 import { GitHubCredentialProvider } from "./github/github-credential-provider.js";
-import {
-  configureLoggerRuntime,
-  logger,
-  shouldWriteConsole,
-} from "./logging/logger.js";
+import { configureLoggerRuntime, logger, shouldWriteConsole } from "./logging/logger.js";
 import { createEmailNotifier } from "./notifications/email-notifier.js";
 import { OpenCodeClient } from "./opencode/opencode-client.js";
 import { CommandRunner } from "./process/command-runner.js";
@@ -35,15 +31,11 @@ function addConfiguredSecretValues(
   lifecycle.addSecretValues([
     environment.TRELLO_API_KEY,
     environment.TRELLO_TOKEN,
-    ...(smtp === undefined
-      ? []
-      : [process.env[smtp.usernameEnv], process.env[smtp.passwordEnv]]),
+    ...(smtp === undefined ? [] : [process.env[smtp.usernameEnv], process.env[smtp.passwordEnv]]),
   ]);
 }
 
-export async function main(
-  lifecycle: RuntimeLifecycle = new RuntimeLifecycle(),
-): Promise<void> {
+export async function main(lifecycle: RuntimeLifecycle = new RuntimeLifecycle()): Promise<void> {
   const config = loadConfig();
   configureLoggerRuntime(config.workflow.contextRoot);
   const environment = parseEnvironment(process.env);
@@ -103,9 +95,7 @@ export async function main(
     projectLog.info(
       `Commit: ${project.opencode.commit.model} (${project.opencode.commit.variant})`,
     );
-    projectLog.info(
-      `OpenCode timeout: ${project.opencode.timeoutMinutes} minutes`,
-    );
+    projectLog.info(`OpenCode timeout: ${project.opencode.timeoutMinutes} minutes`);
   }
 
   await runStartup(
@@ -131,10 +121,7 @@ export async function bootstrap(
   lifecycle: RuntimeLifecycle = new RuntimeLifecycle(),
   processObject: ProcessEventSource = process,
 ): Promise<number> {
-  const removeProcessHandlers = installProcessHandlers(
-    lifecycle,
-    processObject,
-  );
+  const removeProcessHandlers = installProcessHandlers(lifecycle, processObject);
 
   try {
     await main(lifecycle);
@@ -151,8 +138,7 @@ function isEntrypoint(): boolean {
   const entrypoint = process.argv[1];
 
   return (
-    entrypoint !== undefined &&
-    pathToFileURL(path.resolve(entrypoint)).href === import.meta.url
+    entrypoint !== undefined && pathToFileURL(path.resolve(entrypoint)).href === import.meta.url
   );
 }
 

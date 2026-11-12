@@ -31,16 +31,11 @@ export interface TaskSessionValidationResult {
 }
 
 export function restorePersistedTaskSessionQualityEvidence(
-  evidence: NonNullable<
-    NonNullable<TaskExecutionRecord["publicationQuality"]>["validation"]
-  >,
+  evidence: NonNullable<NonNullable<TaskExecutionRecord["publicationQuality"]>["validation"]>,
 ): TaskSessionValidationResult {
   const legacySuccessfulEvidence =
-    evidence.status === undefined &&
-    evidence.exitCode === 0 &&
-    evidence.command.trim().length > 0;
-  const status =
-    evidence.status ?? (legacySuccessfulEvidence ? "passed" : "uncertain");
+    evidence.status === undefined && evidence.exitCode === 0 && evidence.command.trim().length > 0;
+  const status = evidence.status ?? (legacySuccessfulEvidence ? "passed" : "uncertain");
   return {
     ...evidence,
     status,
@@ -88,42 +83,31 @@ function buildCommandOptions(
     signal: options.signal,
     timeoutMilliseconds: options.timeoutMilliseconds,
     captureOutput: true,
-    ...(options.secretValues === undefined
-      ? {}
-      : { secretValues: options.secretValues }),
+    ...(options.secretValues === undefined ? {} : { secretValues: options.secretValues }),
     sessionLabel: options.commandLabel ?? "Task-session repository validation",
-    sessionLogPath:
-      options.sessionLogPath ??
-      getSessionLogPath(options.project.id, options.cardId),
+    sessionLogPath: options.sessionLogPath ?? getSessionLogPath(options.project.id, options.cardId),
   };
 }
 
 export async function runTaskSessionValidation(
   options: RunTaskSessionValidationOptions,
 ): Promise<TaskSessionValidationResult> {
-  const { project, cardId, expectedBranch, operationKey, worktreePath } =
-    options;
+  const { project, cardId, expectedBranch, operationKey, worktreePath } = options;
 
   const validationCommand = project.repository.validationCommand;
   const skipped =
-    (options.commandOverride === undefined &&
-      validationCommand === undefined) ||
+    (options.commandOverride === undefined && validationCommand === undefined) ||
     options.skipWhenUnconfigured === true;
   if (validationCommand !== undefined && validationCommand.trim().length === 0)
     throw new Error("Task-session validation command must not be blank");
 
-  const command = skipped
-    ? ""
-    : (options.commandOverride ?? validationCommand!);
+  const command = skipped ? "" : (options.commandOverride ?? validationCommand!);
 
   if (!skipped && command.trim().length === 0) {
     throw new Error("Task-session command must not be blank");
   }
 
-  if (
-    !Number.isSafeInteger(options.timeoutMilliseconds) ||
-    options.timeoutMilliseconds < 1
-  ) {
+  if (!Number.isSafeInteger(options.timeoutMilliseconds) || options.timeoutMilliseconds < 1) {
     throw new Error("Task-session validation timeout must be positive");
   }
 
@@ -139,8 +123,7 @@ export async function runTaskSessionValidation(
     record.phase !== "validation" &&
     record.phase !== "publication" &&
     !(
-      (options.feedbackReviewRecovery === true ||
-        options.ciReviewRecovery === true) &&
+      (options.feedbackReviewRecovery === true || options.ciReviewRecovery === true) &&
       record.phase === "review" &&
       record.reviewRepair !== undefined &&
       ["active", "passed", "exhausted"].includes(record.reviewRepair.status) &&
@@ -163,10 +146,7 @@ export async function runTaskSessionValidation(
     );
   }
 
-  const contentIdentity = await getTaskSessionSourceSnapshotIdentity(
-    options.git,
-    worktreePath,
-  );
+  const contentIdentity = await getTaskSessionSourceSnapshotIdentity(options.git, worktreePath);
   if (skipped) {
     const now = new Date().toISOString();
     return {
@@ -184,9 +164,7 @@ export async function runTaskSessionValidation(
   const startedAt = new Date().toISOString();
 
   try {
-    const result = await options.commands.run(
-      buildCommandOptions(options, command),
-    );
+    const result = await options.commands.run(buildCommandOptions(options, command));
     const diagnostic = presentExternalDiagnostic(
       [result.output, result.errorOutput].filter(Boolean).join("\n"),
       options.secretValues,

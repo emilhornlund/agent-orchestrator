@@ -30,9 +30,7 @@ describe("retry backoff", () => {
 
     const delays = [1, 2, 3, 4, 5, 6, 20].map(getRetryBackoffDelayMilliseconds);
 
-    expect(
-      delays.every((delay) => delay <= RETRY_BACKOFF_MAX_MILLISECONDS),
-    ).toBe(true);
+    expect(delays.every((delay) => delay <= RETRY_BACKOFF_MAX_MILLISECONDS)).toBe(true);
     expect(delays.at(-1)).toBe(RETRY_BACKOFF_MAX_MILLISECONDS);
   });
 

@@ -7,10 +7,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { PrMaintenanceOperation } from "../task-session/pr-maintenance-operation.js";
 import { captureSetupEffects } from "../process/run-setup.js";
-import {
-  setupFileIdentity,
-  type SetupInventory,
-} from "../process/setup-commit-scope.js";
+import { setupFileIdentity, type SetupInventory } from "../process/setup-commit-scope.js";
 import { getTaskSessionSourceSnapshotIdentity } from "../task-session/source-snapshot.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { recordTerminalPrFence } from "../task-session/terminal-pr-fence.js";
@@ -107,21 +104,15 @@ async function reportBlocked(
   return "blocked";
 }
 
-async function inventory(
-  options: MaintainOutdatedPrOptions,
-): Promise<SetupInventory> {
+async function inventory(options: MaintainOutdatedPrOptions): Promise<SetupInventory> {
   // This JSON is produced by our own inventory, not an external response.
   return JSON.parse(
-    (await captureSetupEffects(options.git, options.worktreePath)).toString(
-      "utf8",
-    ),
+    (await captureSetupEffects(options.git, options.worktreePath)).toString("utf8"),
   ) as SetupInventory;
 }
 
 function files(inventory: SetupInventory): Map<string, string> {
-  return new Map(
-    inventory.files.map((file) => [file.path, setupFileIdentity(file)]),
-  );
+  return new Map(inventory.files.map((file) => [file.path, setupFileIdentity(file)]));
 }
 
 async function checkPreserved(
@@ -172,20 +163,13 @@ async function checkConflictPreservation(
   const unrelated = (entries: string) =>
     entries
       .split("\0")
-      .filter(
-        (entry) =>
-          entry && !allowed.includes(entry.slice(entry.indexOf("\t") + 1)),
-      )
+      .filter((entry) => entry && !allowed.includes(entry.slice(entry.indexOf("\t") + 1)))
       .sort();
   if (
     JSON.stringify(unrelated(saved.index)) !==
-    JSON.stringify(
-      unrelated(await options.git.getIndexEntries(options.worktreePath)),
-    )
+    JSON.stringify(unrelated(await options.git.getIndexEntries(options.worktreePath)))
   )
-    throw new Error(
-      "Conflict assistance changed the non-conflict index; preserving work",
-    );
+    throw new Error("Conflict assistance changed the non-conflict index; preserving work");
   return allowed.some((file) => before.get(file) !== after.get(file));
 }
 
@@ -222,9 +206,7 @@ async function observeOpen(
     pr.headRefName !== taskResources(options.project, options.card.id).branch ||
     pr.baseRefName !== options.project.repository.defaultBranch
   )
-    throw new Error(
-      "Maintenance PR branch, base or published head changed; preserving local work",
-    );
+    throw new Error("Maintenance PR branch, base or published head changed; preserving local work");
   const [owner, repository] = options.project.repository.github.split("/");
   if (
     pr.headRepository?.name.toLowerCase() !== repository?.toLowerCase() ||
@@ -250,26 +232,17 @@ async function verifyQuality(
     previous.status !== "running"
   )
     return;
-  const attempts =
-    previous?.contentIdentity === contentIdentity
-      ? (previous.attempts ?? 0)
-      : 0;
+  const attempts = previous?.contentIdentity === contentIdentity ? (previous.attempts ?? 0) : 0;
   const startedAt = new Date().toISOString();
-  const record = (
-    update: Partial<NonNullable<PrMaintenanceOperation["qualityVerification"]>>,
-  ) =>
-    options.maintenanceStore.recordQualityVerification(
-      operation.operationId,
-      operation,
-      {
-        status: "uncertain",
-        preparedHead,
-        contentIdentity,
-        startedAt,
-        attempts: Math.min(attempts + 1, 3),
-        ...update,
-      },
-    );
+  const record = (update: Partial<NonNullable<PrMaintenanceOperation["qualityVerification"]>>) =>
+    options.maintenanceStore.recordQualityVerification(operation.operationId, operation, {
+      status: "uncertain",
+      preparedHead,
+      contentIdentity,
+      startedAt,
+      attempts: Math.min(attempts + 1, 3),
+      ...update,
+    });
   if (attempts >= 3) {
     record({
       diagnostic: "Maintenance advisory execution allowance exhausted",
@@ -337,10 +310,7 @@ async function verifyQuality(
   const coverage =
     options.project.repository.coverageCommand === undefined
       ? null
-      : await run(
-          options.project.repository.coverageCommand,
-          "PR maintenance coverage",
-        );
+      : await run(options.project.repository.coverageCommand, "PR maintenance coverage");
   let review: ImplementationReviewResult | null = null;
   let diagnostic: string | undefined;
   try {
@@ -355,16 +325,12 @@ async function verifyQuality(
     });
   } catch (error) {
     options.signal.throwIfAborted();
-    diagnostic = presentExternalDiagnostic(
-      error instanceof Error ? error.message : String(error),
-    );
+    diagnostic = presentExternalDiagnostic(error instanceof Error ? error.message : String(error));
   }
   if (
     (await options.git.getHeadSha(options.worktreePath)) !== preparedHead ||
-    (await getTaskSessionSourceSnapshotIdentity(
-      options.git,
-      options.worktreePath,
-    )) !== contentIdentity
+    (await getTaskSessionSourceSnapshotIdentity(options.git, options.worktreePath)) !==
+      contentIdentity
   )
     throw new Error(
       "Maintenance source changed during advisory checks; preserving work without publication",
@@ -401,22 +367,17 @@ export async function maintainOutdatedPr(
     .find((item) => !["completed", "cancelled"].includes(item.status));
   if (existing && existing.strategy !== "merge") return "deferred";
   const currentTask = options.taskStore.read(card.id);
-  const unresolvedWriter = Object.values(
-    currentTask?.primaryOperations ?? {},
-  ).some(
+  const unresolvedWriter = Object.values(currentTask?.primaryOperations ?? {}).some(
     (entry) =>
       entry !== undefined &&
       entry.id !== existing?.localPreparation?.conflictOperationId &&
       (["intent", "dispatched", "ambiguous"].includes(entry.status) ||
         (entry.status === "failed" && entry.retrySafe !== true)),
   );
-  if (unresolvedWriter)
-    throw new Error("Maintenance is fenced by an unresolved primary writer");
+  if (unresolvedWriter) throw new Error("Maintenance is fenced by an unresolved primary writer");
   if (
     !existing &&
-    (!options.eligible ||
-      options.hasRequestedChanges ||
-      options.hasUnresolvedFeedback)
+    (!options.eligible || options.hasRequestedChanges || options.hasUnresolvedFeedback)
   )
     return "deferred";
   const expected = options.task.pullRequest?.headSha;
@@ -431,16 +392,12 @@ export async function maintainOutdatedPr(
     path.resolve(worktreePath) !==
       path.join(path.resolve(project.repository.worktreeRoot), card.id) ||
     fs.lstatSync(worktreePath).isSymbolicLink() ||
-    fs.realpathSync(worktreePath) ===
-      fs.realpathSync(project.repository.path) ||
+    fs.realpathSync(worktreePath) === fs.realpathSync(project.repository.path) ||
     (await git.getCommonGitDirectory(worktreePath)) !==
       (await git.getCommonGitDirectory(project.repository.path)) ||
-    (await git.getCurrentBranch(worktreePath)) !==
-      taskResources(project, card.id).branch
+    (await git.getCurrentBranch(worktreePath)) !== taskResources(project, card.id).branch
   )
-    throw new Error(
-      "Maintenance requires the owned isolated task worktree and branch",
-    );
+    throw new Error("Maintenance requires the owned isolated task worktree and branch");
   if (await git.getRebaseState(worktreePath))
     return reportBlocked(
       options,
@@ -508,43 +465,21 @@ export async function maintainOutdatedPr(
       operation.status === "prepared"
         ? store.advance(operation.operationId, "prepared", "active", operation)
         : store.claimForRecovery(operation.operationId, operation);
-    const progress = (
-      update: Partial<NonNullable<PrMaintenanceOperation["localPreparation"]>>,
-    ) => {
-      operation = store.recordLocalPreparation(
-        operation!.operationId,
-        operation!,
-        {
-          originalHead: operation!.expectedRemoteHead,
-          status: "fetching-base",
-          ...operation!.localPreparation,
-          ...update,
-          updatedAt: new Date().toISOString(),
-        },
-      );
+    const progress = (update: Partial<NonNullable<PrMaintenanceOperation["localPreparation"]>>) => {
+      operation = store.recordLocalPreparation(operation!.operationId, operation!, {
+        originalHead: operation!.expectedRemoteHead,
+        status: "fetching-base",
+        ...operation!.localPreparation,
+        ...update,
+        updatedAt: new Date().toISOString(),
+      });
     };
     if (!operation.localPreparation) progress({ status: "fetching-base" });
     if (operation.localPreparation!.status === "fetching-base") {
-      await git.fetch(
-        worktreePath,
-        "origin",
-        project.repository.defaultBranch,
-        project,
-      );
-      if (
-        (await git.resolveCommitSha(worktreePath, "FETCH_HEAD")) !==
-        operation.targetBaseHead
-      )
-        await git.fetch(
-          worktreePath,
-          "origin",
-          operation.targetBaseHead,
-          project,
-        );
-      if (
-        (await git.resolveCommitSha(worktreePath, "FETCH_HEAD")) !==
-        operation.targetBaseHead
-      )
+      await git.fetch(worktreePath, "origin", project.repository.defaultBranch, project);
+      if ((await git.resolveCommitSha(worktreePath, "FETCH_HEAD")) !== operation.targetBaseHead)
+        await git.fetch(worktreePath, "origin", operation.targetBaseHead, project);
+      if ((await git.resolveCommitSha(worktreePath, "FETCH_HEAD")) !== operation.targetBaseHead)
         throw new Error("Pinned target commit is not available after fetch");
       if ((await git.getDiff(worktreePath, true)).trim())
         throw new Error(
@@ -563,10 +498,7 @@ export async function maintainOutdatedPr(
         status: "base-fetched",
         baseHead: operation.targetBaseHead,
         mergeBaseline,
-        mergeAllowedPaths: await git.getTargetMergePaths(
-          worktreePath,
-          operation.targetBaseHead,
-        ),
+        mergeAllowedPaths: await git.getTargetMergePaths(worktreePath, operation.targetBaseHead),
         preservedFiles: current.committable.map((file) => ({
           path: file,
           identity: currentFiles.get(file) ?? "absent",
@@ -582,18 +514,12 @@ export async function maintainOutdatedPr(
       const backup = operation.localPreparation!.backupRef!;
       const found = await git.getRefSha(worktreePath, backup);
       if (found === null)
-        await git.createRefIfAbsent(
-          worktreePath,
-          backup,
-          operation.localPreparation!.originalHead,
-        );
+        await git.createRefIfAbsent(worktreePath, backup, operation.localPreparation!.originalHead);
       else if (found !== operation.localPreparation!.originalHead)
         throw new Error("Maintenance backup ref changed");
       progress({ status: "merging" });
     }
-    if (
-      ["merging", "conflicted"].includes(operation.localPreparation!.status)
-    ) {
+    if (["merging", "conflicted"].includes(operation.localPreparation!.status)) {
       if (
         !operation.localPreparation!.mergeBaseline ||
         operation.localPreparation!.mergeAllowedPaths === undefined
@@ -605,16 +531,12 @@ export async function maintainOutdatedPr(
       await checkPreserved(options, operation);
       const head = await git.getHeadSha(worktreePath);
       let mergeHead = await git.getMergeHead(worktreePath);
-      if (
-        head === operation.localPreparation!.originalHead &&
-        mergeHead === null
-      ) {
+      if (head === operation.localPreparation!.originalHead && mergeHead === null) {
         if ((await git.getDiff(worktreePath, true)).trim())
           throw new Error(
             "Unattributed staged work before merge; preserving it without publication",
           );
-        if (!(await observeOpen(options, [operation.expectedRemoteHead])))
-          return "terminal";
+        if (!(await observeOpen(options, [operation.expectedRemoteHead]))) return "terminal";
         try {
           await git.mergeTarget(
             worktreePath,
@@ -622,18 +544,14 @@ export async function maintainOutdatedPr(
             project.repository.gitIdentity,
           );
         } catch (error) {
-          if (
-            (await git.getMergeHead(worktreePath)) !== operation.targetBaseHead
-          )
-            throw error;
+          if ((await git.getMergeHead(worktreePath)) !== operation.targetBaseHead) throw error;
         }
         mergeHead = await git.getMergeHead(worktreePath);
       }
       if (mergeHead !== null) {
         if (
           mergeHead !== operation.targetBaseHead ||
-          (await git.getHeadSha(worktreePath)) !==
-            operation.localPreparation!.originalHead
+          (await git.getHeadSha(worktreePath)) !== operation.localPreparation!.originalHead
         )
           throw new Error("Interrupted merge provenance changed");
         let conflicts = await git.getConflictedPaths(worktreePath);
@@ -649,8 +567,7 @@ export async function maintainOutdatedPr(
             );
           progress({
             status: "conflicted",
-            conflictedPaths:
-              operation.localPreparation!.conflictedPaths ?? conflicts,
+            conflictedPaths: operation.localPreparation!.conflictedPaths ?? conflicts,
             conflictBaseline: baseline,
           });
           if (
@@ -658,23 +575,16 @@ export async function maintainOutdatedPr(
             operation.localPreparation!.conflictStopped === true ||
             (!operation.localPreparation!.conflictOperationId &&
               (operation.conflictRemediationAttempts ?? 0) >=
-                (operation.conflictMaxAttempts ??
-                  project.opencode.remediation.maxPasses))
+                (operation.conflictMaxAttempts ?? project.opencode.remediation.maxPasses))
           ) {
-            store.advance(
-              operation.operationId,
-              "active",
-              "uncertain",
-              operation,
-            );
+            store.advance(operation.operationId, "active", "uncertain", operation);
             queue.releaseForRecovery(eventId);
             return reportBlocked(
               options,
               "Automatic conflict assistance ended at its bound or made no useful changes. Conflicts remain unresolved for recovery.",
             );
           }
-          if (!(await observeOpen(options, [operation.expectedRemoteHead])))
-            return "terminal";
+          if (!(await observeOpen(options, [operation.expectedRemoteHead]))) return "terminal";
           await activity(options, "resolving-conflicts");
           if (!operation.localPreparation!.conflictOperationId) {
             operation = store.recordConflictRemediationAttempt(
@@ -701,45 +611,28 @@ export async function maintainOutdatedPr(
             );
           }
           if (
-            (await git.getHeadSha(worktreePath)) !==
-              operation.localPreparation!.originalHead ||
+            (await git.getHeadSha(worktreePath)) !== operation.localPreparation!.originalHead ||
             (await git.getMergeHead(worktreePath)) !== operation.targetBaseHead
           )
             throw new Error("Conflict assistance changed merge ownership");
           await git.stagePaths(worktreePath, conflicts);
           conflicts = await git.getConflictedPaths(worktreePath);
           if (conflicts.length > 0)
-            throw new Error(
-              "Merge conflicts remain; preserving recoverable merge",
-            );
+            throw new Error("Merge conflicts remain; preserving recoverable merge");
         }
         await checkPreserved(options, operation);
         await checkConflictPreservation(options, operation);
         await checkConflictPreservation(options, operation, "merge");
-        if (!(await observeOpen(options, [operation.expectedRemoteHead])))
-          return "terminal";
+        if (!(await observeOpen(options, [operation.expectedRemoteHead]))) return "terminal";
         progress({ mergeTree: await git.getIndexTreeSha(worktreePath) });
-        await git.completeTargetMerge(
-          worktreePath,
-          project.repository.gitIdentity,
-        );
+        await git.completeTargetMerge(worktreePath, project.repository.gitIdentity);
       }
       const resultingHead = await git.getHeadSha(worktreePath);
       if (
-        !(await git.isAncestor(
-          worktreePath,
-          operation.expectedRemoteHead,
-          resultingHead,
-        )) ||
-        !(await git.isAncestor(
-          worktreePath,
-          operation.targetBaseHead,
-          resultingHead,
-        ))
+        !(await git.isAncestor(worktreePath, operation.expectedRemoteHead, resultingHead)) ||
+        !(await git.isAncestor(worktreePath, operation.targetBaseHead, resultingHead))
       )
-        throw new Error(
-          "Prepared merge does not preserve published and target ancestry",
-        );
+        throw new Error("Prepared merge does not preserve published and target ancestry");
       if (resultingHead !== operation.localPreparation!.originalHead) {
         const parents = await git.getCommitParentShas(worktreePath);
         if (
@@ -747,12 +640,9 @@ export async function maintainOutdatedPr(
           parents[0] !== operation.localPreparation!.originalHead ||
           parents[1] !== operation.targetBaseHead ||
           operation.localPreparation!.mergeTree === undefined ||
-          (await git.getCommitTreeSha(worktreePath)) !==
-            operation.localPreparation!.mergeTree
+          (await git.getCommitTreeSha(worktreePath)) !== operation.localPreparation!.mergeTree
         )
-          throw new Error(
-            "Interrupted merge commit cannot be attributed to the saved intent",
-          );
+          throw new Error("Interrupted merge commit cannot be attributed to the saved intent");
       }
       progress({ status: "prepared", resultingHead });
     }
@@ -761,12 +651,7 @@ export async function maintainOutdatedPr(
     await verifyQuality(options, operation);
     operation = store.inspect(operation.operationId)!;
     const resultingHead = operation.localPreparation!.resultingHead!;
-    if (
-      !(await observeOpen(options, [
-        operation.expectedRemoteHead,
-        resultingHead,
-      ]))
-    )
+    if (!(await observeOpen(options, [operation.expectedRemoteHead, resultingHead])))
       return "terminal";
     const remote = await git.getRemoteBranchSha(
       worktreePath,
@@ -776,9 +661,7 @@ export async function maintainOutdatedPr(
     );
     if (remote !== resultingHead) {
       if (operation.publication?.status === "push-intended")
-        throw new Error(
-          "Maintenance push outcome remains uncertain; do not redispatch",
-        );
+        throw new Error("Maintenance push outcome remains uncertain; do not redispatch");
       if (remote !== operation.expectedRemoteHead)
         throw new Error(
           "Remote changed before maintenance push; no branch resurrection or overwrite",
@@ -790,8 +673,7 @@ export async function maintainOutdatedPr(
         project,
       });
       await activity(options, "updating-remote");
-      if (!(await observeOpen(options, [operation.expectedRemoteHead])))
-        return "terminal";
+      if (!(await observeOpen(options, [operation.expectedRemoteHead]))) return "terminal";
       operation = store.recordPublication(
         operation.operationId,
         operation,
@@ -807,12 +689,7 @@ export async function maintainOutdatedPr(
           resultingHead,
         );
       } catch (error) {
-        if (
-          !(await observeOpen(options, [
-            operation.expectedRemoteHead,
-            resultingHead,
-          ]))
-        )
+        if (!(await observeOpen(options, [operation.expectedRemoteHead, resultingHead])))
           return "terminal";
         if (
           (await git.getRemoteBranchSha(
@@ -868,9 +745,7 @@ export async function maintainOutdatedPr(
         pullRequest: { ...task.pullRequest, headSha: resultingHead },
         reviewObservation: undefined,
         revision: task.revision + 1,
-        updatedAt: new Date(
-          Math.max(Date.now(), Date.parse(task.updatedAt) + 1),
-        ).toISOString(),
+        updatedAt: new Date(Math.max(Date.now(), Date.parse(task.updatedAt) + 1)).toISOString(),
       });
     await activity(options, null);
     store.advance(operation.operationId, "active", "completed", operation);
@@ -880,11 +755,8 @@ export async function maintainOutdatedPr(
     if (operation && store.inspect(operation.operationId)?.status === "active")
       store.advance(operation.operationId, "active", "uncertain", operation);
     if (queue.ownsActive(eventId)) queue.releaseForRecovery(eventId);
-    const unresolved = Object.values(
-      options.taskStore.read(card.id)?.primaryOperations ?? {},
-    ).some(
-      (entry) =>
-        entry && ["intent", "dispatched", "ambiguous"].includes(entry.status),
+    const unresolved = Object.values(options.taskStore.read(card.id)?.primaryOperations ?? {}).some(
+      (entry) => entry && ["intent", "dispatched", "ambiguous"].includes(entry.status),
     );
     try {
       await activity(options, unresolved ? "automation-recovery" : null);
@@ -938,11 +810,7 @@ export async function reconcileInterruptedPrMaintenance(_options: {
     )
       continue;
     const task = _options.taskStore.read(operation.cardId);
-    if (
-      !task?.pullRequest ||
-      task.pullRequest.url !== operation.pullRequest.url
-    )
-      continue;
+    if (!task?.pullRequest || task.pullRequest.url !== operation.pullRequest.url) continue;
     const pr = await _options.github.findPullRequestState({
       cwd: _options.project.repository.path,
       repository: _options.project.repository.github,
@@ -954,8 +822,7 @@ export async function reconcileInterruptedPrMaintenance(_options: {
       pr?.state === "OPEN" &&
       pr.url === operation.pullRequest.url &&
       pr.headRefOid === operation.publication.resultingHead &&
-      pr.headRefName ===
-        taskResources(_options.project, operation.cardId).branch &&
+      pr.headRefName === taskResources(_options.project, operation.cardId).branch &&
       pr.baseRefName === _options.project.repository.defaultBranch &&
       task.pullRequest.headSha === operation.expectedRemoteHead
     ) {
@@ -967,9 +834,7 @@ export async function reconcileInterruptedPrMaintenance(_options: {
         },
         reviewObservation: undefined,
         revision: task.revision + 1,
-        updatedAt: new Date(
-          Math.max(Date.now(), Date.parse(task.updatedAt) + 1),
-        ).toISOString(),
+        updatedAt: new Date(Math.max(Date.now(), Date.parse(task.updatedAt) + 1)).toISOString(),
       });
     }
   }

@@ -30,10 +30,7 @@ import {
 import { GitClient, type RunGit } from "../src/git/git-client.js";
 import type { GitHubClient } from "../src/github/github-client.js";
 import type { OpenCodeClient } from "../src/opencode/opencode-client.js";
-import {
-  CommandRunner,
-  type RunCommand,
-} from "../src/process/command-runner.js";
+import { CommandRunner, type RunCommand } from "../src/process/command-runner.js";
 import * as cardContextRetention from "../src/context/card-context-retention.js";
 import * as persistedStateTemporaryFiles from "../src/orchestrator/persisted-state-temporary-files.js";
 import {
@@ -41,10 +38,7 @@ import {
   type StartupDependencies,
   type StartupOperations,
 } from "../src/startup/run-startup.js";
-import {
-  TrelloRequestError,
-  type TrelloClient,
-} from "../src/trello/trello-client.js";
+import { TrelloRequestError, type TrelloClient } from "../src/trello/trello-client.js";
 import { ProjectResourceError } from "../src/startup/project-resource-error.js";
 import { acquireProjectRunOperatorContext } from "../src/operator/project-run-operator-context.js";
 import { drainProcessGroup } from "../src/process/process-runtime.js";
@@ -133,9 +127,7 @@ describe("runStartup", () => {
   it.each(["legacy", "canonical"] as const)(
     "isolates corrupt and unsupported %s state on repeated startup without losing originals or blocking a healthy project",
     async (family) => {
-      const root = fs.mkdtempSync(
-        path.join(os.tmpdir(), "startup-invalid-state-"),
-      );
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "startup-invalid-state-"));
       const project = createProject(path.join(root, "source"));
       const healthy = {
         ...createProject(path.join(root, "healthy-source")),
@@ -190,12 +182,7 @@ describe("runStartup", () => {
         fs.mkdirSync(healthy.repository.path);
         if (family === "canonical") {
           operations.runOrchestrator.mockImplementationOnce(runStartupWorker);
-          await runStartup(
-            config,
-            dependencies,
-            new AbortController().signal,
-            operations,
-          );
+          await runStartup(config, dependencies, new AbortController().signal, operations);
         } else {
           fs.mkdirSync(path.dirname(statePath), { recursive: true });
         }
@@ -204,22 +191,19 @@ describe("runStartup", () => {
         for (const original of ["{invalid-json", '{"version":999}']) {
           fs.writeFileSync(statePath, original);
           for (let restart = 0; restart < 2; restart++) {
-            await runStartup(
-              config,
-              dependencies,
-              new AbortController().signal,
-              operations,
-            );
-            const contexts = operations.runOrchestrator.mock
-              .lastCall![9] as Map<string, ProjectRunWorkerContext>;
+            await runStartup(config, dependencies, new AbortController().signal, operations);
+            const contexts = operations.runOrchestrator.mock.lastCall![9] as Map<
+              string,
+              ProjectRunWorkerContext
+            >;
             expect(contexts.get(project.id)?.blockedReason).toBeTruthy();
             expect(contexts.get(project.id)?.authority).toBeUndefined();
             expect(contexts.get(healthy.id)?.blockedReason).toBeUndefined();
             expect(contexts.get(healthy.id)?.projectLease).toBeDefined();
             expect(fs.readFileSync(statePath, "utf8")).toBe(original);
-            expect(
-              fs.existsSync(path.join(config.workflow.contextRoot, "attempts")),
-            ).toBe(family === "canonical");
+            expect(fs.existsSync(path.join(config.workflow.contextRoot, "attempts"))).toBe(
+              family === "canonical",
+            );
           }
         }
       } finally {
@@ -290,25 +274,19 @@ describe("runStartup", () => {
     const config = createConfig(project);
     const pid = 41_723;
     const originalKill = process.kill;
-    const killSpy = vi
-      .spyOn(process, "kill")
-      .mockImplementation((target, signal) => {
-        if (typeof target === "number" && target === -pid) return true;
-        return originalKill(target, signal);
-      });
+    const killSpy = vi.spyOn(process, "kill").mockImplementation((target, signal) => {
+      if (typeof target === "number" && target === -pid) return true;
+      return originalKill(target, signal);
+    });
     const originalReaddir = fs.readdirSync;
-    const procSpy = vi
-      .spyOn(fs, "readdirSync")
-      .mockImplementation((directory, options) => {
-        if (directory === "/proc") {
-          const error = new Error(
-            "injected procfs access failure",
-          ) as NodeJS.ErrnoException;
-          error.code = "EACCES";
-          throw error;
-        }
-        return originalReaddir(directory, options as never) as never;
-      });
+    const procSpy = vi.spyOn(fs, "readdirSync").mockImplementation((directory, options) => {
+      if (directory === "/proc") {
+        const error = new Error("injected procfs access failure") as NodeJS.ErrnoException;
+        error.code = "EACCES";
+        throw error;
+      }
+      return originalReaddir(directory, options as never) as never;
+    });
     try {
       await expect(
         runStartup(
@@ -338,9 +316,7 @@ describe("runStartup", () => {
       procSpy.mockRestore();
       killSpy.mockRestore();
     }
-    const key = createHash("sha256")
-      .update(`github:${project.repository.github}`)
-      .digest("hex");
+    const key = createHash("sha256").update(`github:${project.repository.github}`).digest("hex");
     const marker = JSON.parse(
       fs.readFileSync(
         path.join(config.workflow.coordinationRoot!, `${key}.ambiguity.json`),
@@ -393,9 +369,7 @@ describe("runStartup", () => {
       originalConfig.workflow.coordinationNamespaceId!,
     );
     try {
-      const hostPin = (
-        await verifyAndPinProjects(originalConfig, [oldLease])
-      )[0]!;
+      const hostPin = (await verifyAndPinProjects(originalConfig, [oldLease]))[0]!;
       const pinned: RunRecord["pinned"] = {
         integrationId: hostPin.integrationId,
         projectId: project.id,
@@ -456,11 +430,7 @@ describe("runStartup", () => {
         compatibility: {},
         updatedAt: new Date().toISOString(),
       });
-      const registry = new RunRegistry(
-        storageRoot,
-        pinned.integrationId,
-        runLease,
-      );
+      const registry = new RunRegistry(storageRoot, pinned.integrationId, runLease);
       registry.handoff(attempt, null, 1);
       await updateProjectActiveAttempt(coordinationRoot, project.id, oldLease, {
         attemptId: attempt.read()!.attemptId,
@@ -520,9 +490,7 @@ describe("runStartup", () => {
     expect(runOrchestrator).toHaveBeenCalledOnce();
     const runtimeConfig = runOrchestrator.mock.calls[0]?.[5] as Config;
     expect(runtimeConfig.projects[0]?.repository.path).toBe(repositoryPath);
-    expect(runtimeConfig.projects[0]?.repository.github).toBe(
-      "owner/repository",
-    );
+    expect(runtimeConfig.projects[0]?.repository.github).toBe("owner/repository");
     const contexts = runOrchestrator.mock.calls[0]?.[9] as ReadonlyMap<
       string,
       { blockedReason?: string; authority?: { store: RunStore } }
@@ -532,10 +500,7 @@ describe("runStartup", () => {
       "Configured resources changed while attempt",
     );
     const persistedAttempt = JSON.parse(
-      fs.readFileSync(
-        path.join(storageRoot, "attempts", "active-old.json"),
-        "utf8",
-      ),
+      fs.readFileSync(path.join(storageRoot, "attempts", "active-old.json"), "utf8"),
     ) as RunRecord;
     expect(persistedAttempt.attemptId).toBe("active-old");
     expect(persistedAttempt.owner.generation).toBe(1);
@@ -549,9 +514,7 @@ describe("runStartup", () => {
   ] as const)(
     "recovers a host-pending fresh attempt after the %s crash boundary",
     async (barrier) => {
-      const root = fs.mkdtempSync(
-        path.join(os.tmpdir(), "startup-pending-handoff-"),
-      );
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "startup-pending-handoff-"));
       const repositoryPath = path.join(root, "repository");
       const worktreeRoot = path.join(root, "worktrees");
       const storageRoot = path.join(root, "runtime");
@@ -627,28 +590,15 @@ describe("runStartup", () => {
           new TaskExecutionStore(storageRoot, project).create(legacyTask);
           attemptId = legacyAttemptId(legacyTask);
           originalLegacyBytes = fs.readFileSync(
-            path.join(
-              storageRoot,
-              "task-executions",
-              project.id,
-              "chosen-card.json",
-            ),
+            path.join(storageRoot, "task-executions", project.id, "chosen-card.json"),
           );
         }
         await prepareProjectAttempt(coordinationRoot, project.id, lease, {
           attemptId,
           storageRoot,
         });
-        if (
-          barrier !== "legacy-import-pending" &&
-          barrier !== "pending-without-candidate"
-        ) {
-          const candidateStore = new RunStore(
-            storageRoot,
-            attemptId,
-            pinned,
-            runLease,
-          );
+        if (barrier !== "legacy-import-pending" && barrier !== "pending-without-candidate") {
+          const candidateStore = new RunStore(storageRoot, attemptId, pinned, runLease);
           candidateStore.create({
             version: 1,
             revision: 1,
@@ -695,12 +645,7 @@ describe("runStartup", () => {
         if (originalLegacyBytes)
           expect(
             fs.readFileSync(
-              path.join(
-                storageRoot,
-                "task-executions",
-                project.id,
-                "chosen-card.json",
-              ),
+              path.join(storageRoot, "task-executions", project.id, "chosen-card.json"),
             ),
           ).toEqual(originalLegacyBytes);
       } finally {
@@ -739,9 +684,7 @@ describe("runStartup", () => {
       const authority = contexts.get(project.id)?.authority;
       if (barrier === "pending-without-candidate") {
         expect(authority).toBeUndefined();
-        expect(contexts.get(project.id)?.blockedReason).toContain(
-          "no durable candidate",
-        );
+        expect(contexts.get(project.id)?.blockedReason).toContain("no durable candidate");
         expect(
           new RunRegistry(
             storageRoot,
@@ -763,15 +706,10 @@ describe("runStartup", () => {
       } else {
         expect(authority).toBeDefined();
         const recoveredRecord = JSON.parse(
-          fs.readFileSync(
-            path.join(storageRoot, "attempts", `${attemptId}.json`),
-            "utf8",
-          ),
+          fs.readFileSync(path.join(storageRoot, "attempts", `${attemptId}.json`), "utf8"),
         ) as RunRecord;
         expect(recoveredRecord.attemptId).toBe(attemptId);
-        expect(recoveredRecord.owner.generation).toBe(
-          barrier === "legacy-import-pending" ? 1 : 2,
-        );
+        expect(recoveredRecord.owner.generation).toBe(barrier === "legacy-import-pending" ? 1 : 2);
       }
       const registry = new RunRegistry(
         storageRoot,
@@ -793,10 +731,7 @@ describe("runStartup", () => {
         barrier === "pending-without-candidate" ? undefined : attemptId,
       );
       const hostPin = JSON.parse(
-        fs.readFileSync(
-          path.join(coordinationRoot, "projects.registry.json"),
-          "utf8",
-        ),
+        fs.readFileSync(path.join(coordinationRoot, "projects.registry.json"), "utf8"),
       ) as {
         projects: Array<{
           projectId: string;
@@ -823,9 +758,7 @@ describe("runStartup", () => {
   it.each([false, true])(
     "recovers a fresh UUID candidate after importing and terminalizing legacy state (same-root integration reconfiguration: %s)",
     async (reconfigureIntegration) => {
-      const root = fs.mkdtempSync(
-        path.join(os.tmpdir(), "startup-composed-legacy-handoff-"),
-      );
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "startup-composed-legacy-handoff-"));
       const repositoryPath = path.join(root, "repository");
       const worktreeRoot = path.join(root, "worktrees");
       const runtimeRoot = path.join(root, "runtime");
@@ -900,9 +833,7 @@ describe("runStartup", () => {
       const importedBytes = fs.readFileSync(
         path.join(runtimeRoot, "attempts", `${importedId}.json`),
       );
-      const importedRecord = JSON.parse(
-        importedBytes.toString("utf8"),
-      ) as RunRecord;
+      const importedRecord = JSON.parse(importedBytes.toString("utf8")) as RunRecord;
       expect(importedRecord).toMatchObject({
         attemptId: importedId,
         lifecycle: "waiting",
@@ -992,11 +923,9 @@ describe("runStartup", () => {
         await runStartupWith(activeConfig, noTaskBeforeCrash);
         expect(noTaskBeforeCrash).toHaveBeenCalledOnce();
         expect(fs.readFileSync(legacyFile)).toEqual(legacyOriginalBytes);
-        expect(
-          fs.readFileSync(
-            path.join(runtimeRoot, "attempts", `${importedId}.json`),
-          ),
-        ).toEqual(terminalImportedBytes);
+        expect(fs.readFileSync(path.join(runtimeRoot, "attempts", `${importedId}.json`))).toEqual(
+          terminalImportedBytes,
+        );
       }
 
       const configuredProject = activeConfig.projects[0]!;
@@ -1053,12 +982,7 @@ describe("runStartup", () => {
           token: handoffLease.token,
           assertHeld: () => handoffLease.assertHeld(),
         };
-        const candidate = new RunStore(
-          runtimeRoot,
-          freshAttemptId,
-          pinned,
-          candidateLease,
-        );
+        const candidate = new RunStore(runtimeRoot, freshAttemptId, pinned, candidateLease);
         candidate.create({
           version: 1,
           revision: 1,
@@ -1090,11 +1014,7 @@ describe("runStartup", () => {
           compatibility: {},
           updatedAt: new Date().toISOString(),
         });
-        const registry = new RunRegistry(
-          runtimeRoot,
-          pin.integrationId,
-          candidateLease,
-        );
+        const registry = new RunRegistry(runtimeRoot, pin.integrationId, candidateLease);
         const prior = registry.read();
         registry.handoff(candidate, prior, prior ? prior.generation + 1 : 1);
         expect(registry.read()?.attemptId).toBe(freshAttemptId);
@@ -1103,9 +1023,7 @@ describe("runStartup", () => {
             activeConfig.workflow.coordinationRoot!,
             configuredProject.id,
           )
-        ).find(
-          (candidatePin) => candidatePin.integrationId === pin.integrationId,
-        )!;
+        ).find((candidatePin) => candidatePin.integrationId === pin.integrationId)!;
         expect(hostBeforeCrash.pendingAttempt?.attemptId).toBe(freshAttemptId);
         expect(hostBeforeCrash.activeAttempt).toBeNull();
       } finally {
@@ -1130,10 +1048,7 @@ describe("runStartup", () => {
       await runStartupWith(activeConfig, resumedRun);
       expect(resumedRun).toHaveBeenCalledOnce();
       const resumedAttempt = JSON.parse(
-        fs.readFileSync(
-          path.join(runtimeRoot, "attempts", `${freshAttemptId}.json`),
-          "utf8",
-        ),
+        fs.readFileSync(path.join(runtimeRoot, "attempts", `${freshAttemptId}.json`), "utf8"),
       ) as RunRecord;
       expect(resumedAttempt).toMatchObject({
         attemptId: freshAttemptId,
@@ -1141,18 +1056,14 @@ describe("runStartup", () => {
         owner: { generation: 2 },
       });
       expect(fs.readFileSync(legacyFile)).toEqual(legacyOriginalBytes);
-      expect(
-        fs.readFileSync(
-          path.join(runtimeRoot, "attempts", `${importedId}.json`),
-        ),
-      ).toEqual(terminalImportedBytes);
+      expect(fs.readFileSync(path.join(runtimeRoot, "attempts", `${importedId}.json`))).toEqual(
+        terminalImportedBytes,
+      );
     },
   );
 
   it("reconfigures an inactive project only after inspecting the predecessor with old pins", async () => {
-    const root = fs.mkdtempSync(
-      path.join(os.tmpdir(), "startup-terminal-relocation-"),
-    );
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "startup-terminal-relocation-"));
     const repositoryPath = path.join(root, "repository");
     const worktreeRoot = path.join(root, "old-worktrees");
     const oldStorageRoot = path.join(root, "old-state");
@@ -1183,9 +1094,7 @@ describe("runStartup", () => {
     );
     let attemptFile: string;
     try {
-      const hostPin = (
-        await verifyAndPinProjects(originalConfig, [oldLease])
-      )[0]!;
+      const hostPin = (await verifyAndPinProjects(originalConfig, [oldLease]))[0]!;
       const pinned: RunRecord["pinned"] = {
         integrationId: hostPin.integrationId,
         projectId: project.id,
@@ -1209,12 +1118,7 @@ describe("runStartup", () => {
         token: oldLease.token,
         assertHeld: () => oldLease.assertHeld(),
       };
-      const terminalStore = new RunStore(
-        oldStorageRoot,
-        "old-terminal",
-        pinned,
-        runLease,
-      );
+      const terminalStore = new RunStore(oldStorageRoot, "old-terminal", pinned, runLease);
       terminalStore.create({
         version: 1,
         revision: 1,
@@ -1253,11 +1157,7 @@ describe("runStartup", () => {
         compatibility: {},
         updatedAt: new Date().toISOString(),
       });
-      const registry = new RunRegistry(
-        oldStorageRoot,
-        pinned.integrationId,
-        runLease,
-      );
+      const registry = new RunRegistry(oldStorageRoot, pinned.integrationId, runLease);
       registry.handoff(terminalStore, null, 1);
       await updateProjectActiveAttempt(coordinationRoot, project.id, oldLease, {
         attemptId: "old-terminal",
@@ -1317,8 +1217,7 @@ describe("runStartup", () => {
     expect(effective.projects[0]?.repository.path).toBe(newRepositoryPath);
     expect(effective.workflow.contextRoot).toBe(newStorageRoot);
     expect(fs.readFileSync(attemptFile!)).toEqual(oldBytes);
-    const restartedRunOrchestrator =
-      vi.fn<StartupOperations["runOrchestrator"]>();
+    const restartedRunOrchestrator = vi.fn<StartupOperations["runOrchestrator"]>();
     restartedRunOrchestrator.mockImplementation(async (...args) => {
       const contexts = args[9]! as ReadonlyMap<
         string,
@@ -1338,10 +1237,7 @@ describe("runStartup", () => {
         coordinationRoot: context.coordinationRoot!,
       });
       expect(next.store.read()?.resources[0]?.path).toBe(
-        path.join(
-          newWorktreeRoot,
-          `fresh-after-relocation--${next.store.attemptId}`,
-        ),
+        path.join(newWorktreeRoot, `fresh-after-relocation--${next.store.attemptId}`),
       );
     });
     await runStartup(
@@ -1368,8 +1264,7 @@ describe("runStartup", () => {
         runOrchestrator: restartedRunOrchestrator,
       },
     );
-    const restartedContexts = restartedRunOrchestrator.mock
-      .calls[0]?.[9] as ReadonlyMap<
+    const restartedContexts = restartedRunOrchestrator.mock.calls[0]?.[9] as ReadonlyMap<
       string,
       { pinned?: RunRecord["pinned"]; authority?: unknown }
     >;
@@ -1385,9 +1280,7 @@ describe("runStartup", () => {
   });
 
   it("does not reimport retained legacy sources after an inactive integration change at the same runtime root", async () => {
-    const root = fs.mkdtempSync(
-      path.join(os.tmpdir(), "startup-stale-legacy-"),
-    );
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "startup-stale-legacy-"));
     const repositoryPath = path.join(root, "repository");
     const worktreeRoot = path.join(root, "worktrees");
     const runtimeRoot = path.join(root, "runtime");
@@ -1465,11 +1358,7 @@ describe("runStartup", () => {
     >;
     const firstContext = firstContexts.get(project.id)!;
     const oldAttemptId = legacyAttemptId(legacyTask);
-    const oldAttemptPath = path.join(
-      runtimeRoot,
-      "attempts",
-      `${oldAttemptId}.json`,
-    );
+    const oldAttemptPath = path.join(runtimeRoot, "attempts", `${oldAttemptId}.json`);
     expect(fs.existsSync(oldAttemptPath)).toBe(true);
     const oldAttemptBytes = fs.readFileSync(oldAttemptPath);
     const terminalLease = await acquireProjectOwnership(
@@ -1481,23 +1370,14 @@ describe("runStartup", () => {
       config.workflow.coordinationNamespaceId!,
     );
     try {
-      const store = new RunStore(
-        runtimeRoot,
-        oldAttemptId,
-        firstContext.pinned!,
-        {
-          integrationId: firstContext.pinned!.integrationId,
-          instanceId: terminalLease.instanceId,
-          token: terminalLease.token,
-          assertHeld: () => terminalLease.assertHeld(),
-        },
-      );
+      const store = new RunStore(runtimeRoot, oldAttemptId, firstContext.pinned!, {
+        integrationId: firstContext.pinned!.integrationId,
+        instanceId: terminalLease.instanceId,
+        token: terminalLease.token,
+        assertHeld: () => terminalLease.assertHeld(),
+      });
       const waiting = store.read()!;
-      store.takeOwnership(
-        waiting.revision,
-        waiting.owner.generation,
-        terminalLease.token,
-      );
+      store.takeOwnership(waiting.revision, waiting.owner.generation, terminalLease.token);
       const owned = store.read()!;
       store.transition(
         owned.revision,
@@ -1559,10 +1439,7 @@ describe("runStartup", () => {
     });
     await startup(changedConfig, changedRun);
     expect(changedRun).toHaveBeenCalledOnce();
-    const operatorContext = await acquireProjectRunOperatorContext(
-      changedConfig,
-      changedProject,
-    );
+    const operatorContext = await acquireProjectRunOperatorContext(changedConfig, changedProject);
     try {
       expect(operatorContext.authority.store.read()).toMatchObject({
         cardId: "fresh-under-new-integration",
@@ -1593,9 +1470,7 @@ describe("runStartup", () => {
   });
 
   it("inspects each completed integration's actual registry pointer before allowing the next settings revision", async () => {
-    const root = fs.mkdtempSync(
-      path.join(os.tmpdir(), "startup-history-pointers-"),
-    );
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "startup-history-pointers-"));
     const repositoryPath = path.join(root, "repository");
     const runtimeRoot = path.join(root, "runtime");
     fs.mkdirSync(repositoryPath);
@@ -1618,9 +1493,7 @@ describe("runStartup", () => {
           github: {} as GitHubClient,
           opencode: {} as OpenCodeClient,
           commands: new CommandRunner(
-            vi
-              .fn<RunCommand>()
-              .mockResolvedValue({ exitCode: 0, output: "", errorOutput: "" }),
+            vi.fn<RunCommand>().mockResolvedValue({ exitCode: 0, output: "", errorOutput: "" }),
           ),
         },
         new AbortController().signal,
@@ -1681,25 +1554,16 @@ describe("runStartup", () => {
     });
     await startup(configA, runA);
     const recordA = JSON.parse(
-      fs.readFileSync(
-        path.join(runtimeRoot, "attempts", "attempt-revision-a.json"),
-        "utf8",
-      ),
+      fs.readFileSync(path.join(runtimeRoot, "attempts", "attempt-revision-a.json"), "utf8"),
     ) as RunRecord;
-    const pointerA = new RunRegistry(
-      runtimeRoot,
-      recordA.pinned.integrationId,
-      {
-        integrationId: recordA.pinned.integrationId,
-        instanceId: "inspection",
-        token: "inspection",
-        assertHeld() {},
-      },
-    ).read();
+    const pointerA = new RunRegistry(runtimeRoot, recordA.pinned.integrationId, {
+      integrationId: recordA.pinned.integrationId,
+      instanceId: "inspection",
+      token: "inspection",
+      assertHeld() {},
+    }).read();
     expect(pointerA?.attemptId).toBe(recordA.attemptId);
-    const bytesA = fs.readFileSync(
-      path.join(runtimeRoot, "attempts", "attempt-revision-a.json"),
-    );
+    const bytesA = fs.readFileSync(path.join(runtimeRoot, "attempts", "attempt-revision-a.json"));
 
     const projectB = {
       ...originalProject,
@@ -1720,20 +1584,14 @@ describe("runStartup", () => {
       await completeCurrentAttempt(contexts, "attempt-revision-b");
     });
     await startup(configB, runB);
-    const bytesB = fs.readFileSync(
-      path.join(runtimeRoot, "attempts", "attempt-revision-b.json"),
-    );
+    const bytesB = fs.readFileSync(path.join(runtimeRoot, "attempts", "attempt-revision-b.json"));
     const recordB = JSON.parse(bytesB.toString("utf8")) as RunRecord;
-    const pointerB = new RunRegistry(
-      runtimeRoot,
-      recordB.pinned.integrationId,
-      {
-        integrationId: recordB.pinned.integrationId,
-        instanceId: "inspection",
-        token: "inspection",
-        assertHeld() {},
-      },
-    ).read();
+    const pointerB = new RunRegistry(runtimeRoot, recordB.pinned.integrationId, {
+      integrationId: recordB.pinned.integrationId,
+      instanceId: "inspection",
+      token: "inspection",
+      assertHeld() {},
+    }).read();
     expect(pointerB?.attemptId).toBe(recordB.attemptId);
     expect(recordB.pinned.lists.ready).toBe("ready-revision-b");
     expect(recordB.pinned.worktreeRoot).toBe(projectB.repository.worktreeRoot);
@@ -1779,16 +1637,12 @@ describe("runStartup", () => {
     });
     await startup(configC, runC);
     expect(runC).toHaveBeenCalledOnce();
-    expect(
-      fs.readFileSync(
-        path.join(runtimeRoot, "attempts", "attempt-revision-a.json"),
-      ),
-    ).toEqual(bytesA);
-    expect(
-      fs.readFileSync(
-        path.join(runtimeRoot, "attempts", "attempt-revision-b.json"),
-      ),
-    ).toEqual(bytesB);
+    expect(fs.readFileSync(path.join(runtimeRoot, "attempts", "attempt-revision-a.json"))).toEqual(
+      bytesA,
+    );
+    expect(fs.readFileSync(path.join(runtimeRoot, "attempts", "attempt-revision-b.json"))).toEqual(
+      bytesB,
+    );
     expect(recordA.pinned.lists.ready).toBe(originalProject.trello.readyListId);
     const history = await readHistoricalProjectPins(
       configA.workflow.coordinationRoot!,
@@ -1806,16 +1660,12 @@ describe("runStartup", () => {
         }),
       ]),
     );
-    const finalPointer = new RunRegistry(
-      runtimeRoot,
-      recordB.pinned.integrationId,
-      {
-        integrationId: recordB.pinned.integrationId,
-        instanceId: "inspection",
-        token: "inspection",
-        assertHeld() {},
-      },
-    ).read();
+    const finalPointer = new RunRegistry(runtimeRoot, recordB.pinned.integrationId, {
+      integrationId: recordB.pinned.integrationId,
+      instanceId: "inspection",
+      token: "inspection",
+      assertHeld() {},
+    }).read();
     // C creates the next attempt only after historical reconciliation has
     // opened the actual shared registry pointer (B) using its persisted pins.
     expect(finalPointer?.attemptId).toBe("attempt-revision-c");
@@ -1841,23 +1691,13 @@ describe("runStartup", () => {
       opencode: {} as OpenCodeClient,
       commands: new CommandRunner(vi.fn<RunCommand>()),
     };
-    await runStartup(
-      config,
-      dependencies,
-      new AbortController().signal,
-      operations,
-    );
+    await runStartup(config, dependencies, new AbortController().signal, operations);
 
     const removed = {
       ...config,
       projects: [],
     } as unknown as Config;
-    await runStartup(
-      removed,
-      dependencies,
-      new AbortController().signal,
-      operations,
-    );
+    await runStartup(removed, dependencies, new AbortController().signal, operations);
     expect(operations.runOrchestrator).toHaveBeenCalledTimes(2);
     fs.rmSync(repositoryPath, { recursive: true, force: true });
   });
@@ -1866,10 +1706,7 @@ describe("runStartup", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-"));
     const repositoryPath = path.join(root, "repository");
     fs.mkdirSync(repositoryPath);
-    const cleanup = vi.spyOn(
-      cardContextRetention,
-      "cleanupCardContextRetention",
-    );
+    const cleanup = vi.spyOn(cardContextRetention, "cleanupCardContextRetention");
 
     try {
       const dependencies: StartupDependencies = {
@@ -1895,12 +1732,9 @@ describe("runStartup", () => {
         operations,
       );
 
-      expect(cleanup).toHaveBeenCalledWith(
-        "/opt/.agent-context",
-        14,
-        expect.any(Date),
-        ["test-project"],
-      );
+      expect(cleanup).toHaveBeenCalledWith("/opt/.agent-context", 14, expect.any(Date), [
+        "test-project",
+      ]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -1910,10 +1744,7 @@ describe("runStartup", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-"));
     const repositoryPath = path.join(root, "repository");
     fs.mkdirSync(repositoryPath);
-    const cleanup = vi.spyOn(
-      persistedStateTemporaryFiles,
-      "cleanupPersistedStateTemporaryFiles",
-    );
+    const cleanup = vi.spyOn(persistedStateTemporaryFiles, "cleanupPersistedStateTemporaryFiles");
 
     try {
       const config = createConfig(createProject(repositoryPath));
@@ -1934,17 +1765,9 @@ describe("runStartup", () => {
         runOrchestrator,
       };
 
-      await runStartup(
-        config,
-        dependencies,
-        new AbortController().signal,
-        operations,
-      );
+      await runStartup(config, dependencies, new AbortController().signal, operations);
 
-      expect(cleanup).toHaveBeenCalledWith(
-        config.projects,
-        config.workflow.contextRoot,
-      );
+      expect(cleanup).toHaveBeenCalledWith(config.projects, config.workflow.contextRoot);
       expect(validateGitHubCli.mock.invocationCallOrder[0]).toBeLessThan(
         cleanup.mock.invocationCallOrder[0]!,
       );
@@ -1960,9 +1783,7 @@ describe("runStartup", () => {
     fs.mkdirSync(repositoryPath);
 
     try {
-      const runGit = vi
-        .fn<RunGit>()
-        .mockRejectedValue(new Error("fatal: not a git repository"));
+      const runGit = vi.fn<RunGit>().mockRejectedValue(new Error("fatal: not a git repository"));
       const runOrchestrator = vi.fn().mockResolvedValue(undefined);
       const dependencies: StartupDependencies = {
         trello: {} as TrelloClient,
@@ -2028,10 +1849,7 @@ describe("runStartup", () => {
     const validateGitHub = vi
       .fn()
       .mockRejectedValueOnce(
-        new ProjectResourceError(
-          "unavailable",
-          "GitHub temporarily unavailable",
-        ),
+        new ProjectResourceError("unavailable", "GitHub temporarily unavailable"),
       )
       .mockResolvedValue(undefined);
     const validateTrello = vi.fn().mockResolvedValue(undefined);
@@ -2072,9 +1890,7 @@ describe("runStartup", () => {
         "GitHub CLI compatibility validation failed: installed gh version 2.39.0 is unsupported",
       );
       const runGit = validRepositoryGit();
-      const validateGitHubCli = vi
-        .fn()
-        .mockRejectedValue(githubCompatibilityError);
+      const validateGitHubCli = vi.fn().mockRejectedValue(githubCompatibilityError);
       const validateProjectTrello = vi.fn().mockResolvedValue(undefined);
       const runOrchestrator = vi.fn().mockResolvedValue(undefined);
       const dependencies: StartupDependencies = {
@@ -2100,10 +1916,7 @@ describe("runStartup", () => {
         ),
       ).rejects.toBe(githubCompatibilityError);
 
-      expect(validateGitHubCli).toHaveBeenCalledWith(
-        dependencies.github,
-        expect.any(Array),
-      );
+      expect(validateGitHubCli).toHaveBeenCalledWith(dependencies.github, expect.any(Array));
       expect(runGit).not.toHaveBeenCalled();
       expect(validateProjectTrello).not.toHaveBeenCalled();
       expect(runOrchestrator).not.toHaveBeenCalled();
@@ -2122,11 +1935,10 @@ describe("runStartup", () => {
       const validateProjectTrello = vi
         .fn()
         .mockRejectedValueOnce(
-          new TrelloRequestError(
-            "board lookup",
-            "Trello request failed: 503 Unavailable",
-            { status: 503, retryable: true },
-          ),
+          new TrelloRequestError("board lookup", "Trello request failed: 503 Unavailable", {
+            status: 503,
+            retryable: true,
+          }),
         )
         .mockResolvedValue(undefined);
       const runOrchestrator = vi.fn<StartupOperations["runOrchestrator"]>();
@@ -2142,18 +1954,13 @@ describe("runStartup", () => {
         commands: new CommandRunner(vi.fn<RunCommand>()),
       };
 
-      await runStartup(
-        createConfig(project),
-        dependencies,
-        new AbortController().signal,
-        {
-          validateToolchain: vi.fn().mockResolvedValue(undefined),
-          validateGitHubCli: vi.fn().mockResolvedValue(undefined),
-          validateProjectTrello,
-          validateProjectGitHub: vi.fn().mockResolvedValue(undefined),
-          runOrchestrator,
-        },
-      );
+      await runStartup(createConfig(project), dependencies, new AbortController().signal, {
+        validateToolchain: vi.fn().mockResolvedValue(undefined),
+        validateGitHubCli: vi.fn().mockResolvedValue(undefined),
+        validateProjectTrello,
+        validateProjectGitHub: vi.fn().mockResolvedValue(undefined),
+        runOrchestrator,
+      });
 
       expect(runOrchestrator).toHaveBeenCalledOnce();
       expect(runOrchestrator.mock.calls[0]?.[8]).toBeDefined();

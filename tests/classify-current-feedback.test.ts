@@ -60,9 +60,7 @@ it.each([false, true])(
       signal: new AbortController().signal,
     });
     expect(result[0]?.requestRevision).toBe(changed ? 2 : 1);
-    expect(run).toHaveBeenCalledWith(
-      expect.objectContaining({ readOnly: true }),
-    );
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ readOnly: true }));
     run.mockClear();
     await classifyCurrentFeedback({
       project,

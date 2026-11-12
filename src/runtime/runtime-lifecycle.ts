@@ -78,11 +78,7 @@ export function formatFatalDiagnostic(
   secretValues: readonly (string | undefined)[] = [],
 ): string {
   const secrets = new Set(
-    [
-      ...getEnvironmentSecretValues(),
-      ...getProcessRuntime().secretValues,
-      ...secretValues,
-    ].filter(
+    [...getEnvironmentSecretValues(), ...getProcessRuntime().secretValues, ...secretValues].filter(
       (value): value is string => value !== undefined && value.length > 0,
     ),
   );
@@ -161,9 +157,7 @@ export class RuntimeLifecycle {
     if (this.fatalFailureValue === undefined) {
       this.fatalFailureValue = { source, error };
 
-      const diagnostic = formatFatalDiagnostic(source, error, [
-        ...this.secretValues,
-      ]);
+      const diagnostic = formatFatalDiagnostic(source, error, [...this.secretValues]);
 
       try {
         this.lifecycleLogger.error(diagnostic);
@@ -215,9 +209,6 @@ export function installProcessHandlers(
     processObject.removeListener("SIGINT", handleSignal);
     processObject.removeListener("SIGTERM", handleSignal);
     processObject.removeListener("uncaughtException", handleUncaughtException);
-    processObject.removeListener(
-      "unhandledRejection",
-      handleUnhandledRejection,
-    );
+    processObject.removeListener("unhandledRejection", handleUnhandledRejection);
   };
 }

@@ -20,10 +20,7 @@ export async function refreshTaskSessionCiOutcome(options: {
   evaluation: CiCheckEvaluation;
 }): Promise<void> {
   const { record, evaluation, github, project, card } = options;
-  if (
-    !record.pullRequest ||
-    record.pullRequest.headSha !== evaluation.expectedHeadSha
-  )
+  if (!record.pullRequest || record.pullRequest.headSha !== evaluation.expectedHeadSha)
     throw new Error("CI outcome does not belong to the published PR revision");
   // Older in-process callers may have no description capability. The concrete
   // GitHub client always supplies it; remote errors are never silently skipped.
@@ -39,8 +36,7 @@ export async function refreshTaskSessionCiOutcome(options: {
     .find(
       (operation) =>
         operation.strategy === "merge" &&
-        operation.localPreparation?.resultingHead ===
-          record.pullRequest!.headSha,
+        operation.localPreparation?.resultingHead === record.pullRequest!.headSha,
     );
   const episode = record.ciRepair;
   const quality = record.publicationQuality;

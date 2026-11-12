@@ -27,25 +27,19 @@ export function terminalPrFenceFromRun(run: RunRecord): TerminalPrFence | null {
   const raw = run.compatibility[terminalPrFenceKey];
   if (raw === undefined) return null;
   const fence = schema.parse(raw);
-  if (fence.cardId !== run.cardId)
-    throw new Error("Terminal PR fence belongs to another task");
+  if (fence.cardId !== run.cardId) throw new Error("Terminal PR fence belongs to another task");
   if (
     (fence.stoppedAt !== undefined) !== (fence.proofArtifact !== undefined) ||
-    (fence.proofArtifact &&
-      !run.artifacts.some((artifact) => artifact.id === fence.proofArtifact))
+    (fence.proofArtifact && !run.artifacts.some((artifact) => artifact.id === fence.proofArtifact))
   )
-    throw new Error(
-      "Terminal stop proof is missing or inconsistent; preserve ownership",
-    );
+    throw new Error("Terminal stop proof is missing or inconsistent; preserve ownership");
   return fence;
 }
 export function readTerminalPrFence(
   authority: ProjectRunAuthority | undefined,
 ): TerminalPrFence | null {
   return authority
-    ? terminalPrFenceFromRun(
-        authority.store.assertCurrentLease(authority.ownerGeneration),
-      )
+    ? terminalPrFenceFromRun(authority.store.assertCurrentLease(authority.ownerGeneration))
     : null;
 }
 export class ObservedPrTerminalError extends Error {
@@ -54,9 +48,7 @@ export class ObservedPrTerminalError extends Error {
     readonly beforeTransport = false,
     readonly transport?: { operationId: string; generation: number },
   ) {
-    super(
-      `Human PR ${fence.state.toLowerCase()} outcome supersedes automated work`,
-    );
+    super(`Human PR ${fence.state.toLowerCase()} outcome supersedes automated work`);
     this.name = "ObservedPrTerminalError";
   }
 }
@@ -69,8 +61,7 @@ export function isTerminalPrInterruption(error: unknown): boolean {
     seen.add(value);
     if (value instanceof ObservedPrTerminalError) return true;
     if (value instanceof AggregateError) pending.push(...value.errors);
-    if (value instanceof Error && value.cause !== undefined)
-      pending.push(value.cause);
+    if (value instanceof Error && value.cause !== undefined) pending.push(value.cause);
   }
   return false;
 }
@@ -85,9 +76,7 @@ export function assertNoTerminalPr(
 const writerContext = new AsyncLocalStorage<symbol | undefined>();
 const writers = new Map<string, Map<symbol, AbortController>>();
 const activeExecutions = new Map<string, number>();
-export function otherTaskWriterIsActive(
-  authority: ProjectRunAuthority,
-): boolean {
+export function otherTaskWriterIsActive(authority: ProjectRunAuthority): boolean {
   return (
     [...(writers.get(authority.attemptScopeKey)?.keys() ?? [])].some(
       (token) => token !== writerContext.getStore(),
@@ -105,9 +94,7 @@ export async function withTerminalWriterCancellation<T>(
     );
   const token = Symbol("task-writer");
   const controller = new AbortController();
-  const active =
-    writers.get(authority.attemptScopeKey) ??
-    new Map<symbol, AbortController>();
+  const active = writers.get(authority.attemptScopeKey) ?? new Map<symbol, AbortController>();
   active.set(token, controller);
   writers.set(authority.attemptScopeKey, active);
   const combined = AbortSignal.any([signal, controller.signal]);
@@ -187,8 +174,7 @@ export function recordTerminalPrFence(
       publicationState: pr.state === "MERGED" ? "merged" : "closed-unmerged",
     },
   });
-  for (const [token, controller] of writers.get(authority.attemptScopeKey) ??
-    []) {
+  for (const [token, controller] of writers.get(authority.attemptScopeKey) ?? []) {
     if (
       token !== writerContext.getStore() ||
       preserveArtifacts ||
@@ -200,11 +186,7 @@ export function recordTerminalPrFence(
 }
 
 export function closedPrComment(url: string): string {
-  return [
-    "Pull request was closed without being merged.",
-    "",
-    `Pull request: ${url}`,
-  ].join("\n");
+  return ["Pull request was closed without being merged.", "", `Pull request: ${url}`].join("\n");
 }
 export function terminalMutationAllowed(
   run: RunRecord,
@@ -224,10 +206,7 @@ export function terminalMutationAllowed(
     fields.body !== fields.expectedBody
   ) {
     try {
-      return (
-        fields.body ===
-        reconcileManagedPullRequestStatus(fields.expectedBody, null, "main")
-      );
+      return fields.body === reconcileManagedPullRequestStatus(fields.expectedBody, null, "main");
     } catch {
       return false;
     }
@@ -237,9 +216,7 @@ export function terminalMutationAllowed(
   if (request.route === "trello-move")
     return (
       fields.listId ===
-      (fence.state === "MERGED"
-        ? run.pinned.lists.done
-        : run.pinned.lists.backlog)
+      (fence.state === "MERGED" ? run.pinned.lists.done : run.pinned.lists.backlog)
     );
   return (
     request.route === "trello-comment" &&
@@ -257,11 +234,8 @@ export function markTerminalWritersStopped(
     throw new Error("Terminal writer release lacks stopped-execution proof");
   const proof = z
     .object({ kind: z.literal("task-processes-stopped"), cardId: z.string() })
-    .parse(
-      JSON.parse(authority.store.readArtifact(proofArtifact).toString("utf8")),
-    );
-  if (proof.cardId !== fence.cardId)
-    throw new Error("Terminal stop proof belongs to another task");
+    .parse(JSON.parse(authority.store.readArtifact(proofArtifact).toString("utf8")));
+  if (proof.cardId !== fence.cardId) throw new Error("Terminal stop proof belongs to another task");
   authority.mutate(
     terminalPrFenceKey,
     fence,
@@ -277,19 +251,13 @@ export function markTerminalWritersStopped(
     (value) => schema.parse(value),
   );
 }
-export function terminalStopProofValid(
-  authority: ProjectRunAuthority,
-): boolean {
+export function terminalStopProofValid(authority: ProjectRunAuthority): boolean {
   const fence = readTerminalPrFence(authority);
   if (!fence?.stoppedAt || !fence.proofArtifact) return false;
   try {
     const proof = z
       .object({ kind: z.literal("task-processes-stopped"), cardId: z.string() })
-      .parse(
-        JSON.parse(
-          authority.store.readArtifact(fence.proofArtifact).toString("utf8"),
-        ),
-      );
+      .parse(JSON.parse(authority.store.readArtifact(fence.proofArtifact).toString("utf8")));
     return proof.cardId === fence.cardId;
   } catch {
     return false;

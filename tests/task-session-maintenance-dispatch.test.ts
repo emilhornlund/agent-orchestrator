@@ -23,16 +23,13 @@ vi.mock("../src/orchestrator/maintain-outdated-pr.js", () => ({
   retireFailedUnpublishedPrMaintenance: vi.fn(),
   requeueInterruptedPreparedPrMaintenance: vi.fn(() => false),
 }));
-vi.mock(
-  "../src/orchestrator/run-task-session-feedback-cycle.js",
-  async (importOriginal) => ({
-    ...(await importOriginal<
-      typeof import("../src/orchestrator/run-task-session-feedback-cycle.js")
-    >()),
-    refreshCurrentTaskFeedback: vi.fn(async () => undefined),
-    runTaskSessionFeedbackCycle: vi.fn(async () => "idle"),
-  }),
-);
+vi.mock("../src/orchestrator/run-task-session-feedback-cycle.js", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../src/orchestrator/run-task-session-feedback-cycle.js")
+  >()),
+  refreshCurrentTaskFeedback: vi.fn(async () => undefined),
+  runTaskSessionFeedbackCycle: vi.fn(async () => "idle"),
+}));
 vi.mock("../src/task-session/run-task-session-ci-repairs.js", () => ({
   runTaskSessionCiRepairs: vi.fn(async () => ({
     status: "passed",
@@ -214,9 +211,7 @@ async function pollReview(
         version: 1,
         projectId: project.id,
         cardId: card.id,
-        requirements: [
-          { id: "REQ-1", text: "Task", verification: "Check task" },
-        ],
+        requirements: [{ id: "REQ-1", text: "Task", verification: "Check task" }],
         steps: [
           {
             id: "STEP-1",
@@ -316,9 +311,7 @@ async function pollReview(
     git,
     project,
     openCodeRun: openCode.run,
-    taskRecord: new TaskExecutionStore(project.contextRoot, project).read(
-      "card",
-    ),
+    taskRecord: new TaskExecutionStore(project.contextRoot, project).read("card"),
   };
 }
 
@@ -350,15 +343,14 @@ describe("opt-in maintenance in the production Human Review polling path", () =>
     );
     let queue = new TaskMutationQueue(f.project.contextRoot, f.project);
     expect(queue.getActive()).toBeNull();
-    expect(
-      queue.list().find((event) => event.kind === "ci-repair"),
-    ).toMatchObject({ status: "queued", dispatchReady: false });
+    expect(queue.list().find((event) => event.kind === "ci-repair")).toMatchObject({
+      status: "queued",
+      dispatchReady: false,
+    });
     await f.poll();
     queue = new TaskMutationQueue(f.project.contextRoot, f.project);
     expect(runTaskSessionCiRepairs).toHaveBeenCalledTimes(2);
-    expect(
-      queue.list().find((event) => event.kind === "ci-repair")?.status,
-    ).toBe("completed");
+    expect(queue.list().find((event) => event.kind === "ci-repair")?.status).toBe("completed");
   });
   it("reobserves after maintenance rather than consuming feedback against its stale pre-merge head", async () => {
     vi.mocked(maintainOutdatedPr).mockResolvedValueOnce("completed");
@@ -404,15 +396,11 @@ describe("opt-in maintenance in the production Human Review polling path", () =>
   );
 
   it("does not let routine maintenance deferral suppress actionable feedback", async () => {
-    const result = await pollReview("behind", { enabled: true }, true, [
-      "review-1",
-    ]);
+    const result = await pollReview("behind", { enabled: true }, true, ["review-1"]);
     expect(result.taskRecord).toMatchObject({ phase: "human-feedback" });
     expect(maintainOutdatedPr).toHaveBeenCalledOnce();
     expect(runTaskSessionFeedbackCycle).toHaveBeenCalledOnce();
-    expect(
-      vi.mocked(runTaskSessionFeedbackCycle).mock.calls[0]?.[0],
-    ).toMatchObject({
+    expect(vi.mocked(runTaskSessionFeedbackCycle).mock.calls[0]?.[0]).toMatchObject({
       observation: { feedbackIds: ["review-1"] },
     });
   });
@@ -436,9 +424,7 @@ describe("opt-in maintenance in the production Human Review polling path", () =>
     expect(git.addWorktreeWithNewBranch).not.toHaveBeenCalled();
     expect(git.fetch).not.toHaveBeenCalled();
     expect(git.push).not.toHaveBeenCalled();
-    expect(
-      new PrMaintenanceStore(project.contextRoot, project).inspect(),
-    ).toHaveLength(1);
+    expect(new PrMaintenanceStore(project.contextRoot, project).inspect()).toHaveLength(1);
   });
 
   it("blocks a different Ready card project-wide when a legacy card is absent from active Trello lists", async () => {
@@ -495,13 +481,10 @@ describe("opt-in maintenance in the production Human Review polling path", () =>
     expect(openCodeRun).not.toHaveBeenCalled();
   });
 
-  it.each(["current", "uncertain"] as const)(
-    "does not dispatch %s PRs",
-    async (relation) => {
-      await pollReview(relation);
-      expect(maintainOutdatedPr).not.toHaveBeenCalled();
-    },
-  );
+  it.each(["current", "uncertain"] as const)("does not dispatch %s PRs", async (relation) => {
+    await pollReview(relation);
+    expect(maintainOutdatedPr).not.toHaveBeenCalled();
+  });
 
   it("automatically dispatches when maintenance is omitted", async () => {
     await pollReview("diverged");
@@ -511,16 +494,12 @@ describe("opt-in maintenance in the production Human Review polling path", () =>
   it("reviews against task purpose when an advisory plan is missing", async () => {
     await pollReview("diverged", { enabled: true }, false);
     expect(maintainOutdatedPr).toHaveBeenCalledOnce();
-    expect(
-      vi.mocked(maintainOutdatedPr).mock.calls[0]?.[0].requirementIds,
-    ).toEqual(["TASK"]);
+    expect(vi.mocked(maintainOutdatedPr).mock.calls[0]?.[0].requirementIds).toEqual(["TASK"]);
   });
 
   it("safely defers maintenance without treating it as publication", async () => {
     await pollReview("diverged", { enabled: true });
-    await expect(
-      vi.mocked(maintainOutdatedPr).mock.results[0]?.value,
-    ).resolves.toBe("deferred");
+    await expect(vi.mocked(maintainOutdatedPr).mock.results[0]?.value).resolves.toBe("deferred");
   });
 
   it("honors an explicit maintenance opt-out", async () => {
@@ -532,8 +511,8 @@ describe("opt-in maintenance in the production Human Review polling path", () =>
     const emailNotifier = { send: vi.fn(async () => undefined) };
     await pollReview("current", undefined, true, [], emailNotifier);
     expect(runTaskSessionFeedbackCycle).toHaveBeenCalledOnce();
-    expect(
-      vi.mocked(runTaskSessionFeedbackCycle).mock.calls[0]?.[0],
-    ).toMatchObject({ emailNotifier });
+    expect(vi.mocked(runTaskSessionFeedbackCycle).mock.calls[0]?.[0]).toMatchObject({
+      emailNotifier,
+    });
   });
 });

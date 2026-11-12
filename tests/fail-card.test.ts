@@ -15,10 +15,7 @@ import { failCard } from "../src/orchestrator/fail-card.js";
 import { getFailureContext } from "../src/orchestrator/failure-diagnostic.js";
 import { WorkflowError } from "../src/orchestrator/workflow-error.js";
 import { MAX_EXTERNAL_DIAGNOSTIC_LENGTH } from "../src/security/bounded-diagnostic.js";
-import {
-  TrelloClient,
-  TrelloRequestError,
-} from "../src/trello/trello-client.js";
+import { TrelloClient, TrelloRequestError } from "../src/trello/trello-client.js";
 
 const project = {
   id: "project",
@@ -43,12 +40,7 @@ function getDailyLogPath(): string {
 }
 
 afterEach(() => {
-  for (const cardId of [
-    "card-1",
-    "card-non-error",
-    "card-session-log",
-    "card-long-diagnostic",
-  ]) {
+  for (const cardId of ["card-1", "card-non-error", "card-session-log", "card-long-diagnostic"]) {
     removeSessionLog(project.id, cardId);
   }
 });
@@ -61,18 +53,14 @@ describe("failCard", () => {
         events.push("email");
         expect(message.subject).toContain("Failed");
         expect(message.text).toContain("OpenCode");
-        expect(message.text).toContain(
-          "To retry deliberately, move this card to Ready for Agent.",
-        );
+        expect(message.text).toContain("To retry deliberately, move this card to Ready for Agent.");
       }),
     };
     const trello = new TrelloClient({ apiKey: "key", token: "token" });
-    const moveCard = vi
-      .spyOn(trello, "moveCard")
-      .mockImplementation(async () => {
-        events.push("move");
-        return { ...card(), idList: "failed" };
-      });
+    const moveCard = vi.spyOn(trello, "moveCard").mockImplementation(async () => {
+      events.push("move");
+      return { ...card(), idList: "failed" };
+    });
     vi.spyOn(trello, "addComment").mockResolvedValue({
       id: "action-1",
       type: "commentCard",
@@ -80,9 +68,7 @@ describe("failCard", () => {
     });
     const error = new WorkflowError("OpenCode", "implementation failed");
 
-    await expect(
-      failCard(trello, project, "card-1", error, notifier, card()),
-    ).rejects.toBe(error);
+    await expect(failCard(trello, project, "card-1", error, notifier, card())).rejects.toBe(error);
 
     expect(moveCard).toHaveBeenCalledWith("card-1", "failed");
     expect(events).toEqual(["move", "email"]);
@@ -105,9 +91,7 @@ describe("failCard", () => {
     });
     const error = new Error("implementation failed");
 
-    await expect(
-      failCard(trello, project, "card-1", error, notifier, card()),
-    ).rejects.toBe(error);
+    await expect(failCard(trello, project, "card-1", error, notifier, card())).rejects.toBe(error);
 
     expect(moveCard).toHaveBeenCalledWith("card-1", "failed");
     expect(trello.addComment).toHaveBeenCalled();
@@ -126,9 +110,7 @@ describe("failCard", () => {
     });
     const error = new Error("implementation failed");
 
-    await expect(failCard(trello, project, "card-1", error)).rejects.toBe(
-      error,
-    );
+    await expect(failCard(trello, project, "card-1", error)).rejects.toBe(error);
 
     expect(moveCard).toHaveBeenCalledWith("card-1", "failed");
     expect(addComment).toHaveBeenCalledWith(
@@ -145,21 +127,16 @@ describe("failCard", () => {
       "Trello request failed: 503 Unavailable",
       { status: 503, retryable: true },
     );
-    const workflowError = new WorkflowError(
-      "Workflow",
-      "Could not update Trello card content",
-      { cause: transientError },
-    );
+    const workflowError = new WorkflowError("Workflow", "Could not update Trello card content", {
+      cause: transientError,
+    });
 
-    await expect(
-      failCard(trello, project, "card-1", workflowError),
-    ).rejects.toBe(workflowError);
+    await expect(failCard(trello, project, "card-1", workflowError)).rejects.toBe(workflowError);
 
     expect(moveCard).not.toHaveBeenCalled();
     expect(getFailureContext(workflowError)).toMatchObject({
       cardFailureHandled: false,
-      handlingOutcome:
-        "retryable Trello failure; card state left unchanged for reconciliation",
+      handlingOutcome: "retryable Trello failure; card state left unchanged for reconciliation",
     });
   });
 
@@ -197,14 +174,10 @@ describe("failCard", () => {
       ...card(),
       idList: "failed",
     });
-    vi.spyOn(trello, "addComment").mockRejectedValue(
-      new Error("comment failed"),
-    );
+    vi.spyOn(trello, "addComment").mockRejectedValue(new Error("comment failed"));
     const error = new Error("implementation failed");
 
-    await expect(failCard(trello, project, "card-1", error)).rejects.toBe(
-      error,
-    );
+    await expect(failCard(trello, project, "card-1", error)).rejects.toBe(error);
 
     expect(fs.readFileSync(getDailyLogPath(), "utf8")).toContain(
       "Failure handling incomplete: card moved to Failed, but adding the failure comment failed: comment failed; preserving the primary failure",
@@ -227,28 +200,21 @@ describe("failCard", () => {
     const sessionLogPath = getSessionLogPath(project.id, "card-session-log");
     appendSessionLog(sessionLogPath, "OpenCode output remains here");
 
-    const workflowError = new WorkflowError(
-      "Setup",
-      "Repository setup exited with code 1",
-    );
+    const workflowError = new WorkflowError("Setup", "Repository setup exited with code 1");
 
-    await expect(
-      failCard(trello, project, "card-session-log", workflowError),
-    ).rejects.toBe(workflowError);
+    await expect(failCard(trello, project, "card-session-log", workflowError)).rejects.toBe(
+      workflowError,
+    );
 
     const dailyLog = fs.readFileSync(getDailyLogPath(), "utf8");
 
     expect(dailyLog).toContain(
       `[project] [card:card-session-log] Task failed. Category: Setup; Reason: Repository setup exited with code 1; Session log: ${sessionLogPath}; attempting to move card to Failed`,
     );
-    expect(dailyLog).toContain(
-      "Failure handling: card moved to Failed; adding failure comment",
-    );
+    expect(dailyLog).toContain("Failure handling: card moved to Failed; adding failure comment");
     expect(dailyLog).not.toContain("OpenCode output remains here");
     expect(fs.existsSync(sessionLogPath)).toBe(true);
-    expect(fs.readFileSync(sessionLogPath, "utf8")).toBe(
-      "OpenCode output remains here",
-    );
+    expect(fs.readFileSync(sessionLogPath, "utf8")).toBe("OpenCode output remains here");
   });
 
   it("bounds long failure comments while retaining the complete session log", async () => {
@@ -263,32 +229,24 @@ describe("failCard", () => {
       date: "2026-08-30T09:00:00.000Z",
     });
     const fullOutput = "validation output ".repeat(300);
-    const sessionLogPath = getSessionLogPath(
-      project.id,
-      "card-long-diagnostic",
-    );
+    const sessionLogPath = getSessionLogPath(project.id, "card-long-diagnostic");
 
     appendSessionLog(sessionLogPath, fullOutput);
 
     const workflowError = new WorkflowError("Setup", fullOutput);
 
-    await expect(
-      failCard(trello, project, "card-long-diagnostic", workflowError),
-    ).rejects.toBe(workflowError);
+    await expect(failCard(trello, project, "card-long-diagnostic", workflowError)).rejects.toBe(
+      workflowError,
+    );
 
     const comment = addComment.mock.calls[0]?.[1] ?? "";
 
     expect(comment).toContain("Category: Setup");
     expect(comment).toContain("... [truncated]");
-    expect(comment).toContain(
-      "To retry deliberately, move this card to Ready for Agent.",
-    );
+    expect(comment).toContain("To retry deliberately, move this card to Ready for Agent.");
     expect(comment).not.toContain(fullOutput);
     expect(comment).toContain(
-      fullOutput.slice(
-        0,
-        MAX_EXTERNAL_DIAGNOSTIC_LENGTH - "... [truncated]".length,
-      ),
+      fullOutput.slice(0, MAX_EXTERNAL_DIAGNOSTIC_LENGTH - "... [truncated]".length),
     );
     expect(fs.readFileSync(sessionLogPath, "utf8")).toBe(fullOutput);
   });
@@ -313,9 +271,7 @@ describe("failCard", () => {
 
     expect(addComment).toHaveBeenCalledWith(
       "card-non-error",
-      expect.stringContaining(
-        'Reason: {"reason":"the setup tool returned an invalid result"}',
-      ),
+      expect.stringContaining('Reason: {"reason":"the setup tool returned an invalid result"}'),
     );
   });
 
@@ -333,9 +289,7 @@ describe("failCard", () => {
 
     const timeoutError = new OpenCodeTimeoutError(21_600_000);
 
-    await expect(
-      failCard(trello, project, "card-1", timeoutError),
-    ).rejects.toBe(timeoutError);
+    await expect(failCard(trello, project, "card-1", timeoutError)).rejects.toBe(timeoutError);
 
     expect(addComment).toHaveBeenCalledWith(
       "card-1",
@@ -364,9 +318,7 @@ describe("failCard", () => {
 
     const workflowError = new Error("Push pull request GitHub failure");
 
-    await expect(
-      failCard(trello, project, "card-1", workflowError),
-    ).rejects.toBe(workflowError);
+    await expect(failCard(trello, project, "card-1", workflowError)).rejects.toBe(workflowError);
 
     expect(addComment).toHaveBeenCalledWith(
       "card-1",
@@ -393,14 +345,9 @@ describe("failCard", () => {
       date: "2026-08-30T09:00:00.000Z",
     });
 
-    const workflowError = new WorkflowError(
-      "OpenCode",
-      "agent execution failed",
-    );
+    const workflowError = new WorkflowError("OpenCode", "agent execution failed");
 
-    await expect(
-      failCard(trello, project, "card-1", workflowError),
-    ).rejects.toBe(workflowError);
+    await expect(failCard(trello, project, "card-1", workflowError)).rejects.toBe(workflowError);
 
     expect(addComment).toHaveBeenCalledWith(
       "card-1",
@@ -427,14 +374,9 @@ describe("failCard", () => {
       date: "2026-08-30T09:00:00.000Z",
     });
 
-    const workflowError = new WorkflowError(
-      "Git/GitHub",
-      "remote operation failed",
-    );
+    const workflowError = new WorkflowError("Git/GitHub", "remote operation failed");
 
-    await expect(
-      failCard(trello, project, "card-1", workflowError),
-    ).rejects.toBe(workflowError);
+    await expect(failCard(trello, project, "card-1", workflowError)).rejects.toBe(workflowError);
 
     expect(addComment).toHaveBeenCalledWith(
       "card-1",

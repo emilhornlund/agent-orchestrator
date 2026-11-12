@@ -11,9 +11,7 @@ import { prepareReviewWorktree } from "../src/git/prepare-review-worktree.js";
 const temporaryDirectories: string[] = [];
 
 function createTemporaryDirectory(): string {
-  const directory = fs.mkdtempSync(
-    path.join(os.tmpdir(), "agent-orchestrator-review-"),
-  );
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-review-"));
 
   temporaryDirectories.push(directory);
 
@@ -97,9 +95,9 @@ describe("prepareReviewWorktree", () => {
     const runGit = vi.fn<RunGit>();
     const git = new GitClient(runGit);
 
-    await expect(
-      prepareReviewWorktree(git, project, "card-123"),
-    ).rejects.toThrow(`Refusing to use symbolic-link worktree ${worktreePath}`);
+    await expect(prepareReviewWorktree(git, project, "card-123")).rejects.toThrow(
+      `Refusing to use symbolic-link worktree ${worktreePath}`,
+    );
     expect(runGit).not.toHaveBeenCalled();
   });
 
@@ -114,9 +112,9 @@ describe("prepareReviewWorktree", () => {
     const runGit = vi.fn<RunGit>();
     const git = new GitClient(runGit);
 
-    await expect(
-      prepareReviewWorktree(git, project, "card-123"),
-    ).rejects.toThrow(`Refusing to use symbolic-link worktree ${worktreePath}`);
+    await expect(prepareReviewWorktree(git, project, "card-123")).rejects.toThrow(
+      `Refusing to use symbolic-link worktree ${worktreePath}`,
+    );
     expect(runGit).not.toHaveBeenCalled();
   });
 
@@ -147,10 +145,7 @@ describe("prepareReviewWorktree", () => {
       "agent/card-123",
     ]);
 
-    expect(runGit).toHaveBeenNthCalledWith(2, "/repositories/test-project", [
-      "worktree",
-      "prune",
-    ]);
+    expect(runGit).toHaveBeenNthCalledWith(2, "/repositories/test-project", ["worktree", "prune"]);
 
     expect(runGit).toHaveBeenNthCalledWith(3, "/repositories/test-project", [
       "branch",
@@ -198,10 +193,7 @@ describe("prepareReviewWorktree", () => {
       "agent/card-123",
     ]);
 
-    expect(runGit).toHaveBeenNthCalledWith(2, worktreePath, [
-      "branch",
-      "--show-current",
-    ]);
+    expect(runGit).toHaveBeenNthCalledWith(2, worktreePath, ["branch", "--show-current"]);
 
     expect(runGit).toHaveBeenNthCalledWith(3, worktreePath, [
       "status",
@@ -246,9 +238,7 @@ describe("prepareReviewWorktree", () => {
 
     const git = new GitClient(runGit);
 
-    await expect(
-      prepareReviewWorktree(git, project, "card-123"),
-    ).resolves.toEqual({
+    await expect(prepareReviewWorktree(git, project, "card-123")).resolves.toEqual({
       path: worktreePath,
       branch: "agent/card-123",
     });

@@ -5,10 +5,7 @@ import type { GitClient } from "../git/git-client.js";
 import { prepareWorktree } from "../git/prepare-worktree.js";
 import { logger, type Logger } from "../logging/logger.js";
 import type { EmailNotifier } from "../notifications/email-notifier.js";
-import {
-  OpenCodeRunAbortedError,
-  type OpenCodeClient,
-} from "../opencode/opencode-client.js";
+import { OpenCodeRunAbortedError, type OpenCodeClient } from "../opencode/opencode-client.js";
 import { CommandRunAbortedError } from "../process/command-runner.js";
 import {
   clearRefinementResult,
@@ -30,10 +27,7 @@ import {
   assertRefinementSetupBaselineUnchanged,
   runRefinementSetup,
 } from "./run-refinement-setup.js";
-import {
-  refinementInput,
-  recordRefinementAnalysisFailure,
-} from "./refinement-input.js";
+import { refinementInput, recordRefinementAnalysisFailure } from "./refinement-input.js";
 import { RefinementAnalysisFailedError } from "./run-refinement.js";
 
 export type RefinementProject = ProjectConfig & {
@@ -96,9 +90,7 @@ export async function runRefinementCardWorkflow(options: {
   const input = authority ? refinementInput(authority, card) : undefined;
 
   try {
-    worktree =
-      options.preparedWorktree ??
-      (await prepareWorktree(git, project, card.id));
+    worktree = options.preparedWorktree ?? (await prepareWorktree(git, project, card.id));
     cardLog.info(`Branch: ${worktree.branch}`);
     cardLog.info(`Worktree: ${worktree.path}`);
     const postSetupBaseline = await runRefinementSetup({
@@ -127,10 +119,7 @@ export async function runRefinementCardWorkflow(options: {
       }
     }
     cardContextPreparationFailed = true;
-    const attachmentContext = await options.prepareAttachmentContext(
-      card,
-      cardLog,
-    );
+    const attachmentContext = await options.prepareAttachmentContext(card, cardLog);
     cardContextPreparationFailed = false;
 
     cardLog.event("Starting OpenCode refinement...");
@@ -148,33 +137,20 @@ export async function runRefinementCardWorkflow(options: {
           }
         : card,
       worktreePath: worktree.path,
-      ...(postSetupBaseline === undefined
-        ? {}
-        : { repositoryBaseline: postSetupBaseline }),
+      ...(postSetupBaseline === undefined ? {} : { repositoryBaseline: postSetupBaseline }),
       signal,
       cardLog,
       refreshAttachments: async () =>
-        options.prepareAttachmentContext(
-          await trello.getCard(card.id),
-          cardLog,
-        ),
+        options.prepareAttachmentContext(await trello.getCard(card.id), cardLog),
       ...(attachmentContext === undefined ? {} : { attachmentContext }),
-      ...(options.emailNotifier === undefined
-        ? {}
-        : { emailNotifier: options.emailNotifier }),
+      ...(options.emailNotifier === undefined ? {} : { emailNotifier: options.emailNotifier }),
     });
 
     if (signal.aborted) return;
     try {
       clearRefinementResult(worktree.path);
     } catch (error) {
-      reportCleanupFailure(
-        cardLog,
-        project,
-        card,
-        getRefinementResultPath(worktree.path),
-        error,
-      );
+      reportCleanupFailure(cardLog, project, card, getRefinementResultPath(worktree.path), error);
     }
 
     cardLog.info("Cleaning up refinement worktree...");
@@ -186,9 +162,7 @@ export async function runRefinementCardWorkflow(options: {
           )
         : null;
       if (authority && !preservedHeadSha)
-        throw new Error(
-          "Accepted default history is unavailable; preserving refinement artifacts",
-        );
+        throw new Error("Accepted default history is unavailable; preserving refinement artifacts");
       await cleanupWorktree({
         git,
         project,
@@ -216,8 +190,7 @@ export async function runRefinementCardWorkflow(options: {
         error instanceof RefinementAnalysisFailedError)
     ) {
       const failure =
-        error instanceof RefinementAnalysisFailedError &&
-        error.cause instanceof Error
+        error instanceof RefinementAnalysisFailedError && error.cause instanceof Error
           ? error.cause
           : error;
       recordRefinementAnalysisFailure(
@@ -239,9 +212,7 @@ export async function runRefinementCardWorkflow(options: {
       ProjectRunAuthority.current(project.id)
         ?.store.read()
         ?.pendingOperations.some(
-          (entry) =>
-            entry.mutation &&
-            !["completed", "cancelled", "failed"].includes(entry.status),
+          (entry) => entry.mutation && !["completed", "cancelled", "failed"].includes(entry.status),
         )
     )
       throw error;
@@ -269,14 +240,7 @@ export async function runRefinementCardWorkflow(options: {
       }
     }
 
-    await failCard(
-      trello,
-      project,
-      card.id,
-      error,
-      options.emailNotifier,
-      card,
-    );
+    await failCard(trello, project, card.id, error, options.emailNotifier, card);
   }
 }
 import { NotificationPreparationError } from "../notifications/notification-outbox.js";

@@ -5,22 +5,10 @@ import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import { GitClient } from "../src/git/git-client.js";
-import {
-  GitHubClient,
-  type RunGitHubCommand,
-} from "../src/github/github-client.js";
-import type {
-  OpenCodeRunOptions,
-  RunOpenCode,
-} from "../src/opencode/opencode-client.js";
-import {
-  OpenCodeClient,
-  OpenCodeRunAbortedError,
-} from "../src/opencode/opencode-client.js";
-import {
-  CommandRunner,
-  type RunCommand,
-} from "../src/process/command-runner.js";
+import { GitHubClient, type RunGitHubCommand } from "../src/github/github-client.js";
+import type { OpenCodeRunOptions, RunOpenCode } from "../src/opencode/opencode-client.js";
+import { OpenCodeClient, OpenCodeRunAbortedError } from "../src/opencode/opencode-client.js";
+import { CommandRunner, type RunCommand } from "../src/process/command-runner.js";
 import { pollProject } from "../src/orchestrator/poll-project.js";
 import { runTaskSessionWorkflow } from "../src/orchestrator/run-task-session-workflow.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
@@ -121,9 +109,7 @@ describe("task-session production dispatch", () => {
         enqueuedAt: "2020-01-01T00:00:00.000Z",
       });
       const trello = {
-        getCards: vi.fn(async (list: string) =>
-          list === "ready" ? [future, current, older] : [],
-        ),
+        getCards: vi.fn(async (list: string) => (list === "ready" ? [future, current, older] : [])),
       } as unknown as TrelloClient;
       // Stop at the first repository operation, after production selection.
       await expect(
@@ -142,9 +128,7 @@ describe("task-session production dispatch", () => {
         kind: label === "refinement" ? "refinement" : "implementation",
         status: "failed",
       });
-      expect(
-        queue.list().find((entry) => entry.cardId === older.id)?.status,
-      ).toBe("queued");
+      expect(queue.list().find((entry) => entry.cardId === older.id)?.status).toBe("queued");
     },
   );
 
@@ -157,9 +141,7 @@ describe("task-session production dispatch", () => {
         if (list !== "ready") return [];
         readyReads++;
         return [
-          readyReads >= 2
-            ? { ...card, start: new Date(Date.now() + 60_000).toISOString() }
-            : card,
+          readyReads >= 2 ? { ...card, start: new Date(Date.now() + 60_000).toISOString() } : card,
         ];
       }),
     } as unknown as TrelloClient;
@@ -175,9 +157,7 @@ describe("task-session production dispatch", () => {
     const queue = new TaskMutationQueue(project.contextRoot, project);
     expect(queue.getActive()).toBeNull();
     expect(queue.list()).toMatchObject([{ cardId: card.id, status: "queued" }]);
-    expect(
-      new TaskExecutionStore(project.contextRoot, project).read(card.id),
-    ).toBeNull();
+    expect(new TaskExecutionStore(project.contextRoot, project).read(card.id)).toBeNull();
   });
 
   it.each(["reachable", "confirmed-lost"] as const)(
@@ -220,12 +200,7 @@ describe("task-session production dispatch", () => {
         token: "restart-token",
         assertHeld: vi.fn(),
       };
-      const runStore = new RunStore(
-        pinned.storageRoot,
-        "ci-restart-attempt",
-        pinned,
-        lease,
-      );
+      const runStore = new RunStore(pinned.storageRoot, "ci-restart-attempt", pinned, lease);
       runStore.create({
         version: 1,
         revision: 1,
@@ -265,11 +240,7 @@ describe("task-session production dispatch", () => {
         undefined,
         card.id,
       );
-      const ownedStore = new TaskExecutionStore(
-        project.contextRoot,
-        project,
-        authority,
-      );
+      const ownedStore = new TaskExecutionStore(project.contextRoot, project, authority);
       const originalCiOperationId = "ci-cycle-original:pass:1";
       const originalPrompt = "Repair the required GitHub CI failures for Build";
       const originalPromptArtifact = runStore.writeArtifact(
@@ -330,20 +301,14 @@ describe("task-session production dispatch", () => {
           updatedAt: "2026-10-24T09:00:00.000Z",
         }),
       );
-      const taskPlanStore = new TaskPlanStore(
-        project.contextRoot,
-        project,
-        authority,
-      );
+      const taskPlanStore = new TaskPlanStore(project.contextRoot, project, authority);
       await authority.run(async () =>
         taskPlanStore.create(
           {
             version: 1,
             projectId: project.id,
             cardId: card.id,
-            requirements: [
-              { id: "REQ-1", text: "Task", verification: "Check task" },
-            ],
+            requirements: [{ id: "REQ-1", text: "Task", verification: "Check task" }],
             steps: [
               {
                 id: "STEP-1",
@@ -382,9 +347,7 @@ describe("task-session production dispatch", () => {
 
       let publishedHeadSha = headSha;
       const trello = {
-        getCards: vi.fn(async (listId: string) =>
-          listId === cardListId ? [card] : [],
-        ),
+        getCards: vi.fn(async (listId: string) => (listId === cardListId ? [card] : [])),
         getCard: vi.fn(async () => card),
         moveCard: vi.fn(async (_cardId: string, listId: string) => {
           cardListId = listId;
@@ -407,8 +370,7 @@ describe("task-session production dispatch", () => {
         getDiff: vi.fn(async () => "existing change"),
         getHeadTrackedFiles: vi.fn(async () => ["src.ts"]),
         getIndexEntries: vi.fn(
-          async () =>
-            "100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\tsrc.ts\0",
+          async () => "100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\tsrc.ts\0",
         ),
         getUntrackedFiles: vi.fn(async () => []),
         getIgnoredFiles: vi.fn(async () => []),
@@ -521,10 +483,7 @@ describe("task-session production dispatch", () => {
             "Address the following verified-as-actionable human PR feedback",
           )
         ) {
-          fs.writeFileSync(
-            path.join(worktreePath, "src.ts"),
-            "export const corrected = true;\n",
-          );
+          fs.writeFileSync(path.join(worktreePath, "src.ts"), "export const corrected = true;\n");
           return {
             exitCode: 0,
             output: "feedback repair dispatched",
@@ -534,9 +493,7 @@ describe("task-session production dispatch", () => {
         if (
           options.readOnly &&
           feedbackMode &&
-          options.prompt.includes(
-            "Independently verify each actionable human PR feedback item",
-          )
+          options.prompt.includes("Independently verify each actionable human PR feedback item")
         ) {
           return {
             exitCode: 0,
@@ -545,10 +502,7 @@ describe("task-session production dispatch", () => {
               projectId: project.id,
               cardId: card.id,
               headSha: feedbackHeadSha,
-              contentIdentity: await getTaskSessionSourceSnapshotIdentity(
-                git,
-                worktreePath,
-              ),
+              contentIdentity: await getTaskSessionSourceSnapshotIdentity(git, worktreePath),
               dispositions: [
                 {
                   feedbackId: "inline-comment:501",
@@ -577,8 +531,10 @@ describe("task-session production dispatch", () => {
                 },
               ],
               blockingFindings: [],
-              reviewedContentIdentity:
-                await getTaskSessionSourceSnapshotIdentity(git, worktreePath),
+              reviewedContentIdentity: await getTaskSessionSourceSnapshotIdentity(
+                git,
+                worktreePath,
+              ),
             }),
             errorOutput: "",
           };
@@ -588,9 +544,7 @@ describe("task-session production dispatch", () => {
             /Write exactly one JSON object to ([^\n]+)\./u,
           )?.[1];
           if (resultRelativePath === undefined)
-            throw new Error(
-              "Commit-message prompt omitted its output location",
-            );
+            throw new Error("Commit-message prompt omitted its output location");
           const resultPath = path.join(options.cwd, resultRelativePath);
           fs.mkdirSync(path.dirname(resultPath), { recursive: true });
           if (feedbackMode && malformedFeedbackCommitResult) {
@@ -620,18 +574,17 @@ describe("task-session production dispatch", () => {
             errorOutput: "",
           };
         }
-        if (
-          validationCheckpointMode &&
-          options.prompt.includes('"reviewedContentIdentity"')
-        ) {
+        if (validationCheckpointMode && options.prompt.includes('"reviewedContentIdentity"')) {
           return {
             exitCode: 0,
             output: JSON.stringify({
               version: 1,
               projectId: project.id,
               cardId: card.id,
-              reviewedContentIdentity:
-                await getTaskSessionSourceSnapshotIdentity(git, worktreePath),
+              reviewedContentIdentity: await getTaskSessionSourceSnapshotIdentity(
+                git,
+                worktreePath,
+              ),
               verdict: "pass",
               requirementAssessments: [
                 {
@@ -651,10 +604,7 @@ describe("task-session production dispatch", () => {
       });
       const commands = new CommandRunner(
         vi.fn<RunCommand>(async (options) => {
-          if (
-            abortAtValidation &&
-            options.command === project.repository.validationCommand
-          ) {
+          if (abortAtValidation && options.command === project.repository.validationCommand) {
             validationRestartController.abort();
             return {
               exitCode: 0,
@@ -679,21 +629,13 @@ describe("task-session production dispatch", () => {
       const originalSwap = TaskExecutionStore.prototype.compareAndSwap;
       const checkpointInterruption = vi
         .spyOn(TaskExecutionStore.prototype, "compareAndSwap")
-        .mockImplementation(function (
-          this: TaskExecutionStore,
-          cardId,
-          revision,
-          next,
-        ) {
+        .mockImplementation(function (this: TaskExecutionStore, cardId, revision, next) {
           const result = originalSwap.call(this, cardId, revision, next);
           if (
             next.phase === "review" &&
-            next.ciRepair?.activePrimaryOperation?.operationId ===
-              "ci-cycle-original:pass:1"
+            next.ciRepair?.activePrimaryOperation?.operationId === "ci-cycle-original:pass:1"
           )
-            throw new Error(
-              "Simulated stop at the durable CI review checkpoint",
-            );
+            throw new Error("Simulated stop at the durable CI review checkpoint");
           return result;
         });
       await expect(
@@ -734,8 +676,7 @@ describe("task-session production dispatch", () => {
       expect(
         run.mock.calls.some(
           ([options]) =>
-            options.prompt === originalPrompt &&
-            options.sessionId === "ses_ci-replacement",
+            options.prompt === originalPrompt && options.sessionId === "ses_ci-replacement",
         ),
       ).toBe(true);
       expect(github.findPullRequestState).toHaveBeenCalled();
@@ -743,11 +684,8 @@ describe("task-session production dispatch", () => {
 
       // Start a fresh canonical published-feedback attempt and lose its primary
       // session before the feedback correction operation is dispatched.
-      const beforeFeedback = await authority.run(() =>
-        ownedStore.read(card.id),
-      );
-      if (beforeFeedback === null)
-        throw new Error("Expected canonical task record");
+      const beforeFeedback = await authority.run(() => ownedStore.read(card.id));
+      if (beforeFeedback === null) throw new Error("Expected canonical task record");
       const feedbackRunStore = new RunStore(
         pinned.storageRoot,
         "feedback-restart-attempt",
@@ -772,28 +710,18 @@ describe("task-session production dispatch", () => {
         undefined,
         card.id,
       );
-      const feedbackStore = new TaskExecutionStore(
-        project.contextRoot,
-        project,
-        feedbackAuthority,
-      );
+      const feedbackStore = new TaskExecutionStore(project.contextRoot, project, feedbackAuthority);
       const feedbackLedger = new FeedbackLedgerStore(
         project.contextRoot,
         project,
         feedbackAuthority,
       );
       let feedbackHeadSha = headSha;
-      const feedbackOperationId = `feedback:${feedbackHeadSha}:${createHash(
-        "sha256",
-      )
+      const feedbackOperationId = `feedback:${feedbackHeadSha}:${createHash("sha256")
         .update("inline-comment:501:Handle the empty case.")
         .digest("hex")
         .slice(0, 16)}`;
-      const feedbackQueue = new TaskMutationQueue(
-        pinned.storageRoot,
-        project,
-        feedbackAuthority,
-      );
+      const feedbackQueue = new TaskMutationQueue(pinned.storageRoot, project, feedbackAuthority);
       feedbackQueue.enqueue({
         projectId: project.id,
         cardId: card.id,
@@ -878,20 +806,14 @@ describe("task-session production dispatch", () => {
           },
         ]),
       );
-      const feedbackPlanStore = new TaskPlanStore(
-        project.contextRoot,
-        project,
-        feedbackAuthority,
-      );
+      const feedbackPlanStore = new TaskPlanStore(project.contextRoot, project, feedbackAuthority);
       await feedbackAuthority.run(async () =>
         feedbackPlanStore.create(
           {
             version: 1,
             projectId: project.id,
             cardId: card.id,
-            requirements: [
-              { id: "REQ-1", text: "Task", verification: "Check task" },
-            ],
+            requirements: [{ id: "REQ-1", text: "Task", verification: "Check task" }],
             steps: [
               {
                 id: "STEP-1",
@@ -949,16 +871,10 @@ describe("task-session production dispatch", () => {
           .readdirSync(path.join(worktreePath, ".agent-orchestrator"))
           .filter((name) => name.startsWith("commit-result-")),
       ).toEqual([]);
-      const afterFeedback = await feedbackAuthority.run(() =>
-        feedbackStore.read(card.id),
-      );
+      const afterFeedback = await feedbackAuthority.run(() => feedbackStore.read(card.id));
+      expect(afterFeedback?.sessionRecovery?.contextAvailabilityReason).toBeUndefined();
       expect(
-        afterFeedback?.sessionRecovery?.contextAvailabilityReason,
-      ).toBeUndefined();
-      expect(
-        run.mock.calls.some(([options]) =>
-          options.prompt.includes("Restore continuity"),
-        ),
+        run.mock.calls.some(([options]) => options.prompt.includes("Restore continuity")),
       ).toBe(true);
       expect(afterFeedback).toMatchObject({
         phase: "ci",
@@ -989,9 +905,7 @@ describe("task-session production dispatch", () => {
             options.sessionId === "ses_feedback-replacement",
         ),
       ).toBe(true);
-      expect(
-        afterFeedback?.primaryOperations?.[feedbackOperationId],
-      ).toMatchObject({
+      expect(afterFeedback?.primaryOperations?.[feedbackOperationId]).toMatchObject({
         id: feedbackOperationId,
         activity: "feedback-remediation",
         executions: 2,
@@ -1022,8 +936,7 @@ describe("task-session production dispatch", () => {
       });
       expect(feedbackQueue.claimNext()?.eventId).toBe(checkpointOperationId);
       feedbackQueue.fail(checkpointOperationId);
-      if (afterFeedback === null)
-        throw new Error("Expected feedback-completed task record");
+      if (afterFeedback === null) throw new Error("Expected feedback-completed task record");
       const feedbackCompletedRecord = await feedbackAuthority.run(() => {
         const awaitingHuman = transitionTaskExecutionRecord(afterFeedback, {
           type: "ci-passed-awaiting-human",
@@ -1035,11 +948,7 @@ describe("task-session production dispatch", () => {
             Math.max(Date.now(), Date.parse(afterFeedback.updatedAt) + 1),
           ).toISOString(),
         });
-        return feedbackStore.compareAndSwap(
-          card.id,
-          afterFeedback.revision,
-          awaitingHuman,
-        );
+        return feedbackStore.compareAndSwap(card.id, afterFeedback.revision, awaitingHuman);
       });
       expect(feedbackCompletedRecord.feedbackRemediation).toMatchObject({
         operationId: feedbackOperationId,
@@ -1047,19 +956,15 @@ describe("task-session production dispatch", () => {
         headSha,
       });
       await feedbackAuthority.run(() => {
-        const prepared = feedbackStore.compareAndSwap(
-          card.id,
-          feedbackCompletedRecord.revision,
-          {
-            ...feedbackCompletedRecord,
-            ciRepair: undefined,
-            reviewObservation: undefined,
-            publicationQuality: undefined,
-            reviewRepair: undefined,
-            revision: feedbackCompletedRecord.revision + 1,
-            updatedAt: new Date().toISOString(),
-          },
-        );
+        const prepared = feedbackStore.compareAndSwap(card.id, feedbackCompletedRecord.revision, {
+          ...feedbackCompletedRecord,
+          ciRepair: undefined,
+          reviewObservation: undefined,
+          publicationQuality: undefined,
+          reviewRepair: undefined,
+          revision: feedbackCompletedRecord.revision + 1,
+          updatedAt: new Date().toISOString(),
+        });
         const feedbackReceived = transitionTaskExecutionRecord(prepared, {
           type: "feedback-received",
           eventId: `${feedbackOperationId}:feedback-received`,
@@ -1122,9 +1027,7 @@ describe("task-session production dispatch", () => {
       replacementSessionId = "ses_validation-replacement";
       validationCheckpointMode = true;
       listedSessionId =
-        validationSessionState === "reachable"
-          ? "ses_lost-validation-owner"
-          : undefined;
+        validationSessionState === "reachable" ? "ses_lost-validation-owner" : undefined;
       abortAtValidation = true;
       const validationRunStart = run.mock.calls.length;
       await expect(
@@ -1141,9 +1044,7 @@ describe("task-session production dispatch", () => {
           }),
         ),
       ).rejects.toThrow("Publication configuration differs from attempt pins");
-      const afterValidationRestart = await feedbackAuthority.run(() =>
-        feedbackStore.read(card.id),
-      );
+      const afterValidationRestart = await feedbackAuthority.run(() => feedbackStore.read(card.id));
       expect(afterValidationRestart?.primarySessionId).toBe(
         validationSessionState === "reachable"
           ? "ses_lost-validation-owner"
@@ -1156,9 +1057,7 @@ describe("task-session production dispatch", () => {
         });
       else expect(afterValidationRestart?.sessionRecovery).toBeUndefined();
       expect(afterValidationRestart?.phase).toBe("publication");
-      expect(afterValidationRestart?.operationKey).toBe(
-        "original-task-operation",
-      );
+      expect(afterValidationRestart?.operationKey).toBe("original-task-operation");
       expect(cardListId).toBe(project.trello.workingListId);
       expect(card.idList).toBe(project.trello.workingListId);
       expect(feedbackQueue.getActive()).toMatchObject({
@@ -1166,9 +1065,10 @@ describe("task-session production dispatch", () => {
         kind: "feedback",
         cardId: card.id,
       });
-      expect(
-        afterValidationRestart?.primaryOperations?.[checkpointOperationId],
-      ).toMatchObject({ executions: 1, status: "completed" });
+      expect(afterValidationRestart?.primaryOperations?.[checkpointOperationId]).toMatchObject({
+        executions: 1,
+        status: "completed",
+      });
       expect(
         run.mock.calls
           .slice(validationRunStart)
@@ -1182,9 +1082,7 @@ describe("task-session production dispatch", () => {
         run.mock.calls
           .slice(validationRunStart)
           .some(([options]) =>
-            options.prompt.includes(
-              "Implement the task described on the Trello card",
-            ),
+            options.prompt.includes("Implement the task described on the Trello card"),
           ),
       ).toBe(false);
     },
@@ -1230,9 +1128,7 @@ describe("task-session production dispatch", () => {
     expect(queue.list()).toMatchObject([
       { eventId: `implementation:card:${digest}`, status: "queued" },
     ]);
-    expect(
-      new TaskExecutionStore(project.contextRoot, project).read(card.id),
-    ).toBeNull();
+    expect(new TaskExecutionStore(project.contextRoot, project).read(card.id)).toBeNull();
 
     card.start = new Date(Date.now() - 60_000).toISOString();
     await expect(poll()).rejects.toThrow();
@@ -1255,9 +1151,7 @@ describe("task-session production dispatch", () => {
       "c".repeat(40),
       "d".repeat(40),
       "e".repeat(40),
-      ...Array.from({ length: 20 }, (_, index) =>
-        index.toString(16).padStart(40, "0"),
-      ),
+      ...Array.from({ length: 20 }, (_, index) => index.toString(16).padStart(40, "0")),
     ];
     let cardList = project.trello.readyListId;
     let failFirstClaimMove = true;
@@ -1283,10 +1177,9 @@ describe("task-session production dispatch", () => {
         async (_repo: string, worktreePath: string, nextBranch: string) => {
           branch = nextBranch;
           fs.mkdirSync(worktreePath, { recursive: true });
-          fs.mkdirSync(
-            path.dirname(path.join(worktreePath, "src/settings.ts")),
-            { recursive: true },
-          );
+          fs.mkdirSync(path.dirname(path.join(worktreePath, "src/settings.ts")), {
+            recursive: true,
+          });
           fs.writeFileSync(
             path.join(worktreePath, "src/settings.ts"),
             "export const settings = {};\n",
@@ -1299,14 +1192,11 @@ describe("task-session production dispatch", () => {
       getConflictedPaths: vi.fn(async () => []),
       getHeadTrackedFiles: vi.fn(async () => trackedFiles),
       getIndexEntries: vi.fn(
-        async () =>
-          "100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\tsrc/settings.ts\0",
+        async () => "100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\tsrc/settings.ts\0",
       ),
       getUntrackedFiles: vi.fn(async () => []),
       getStatus: vi.fn(async () => ""),
-      getDiff: vi.fn(async (_cwd: string, staged = false) =>
-        staged ? "" : "implementation diff",
-      ),
+      getDiff: vi.fn(async (_cwd: string, staged = false) => (staged ? "" : "implementation diff")),
       stageAllExcept: vi.fn(async () => undefined),
       commit: vi.fn(async () => {
         headSha = commitHeads[commitIndex++]!;
@@ -1338,13 +1228,8 @@ describe("task-session production dispatch", () => {
       addComment: vi.fn(async () => undefined),
     } as unknown as TrelloClient;
     const githubRun = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
-      if (args[0] === "api" && args[1] === "user")
-        return JSON.stringify({ login: "automation" });
-      if (
-        args[0] === "pr" &&
-        args[1] === "view" &&
-        args[args.indexOf("--json") + 1] === "body"
-      )
+      if (args[0] === "api" && args[1] === "user") return JSON.stringify({ login: "automation" });
+      if (args[0] === "pr" && args[1] === "view" && args[args.indexOf("--json") + 1] === "body")
         return JSON.stringify({ body: pullRequestBody });
       if (
         args[0] === "pr" &&
@@ -1361,18 +1246,14 @@ describe("task-session production dispatch", () => {
         return "";
       }
       if (args[0] === "pr" && args[1] === "list") {
-        const requestedFields =
-          args.find((argument) => argument.includes("headRefOid")) ?? "";
-        if (!pullRequestCreated)
-          return requestedFields.length > 0 ? JSON.stringify([]) : "";
+        const requestedFields = args.find((argument) => argument.includes("headRefOid")) ?? "";
+        if (!pullRequestCreated) return requestedFields.length > 0 ? JSON.stringify([]) : "";
         if (requestedFields.includes("reviewDecision")) {
           return JSON.stringify([
             {
               url: "https://github.com/owner/repo/pull/9",
               number: 9,
-              reviewDecision: feedbackActive
-                ? "CHANGES_REQUESTED"
-                : "REVIEW_REQUIRED",
+              reviewDecision: feedbackActive ? "CHANGES_REQUESTED" : "REVIEW_REQUIRED",
               headRefOid: headSha,
             },
           ]);
@@ -1450,16 +1331,10 @@ describe("task-session production dispatch", () => {
           : JSON.stringify([[]]);
       }
       if (args[0] === "api" && args[1] === "graphql") {
-        if (
-          args.some((argument) =>
-            argument.includes("addPullRequestReviewThreadReply"),
-          )
-        ) {
+        if (args.some((argument) => argument.includes("addPullRequestReviewThreadReply"))) {
           reviewReplyMutationCount += 1;
           const replyBody =
-            args
-              .find((argument) => argument.startsWith("body="))
-              ?.slice("body=".length) ?? "";
+            args.find((argument) => argument.startsWith("body="))?.slice("body=".length) ?? "";
           const replyId = nextReplyId++;
           reviewReplyBodies.push({ body: replyBody, id: replyId });
           if (throwAfterFirstReviewReply) {
@@ -1499,9 +1374,7 @@ describe("task-session production dispatch", () => {
                           pullRequestReview: { databaseId: 12 },
                         },
                         ...reviewReplyBodies
-                          .filter((reply) =>
-                            reply.body.includes(`inline-comment%3A${id}`),
-                          )
+                          .filter((reply) => reply.body.includes(`inline-comment%3A${id}`))
                           .map((reply) => ({
                             databaseId: reply.id,
                             body: reply.body,
@@ -1527,11 +1400,7 @@ describe("task-session production dispatch", () => {
         pullRequestDraft = args.includes("--undo");
         return "";
       }
-      if (
-        args[0] === "pr" &&
-        args[1] === "view" &&
-        args[args.indexOf("--json") + 1] === "isDraft"
-      )
+      if (args[0] === "pr" && args[1] === "view" && args[args.indexOf("--json") + 1] === "isDraft")
         return String(pullRequestDraft);
       if (args[0] === "pr" && args[1] === "view")
         return JSON.stringify([
@@ -1548,14 +1417,9 @@ describe("task-session production dispatch", () => {
             mergeStateStatus: "CLEAN",
           },
         ]);
-      if (
-        args[0] === "api" &&
-        args.some((argument) => argument.includes("/check-runs?"))
-      ) {
-        const endpoint =
-          args.find((argument) => argument.includes("/check-runs?")) ?? "";
-        const observedHead =
-          endpoint.match(/\/commits\/([0-9a-f]+)\/check-runs/u)?.[1] ?? "";
+      if (args[0] === "api" && args.some((argument) => argument.includes("/check-runs?"))) {
+        const endpoint = args.find((argument) => argument.includes("/check-runs?")) ?? "";
+        const observedHead = endpoint.match(/\/commits\/([0-9a-f]+)\/check-runs/u)?.[1] ?? "";
         return JSON.stringify([
           {
             total_count: 2,
@@ -1566,9 +1430,7 @@ describe("task-session production dispatch", () => {
                 head_sha: observedHead,
                 status: "completed",
                 conclusion:
-                  observedHead === "b".repeat(40) || failAllChecks
-                    ? "failure"
-                    : "success",
+                  observedHead === "b".repeat(40) || failAllChecks ? "failure" : "success",
                 created_at: "2026-10-24T10:00:00Z",
                 html_url: "https://github.com/owner/repo/actions/runs/42",
               },
@@ -1578,9 +1440,7 @@ describe("task-session production dispatch", () => {
                 head_sha: observedHead,
                 status: "completed",
                 conclusion:
-                  observedHead === "b".repeat(40) || failAllChecks
-                    ? "failure"
-                    : "success",
+                  observedHead === "b".repeat(40) || failAllChecks ? "failure" : "success",
                 created_at: "2026-10-24T10:00:01Z",
                 html_url: "https://github.com/owner/repo/actions/runs/43",
               },
@@ -1588,24 +1448,16 @@ describe("task-session production dispatch", () => {
           },
         ]);
       }
-      if (
-        args[0] === "api" &&
-        args.some((argument) => argument.includes("/statuses?"))
-      ) {
-        const endpoint =
-          args.find((argument) => argument.includes("/statuses?")) ?? "";
-        const observedHead =
-          endpoint.match(/\/commits\/([0-9a-f]+)\/statuses/u)?.[1] ?? "";
+      if (args[0] === "api" && args.some((argument) => argument.includes("/statuses?"))) {
+        const endpoint = args.find((argument) => argument.includes("/statuses?")) ?? "";
+        const observedHead = endpoint.match(/\/commits\/([0-9a-f]+)\/statuses/u)?.[1] ?? "";
         return JSON.stringify([
           [
             {
               id: 52,
               context: "Security",
               sha: observedHead,
-              state:
-                observedHead === "b".repeat(40) || failAllChecks
-                  ? "failure"
-                  : "success",
+              state: observedHead === "b".repeat(40) || failAllChecks ? "failure" : "success",
               created_at: "2026-10-24T10:00:02Z",
               updated_at: "2026-10-24T10:00:02Z",
               target_url: "https://github.com/owner/repo/security",
@@ -1616,9 +1468,7 @@ describe("task-session production dispatch", () => {
       }
       if (
         args[0] === "api" &&
-        args.some((argument) =>
-          argument.includes("/protection/required_status_checks"),
-        )
+        args.some((argument) => argument.includes("/protection/required_status_checks"))
       ) {
         return JSON.stringify({
           contexts: ["Build", "Tests", "Security"],
@@ -1627,20 +1477,12 @@ describe("task-session production dispatch", () => {
       }
       if (
         args[0] === "api" &&
-        args.some((argument) =>
-          argument.includes("/contents/.github/workflows?"),
-        )
+        args.some((argument) => argument.includes("/contents/.github/workflows?"))
       )
         return "[]";
-      if (
-        args[0] === "api" &&
-        args.some((argument) => argument.includes("/annotations?"))
-      )
+      if (args[0] === "api" && args.some((argument) => argument.includes("/annotations?")))
         return JSON.stringify([[]]);
-      if (
-        args[0] === "api" &&
-        args.some((argument) => argument.includes("/issues/9/comments?"))
-      )
+      if (args[0] === "api" && args.some((argument) => argument.includes("/issues/9/comments?")))
         return JSON.stringify([
           [
             ...(feedbackActive
@@ -1670,9 +1512,7 @@ describe("task-session production dispatch", () => {
       ) {
         conversationReplyCount += 1;
         const body =
-          args
-            .find((argument) => argument.startsWith("body="))
-            ?.slice("body=".length) ?? "";
+          args.find((argument) => argument.startsWith("body="))?.slice("body=".length) ?? "";
         conversationReplyBodies.push(body);
         return JSON.stringify({ id: nextConversationReplyId++, body });
       }
@@ -1720,199 +1560,174 @@ describe("task-session production dispatch", () => {
     let opened = false;
     let interruptImplementation = true;
     const interruptedProcess = new AbortController();
-    const openCodeRun = vi
-      .fn<RunOpenCode>()
-      .mockImplementation(async (run: OpenCodeRunOptions) => {
-        if (run.sessionLabel === "Human feedback classification")
-          return {
-            exitCode: 0,
-            output: actionableFeedbackResponse(run.prompt),
-            errorOutput: "",
-          };
-        let processEvidence:
-          | {
-              executionId: string;
-              metadataPath: string;
-              artifactRoot: string;
-            }
-          | undefined;
-        await run.onExecutionPrepared?.(
-          (processEvidence = {
-            executionId: `mock-execution-${openCodeRun.mock.calls.length}`,
-            metadataPath: path.join(
-              getProcessRuntime().artifactRoot,
-              `mock-execution-${openCodeRun.mock.calls.length}`,
-              "execution.json",
-            ),
-            artifactRoot: path.join(
-              getProcessRuntime().artifactRoot,
-              `mock-execution-${openCodeRun.mock.calls.length}`,
-            ),
+    const openCodeRun = vi.fn<RunOpenCode>().mockImplementation(async (run: OpenCodeRunOptions) => {
+      if (run.sessionLabel === "Human feedback classification")
+        return {
+          exitCode: 0,
+          output: actionableFeedbackResponse(run.prompt),
+          errorOutput: "",
+        };
+      let processEvidence:
+        | {
+            executionId: string;
+            metadataPath: string;
+            artifactRoot: string;
+          }
+        | undefined;
+      await run.onExecutionPrepared?.(
+        (processEvidence = {
+          executionId: `mock-execution-${openCodeRun.mock.calls.length}`,
+          metadataPath: path.join(
+            getProcessRuntime().artifactRoot,
+            `mock-execution-${openCodeRun.mock.calls.length}`,
+            "execution.json",
+          ),
+          artifactRoot: path.join(
+            getProcessRuntime().artifactRoot,
+            `mock-execution-${openCodeRun.mock.calls.length}`,
+          ),
+        }),
+      );
+      if (run.captureSessionId) {
+        opened = true;
+        return {
+          exitCode: 0,
+          sessionId: "ses_primary-task",
+          output: [
+            JSON.stringify({
+              type: "step_start",
+              sessionID: "ses_primary-task",
+            }),
+            JSON.stringify({
+              type: "text",
+              sessionID: "ses_primary-task",
+              part: { type: "text", text: JSON.stringify(plan) },
+            }),
+          ].join("\n"),
+          errorOutput: "",
+        };
+      }
+      if (run.readOnly && run.prompt.includes("verify the persisted task plan")) {
+        return {
+          exitCode: 0,
+          output: JSON.stringify({
+            version: 1,
+            projectId: "project",
+            cardId: card.id,
+            planRevision: 1,
+            verdict: "pass",
+            findings: [],
+          }),
+          errorOutput: "",
+        };
+      }
+      if (
+        run.readOnly &&
+        run.prompt.includes("Independently verify each actionable human PR feedback item")
+      ) {
+        const identity = run.prompt.match(/Reviewed source identity: (sha256:[0-9a-f]{64})/)?.[1];
+        const verificationHead = run.prompt.match(/Current PR head: ([0-9a-f]{40,64})/)?.[1];
+        if (identity === undefined || verificationHead === undefined)
+          throw new Error("feedback verifier prompt omitted snapshot identity");
+        return {
+          exitCode: 0,
+          output: JSON.stringify({
+            version: 1,
+            projectId: "project",
+            cardId: card.id,
+            headSha: verificationHead,
+            contentIdentity: identity,
+            dispositions: [
+              ["inline-comment", 501],
+              ["inline-comment", 502],
+              ["conversation-comment", 601],
+            ]
+              .filter(
+                ([kind, id]) =>
+                  run.prompt.includes(`"kind": "${kind}"`) && run.prompt.includes(`"id": "${id}"`),
+              )
+              .map(([kind, id]) => ({
+                feedbackId: `${kind}:${id}`,
+                status: "verified-fixed",
+                evidence: ["src/settings.ts", "tests/settings.test.ts"],
+              })),
+          }),
+          errorOutput: "",
+        };
+      }
+      if (run.readOnly) {
+        const identity = run.prompt.match(
+          /Reviewed source content identity: (sha256:[0-9a-f]{64})/,
+        )?.[1];
+        if (identity === undefined) throw new Error("review prompt omitted source identity");
+        return {
+          exitCode: 0,
+          output: JSON.stringify(review(identity)),
+          errorOutput: "",
+        };
+      }
+      if (run.prompt.includes("Implement the task plan in this repository")) {
+        fs.writeFileSync(
+          path.join(run.cwd, "src/settings.ts"),
+          "export const settings = { fixed: true };\n",
+        );
+        if (interruptImplementation) {
+          interruptImplementation = false;
+          if (processEvidence === undefined)
+            throw new Error("implementation execution evidence was not bound");
+          fs.mkdirSync(processEvidence.artifactRoot, { recursive: true });
+          fs.writeFileSync(
+            processEvidence.metadataPath,
+            JSON.stringify({
+              executionId: processEvidence.executionId,
+              cwd: fs.realpathSync(run.cwd),
+              status: "interrupted",
+              treeStopped: true,
+              exitCode: 1,
+              sessionId: run.sessionId,
+            }),
+          );
+          interruptedProcess.abort();
+          throw new OpenCodeRunAbortedError();
+        }
+      }
+      if (run.prompt.startsWith("Repair the required GitHub CI failures")) {
+        fs.writeFileSync(
+          path.join(run.cwd, "src/settings.ts"),
+          "export const settings = { fixed: true };\n",
+        );
+      }
+      if (run.prompt.startsWith("Address the following verified-as-actionable human PR feedback")) {
+        fs.writeFileSync(
+          path.join(run.cwd, "src/settings.ts"),
+          run.prompt.includes("Also cover the reset path")
+            ? "export const settings = { fixed: true, feedbackHandled: true, resetHandled: true };\n"
+            : "export const settings = { fixed: true, feedbackHandled: true };\n",
+        );
+      }
+      if (run.prompt.includes("Generate the commit message")) {
+        const resultRelativePath = run.prompt.match(
+          /Write exactly one JSON object to ([^\n]+)\./u,
+        )?.[1];
+        if (resultRelativePath === undefined)
+          throw new Error("Commit-message prompt omitted its output location");
+        const resultPath = path.join(run.cwd, resultRelativePath);
+        fs.mkdirSync(path.dirname(resultPath), { recursive: true });
+        fs.writeFileSync(
+          resultPath,
+          JSON.stringify({
+            message:
+              "feat(settings): persist settings\n\n- Save settings.\n- Cover loading.\n\nMake settings survive restart.",
           }),
         );
-        if (run.captureSessionId) {
-          opened = true;
-          return {
-            exitCode: 0,
-            sessionId: "ses_primary-task",
-            output: [
-              JSON.stringify({
-                type: "step_start",
-                sessionID: "ses_primary-task",
-              }),
-              JSON.stringify({
-                type: "text",
-                sessionID: "ses_primary-task",
-                part: { type: "text", text: JSON.stringify(plan) },
-              }),
-            ].join("\n"),
-            errorOutput: "",
-          };
-        }
-        if (
-          run.readOnly &&
-          run.prompt.includes("verify the persisted task plan")
-        ) {
-          return {
-            exitCode: 0,
-            output: JSON.stringify({
-              version: 1,
-              projectId: "project",
-              cardId: card.id,
-              planRevision: 1,
-              verdict: "pass",
-              findings: [],
-            }),
-            errorOutput: "",
-          };
-        }
-        if (
-          run.readOnly &&
-          run.prompt.includes(
-            "Independently verify each actionable human PR feedback item",
-          )
-        ) {
-          const identity = run.prompt.match(
-            /Reviewed source identity: (sha256:[0-9a-f]{64})/,
-          )?.[1];
-          const verificationHead = run.prompt.match(
-            /Current PR head: ([0-9a-f]{40,64})/,
-          )?.[1];
-          if (identity === undefined || verificationHead === undefined)
-            throw new Error(
-              "feedback verifier prompt omitted snapshot identity",
-            );
-          return {
-            exitCode: 0,
-            output: JSON.stringify({
-              version: 1,
-              projectId: "project",
-              cardId: card.id,
-              headSha: verificationHead,
-              contentIdentity: identity,
-              dispositions: [
-                ["inline-comment", 501],
-                ["inline-comment", 502],
-                ["conversation-comment", 601],
-              ]
-                .filter(
-                  ([kind, id]) =>
-                    run.prompt.includes(`"kind": "${kind}"`) &&
-                    run.prompt.includes(`"id": "${id}"`),
-                )
-                .map(([kind, id]) => ({
-                  feedbackId: `${kind}:${id}`,
-                  status: "verified-fixed",
-                  evidence: ["src/settings.ts", "tests/settings.test.ts"],
-                })),
-            }),
-            errorOutput: "",
-          };
-        }
-        if (run.readOnly) {
-          const identity = run.prompt.match(
-            /Reviewed source content identity: (sha256:[0-9a-f]{64})/,
-          )?.[1];
-          if (identity === undefined)
-            throw new Error("review prompt omitted source identity");
-          return {
-            exitCode: 0,
-            output: JSON.stringify(review(identity)),
-            errorOutput: "",
-          };
-        }
-        if (run.prompt.includes("Implement the task plan in this repository")) {
-          fs.writeFileSync(
-            path.join(run.cwd, "src/settings.ts"),
-            "export const settings = { fixed: true };\n",
-          );
-          if (interruptImplementation) {
-            interruptImplementation = false;
-            if (processEvidence === undefined)
-              throw new Error(
-                "implementation execution evidence was not bound",
-              );
-            fs.mkdirSync(processEvidence.artifactRoot, { recursive: true });
-            fs.writeFileSync(
-              processEvidence.metadataPath,
-              JSON.stringify({
-                executionId: processEvidence.executionId,
-                cwd: fs.realpathSync(run.cwd),
-                status: "interrupted",
-                treeStopped: true,
-                exitCode: 1,
-                sessionId: run.sessionId,
-              }),
-            );
-            interruptedProcess.abort();
-            throw new OpenCodeRunAbortedError();
-          }
-        }
-        if (run.prompt.startsWith("Repair the required GitHub CI failures")) {
-          fs.writeFileSync(
-            path.join(run.cwd, "src/settings.ts"),
-            "export const settings = { fixed: true };\n",
-          );
-        }
-        if (
-          run.prompt.startsWith(
-            "Address the following verified-as-actionable human PR feedback",
-          )
-        ) {
-          fs.writeFileSync(
-            path.join(run.cwd, "src/settings.ts"),
-            run.prompt.includes("Also cover the reset path")
-              ? "export const settings = { fixed: true, feedbackHandled: true, resetHandled: true };\n"
-              : "export const settings = { fixed: true, feedbackHandled: true };\n",
-          );
-        }
-        if (run.prompt.includes("Generate the commit message")) {
-          const resultRelativePath = run.prompt.match(
-            /Write exactly one JSON object to ([^\n]+)\./u,
-          )?.[1];
-          if (resultRelativePath === undefined)
-            throw new Error(
-              "Commit-message prompt omitted its output location",
-            );
-          const resultPath = path.join(run.cwd, resultRelativePath);
-          fs.mkdirSync(path.dirname(resultPath), { recursive: true });
-          fs.writeFileSync(
-            resultPath,
-            JSON.stringify({
-              message:
-                "feat(settings): persist settings\n\n- Save settings.\n- Cover loading.\n\nMake settings survive restart.",
-            }),
-          );
-        }
-        return { exitCode: 0, output: "completed", errorOutput: "" };
-      });
+      }
+      return { exitCode: 0, output: "completed", errorOutput: "" };
+    });
     const runCommand = vi.fn<RunCommand>(async (options) => {
       if (options.command.startsWith("opencode session list"))
         return {
           exitCode: 0,
-          output: JSON.stringify([
-            { id: "ses_primary-task", directory: options.cwd },
-          ]),
+          output: JSON.stringify([{ id: "ses_primary-task", directory: options.cwd }]),
           errorOutput: "",
         };
       return {
@@ -1939,11 +1754,8 @@ describe("task-session production dispatch", () => {
           ownerPid?: number;
         }>;
       };
-      const event = persisted.events.find(
-        (candidate) => candidate.eventId === eventId,
-      );
-      if (event === undefined)
-        throw new Error("Expected persisted queue event");
+      const event = persisted.events.find((candidate) => candidate.eventId === eventId);
+      if (event === undefined) throw new Error("Expected persisted queue event");
       persisted.activeEventId = eventId;
       event.status = "active";
       event.ownerToken = "00000000-0000-4000-8000-000000000001";
@@ -1951,56 +1763,26 @@ describe("task-session production dispatch", () => {
       fs.writeFileSync(queuePath, JSON.stringify(persisted), "utf8");
     };
     await expect(
-      pollProject(
-        trello,
-        git,
-        github,
-        openCode,
-        commands,
-        project,
-        new AbortController().signal,
-      ),
+      pollProject(trello, git, github, openCode, commands, project, new AbortController().signal),
     ).rejects.toThrow("simulated interruption after worktree preparation");
     expect(cardList).toBe(project.trello.readyListId);
-    expect(
-      new TaskExecutionStore(project.contextRoot, project).read(card.id),
-    ).toBe(null);
+    expect(new TaskExecutionStore(project.contextRoot, project).read(card.id)).toBe(null);
     expect(fs.existsSync(path.join(worktreeRoot, card.id))).toBe(true);
-    const claimedEventId = new TaskMutationQueue(
-      project.contextRoot,
-      project,
-    ).list()[0]!.eventId;
+    const claimedEventId = new TaskMutationQueue(project.contextRoot, project).list()[0]!.eventId;
     abandonQueueOwner(claimedEventId);
     await expect(
-      pollProject(
-        trello,
-        git,
-        github,
-        openCode,
-        commands,
-        project,
-        interruptedProcess.signal,
-      ),
+      pollProject(trello, git, github, openCode, commands, project, interruptedProcess.signal),
     ).rejects.toThrow("Task-session implementation aborted");
-    const interruptedRecord = new TaskExecutionStore(
-      project.contextRoot,
-      project,
-    ).read(card.id);
+    const interruptedRecord = new TaskExecutionStore(project.contextRoot, project).read(card.id);
     expect(interruptedRecord).toMatchObject({
       phase: "implementation",
       primarySessionId: "ses_primary-task",
       sessionCreationStatus: "bound",
       setup: { status: "not-required" },
     });
-    const operationID = Object.keys(
-      interruptedRecord?.primaryOperations ?? {},
-    )[0]!;
-    expect(
-      interruptedRecord?.primaryOperations?.[operationID]?.executions,
-    ).toBe(1);
-    expect(
-      new TaskMutationQueue(project.contextRoot, project).getActive()?.status,
-    ).toBe("failed");
+    const operationID = Object.keys(interruptedRecord?.primaryOperations ?? {})[0]!;
+    expect(interruptedRecord?.primaryOperations?.[operationID]?.executions).toBe(1);
+    expect(new TaskMutationQueue(project.contextRoot, project).getActive()?.status).toBe("failed");
     abandonQueueOwner(claimedEventId);
     await expect(
       pollProject(
@@ -2019,25 +1801,17 @@ describe("task-session production dispatch", () => {
       ),
     ).rejects.toThrow("simulated interruption after trusted commit");
     expect(
-      new TaskExecutionStore(project.contextRoot, project).read(card.id)
-        ?.primaryOperations?.[operationID],
+      new TaskExecutionStore(project.contextRoot, project).read(card.id)?.primaryOperations?.[
+        operationID
+      ],
     ).toMatchObject({ id: operationID, executions: 2 });
     await pollProject(trello, git, github, openCode, commands, project, signal);
     expect(git.commit).toHaveBeenCalledTimes(1);
     expect(opened).toBe(true);
     expect(git.push).toHaveBeenCalledTimes(2);
-    expect(trello.moveCard).toHaveBeenCalledWith(
-      card.id,
-      project.trello.workingListId,
-    );
-    expect(trello.moveCard).toHaveBeenCalledWith(
-      card.id,
-      project.trello.reviewListId,
-    );
-    const feedbackLedger = new FeedbackLedgerStore(
-      project.contextRoot,
-      project,
-    );
+    expect(trello.moveCard).toHaveBeenCalledWith(card.id, project.trello.workingListId);
+    expect(trello.moveCard).toHaveBeenCalledWith(card.id, project.trello.reviewListId);
+    const feedbackLedger = new FeedbackLedgerStore(project.contextRoot, project);
     feedbackLedger.create(card.id, [
       {
         kind: "conversation-comment",
@@ -2058,9 +1832,7 @@ describe("task-session production dispatch", () => {
     expect(git.commit).toHaveBeenCalledTimes(2);
     expect(pullRequestCreated).toBe(true);
     expect(
-      githubRun.mock.calls.filter(
-        ([, args]) => args[0] === "pr" && args[1] === "create",
-      ),
+      githubRun.mock.calls.filter(([, args]) => args[0] === "pr" && args[1] === "create"),
     ).toHaveLength(1);
     expect(
       openCodeRun.mock.calls.some(
@@ -2072,9 +1844,7 @@ describe("task-session production dispatch", () => {
           options.sessionId === "ses_primary-task",
       ),
     ).toBe(false);
-    const record = new TaskExecutionStore(project.contextRoot, project).read(
-      card.id,
-    );
+    const record = new TaskExecutionStore(project.contextRoot, project).read(card.id);
     expect(record).toMatchObject({
       phase: "ci",
       retryCounters: { ci: 0 },
@@ -2085,9 +1855,7 @@ describe("task-session production dispatch", () => {
       },
     });
     expect(
-      new TaskMutationQueue(project.contextRoot, project)
-        .list()
-        .map(({ status }) => status),
+      new TaskMutationQueue(project.contextRoot, project).list().map(({ status }) => status),
     ).toEqual(["completed", "queued", "completed"]);
     expect(trello.getCards).toHaveBeenCalled();
     expect(fs.existsSync(path.join(worktreeRoot, card.id))).toBe(true);
@@ -2106,10 +1874,7 @@ describe("task-session production dispatch", () => {
       status: "retired",
       retirementReason: "superseded-observation",
     });
-    const afterUncertainReply = new TaskExecutionStore(
-      project.contextRoot,
-      project,
-    ).read(card.id);
+    const afterUncertainReply = new TaskExecutionStore(project.contextRoot, project).read(card.id);
     expect(afterUncertainReply).toMatchObject({
       phase: "human-feedback",
       pullRequest: { headSha: "c".repeat(40) },
@@ -2123,12 +1888,10 @@ describe("task-session production dispatch", () => {
         replyState: "outcome-unknown",
       }),
     );
-    expect(
-      new TaskMutationQueue(project.contextRoot, project).getActive()?.eventId,
-    ).toContain("feedback-replies:");
-    expect(
-      new TaskMutationQueue(project.contextRoot, project).getActive()?.status,
-    ).toBe("failed");
+    expect(new TaskMutationQueue(project.contextRoot, project).getActive()?.eventId).toContain(
+      "feedback-replies:",
+    );
+    expect(new TaskMutationQueue(project.contextRoot, project).getActive()?.status).toBe("failed");
     expect(
       openCodeRun.mock.calls.some(
         ([options]) =>
@@ -2150,10 +1913,7 @@ describe("task-session production dispatch", () => {
     );
     expect(reviewReplyMutationCount).toBe(1);
     const publishedFeedback = feedbackLedger.read(card.id);
-    const recoveredRecord = new TaskExecutionStore(
-      project.contextRoot,
-      project,
-    ).read(card.id);
+    const recoveredRecord = new TaskExecutionStore(project.contextRoot, project).read(card.id);
     expect(recoveredRecord?.reviewObservation).toMatchObject({
       headSha: "c".repeat(40),
       ciEvaluation: {
@@ -2186,10 +1946,7 @@ describe("task-session production dispatch", () => {
     await pollProject(trello, git, github, openCode, commands, project, signal);
     expect(git.commit).toHaveBeenCalledTimes(3);
     expect(reviewReplyMutationCount).toBe(1);
-    const secondRoundRecord = new TaskExecutionStore(
-      project.contextRoot,
-      project,
-    ).read(card.id);
+    const secondRoundRecord = new TaskExecutionStore(project.contextRoot, project).read(card.id);
     expect(secondRoundRecord).toMatchObject({
       phase: "ci",
       pullRequest: { headSha: "d".repeat(40) },
@@ -2198,19 +1955,16 @@ describe("task-session production dispatch", () => {
     expect(reviewReplyMutationCount).toBe(2);
     failAllChecks = true;
     await pollProject(trello, git, github, openCode, commands, project, signal);
-    const exhaustedRecord = new TaskExecutionStore(
-      project.contextRoot,
-      project,
-    ).read(card.id);
+    const exhaustedRecord = new TaskExecutionStore(project.contextRoot, project).read(card.id);
     expect(exhaustedRecord).toMatchObject({
       phase: "human-feedback",
       retryCounters: { ci: 2 },
       ciRepair: { status: "stopped", stopReason: "no-change" },
     });
     expect(git.commit).toHaveBeenCalledTimes(4);
-    expect(
-      new TaskMutationQueue(project.contextRoot, project).list().at(-1)?.status,
-    ).toBe("completed");
+    expect(new TaskMutationQueue(project.contextRoot, project).list().at(-1)?.status).toBe(
+      "completed",
+    );
     const finalLedger = feedbackLedger.read(card.id);
     expect(finalLedger?.entries).toContainEqual(
       expect.objectContaining({
@@ -2225,8 +1979,7 @@ describe("task-session production dispatch", () => {
     expect(reviewReplyMutationCount).toBe(2);
     expect(git.commit).toHaveBeenCalledTimes(4);
     expect(
-      new TaskExecutionStore(project.contextRoot, project).read(card.id)
-        ?.ciRepair,
+      new TaskExecutionStore(project.contextRoot, project).read(card.id)?.ciRepair,
     ).toMatchObject({
       status: "stopped",
       stopReason: "no-change",
@@ -2452,17 +2205,13 @@ describe("task-session production dispatch", () => {
       project,
       new AbortController().signal,
     );
-    expect(
-      recordStore.read(card.id)?.reviewObservation?.ciEvaluation,
-    ).toMatchObject({
+    expect(recordStore.read(card.id)?.reviewObservation?.ciEvaluation).toMatchObject({
       status: "waiting",
       pendingChecks: ["Tests"],
       missingChecks: [],
     });
     expect(recordStore.read(card.id)?.retryCounters.ci).toBe(0);
-    expect(new TaskMutationQueue(project.contextRoot, project).list()).toEqual(
-      [],
-    );
+    expect(new TaskMutationQueue(project.contextRoot, project).list()).toEqual([]);
     expect(openCode).not.toHaveBeenCalled();
   });
 
@@ -2505,43 +2254,39 @@ describe("task-session production dispatch", () => {
         listId === project.trello.reviewListId ? cards : [],
       ),
     } as unknown as TrelloClient;
-    const getCiObservations = vi.fn(
-      async ({ headSha }: { headSha: string }) => ({
-        headSha,
-        checks: [
-          {
-            source: "check-run" as const,
-            id: 42,
-            name: "Build",
-            headSha,
-            status: "queued" as const,
-            conclusion: null,
-            url: null,
-          },
-        ],
-        expectationSources: [
-          {
-            kind: "repository-rules" as const,
-            sourceId: "rules",
-            complete: true,
-            checkNames: ["Build"],
-          },
-        ],
-      }),
-    );
-    const github = {
-      findPullRequestState: vi.fn(
-        async ({ headBranch }: { headBranch: string }) => {
-          const cardId = headBranch.slice("agent/".length);
-          const index = cards.findIndex(({ id }) => id === cardId);
-          return {
-            url: `https://github.com/owner/repo/pull/${index + 1}`,
-            state: "OPEN",
-            mergedAt: null,
-            headRefOid: headByCard.get(cardId),
-          };
+    const getCiObservations = vi.fn(async ({ headSha }: { headSha: string }) => ({
+      headSha,
+      checks: [
+        {
+          source: "check-run" as const,
+          id: 42,
+          name: "Build",
+          headSha,
+          status: "queued" as const,
+          conclusion: null,
+          url: null,
         },
-      ),
+      ],
+      expectationSources: [
+        {
+          kind: "repository-rules" as const,
+          sourceId: "rules",
+          complete: true,
+          checkNames: ["Build"],
+        },
+      ],
+    }));
+    const github = {
+      findPullRequestState: vi.fn(async ({ headBranch }: { headBranch: string }) => {
+        const cardId = headBranch.slice("agent/".length);
+        const index = cards.findIndex(({ id }) => id === cardId);
+        return {
+          url: `https://github.com/owner/repo/pull/${index + 1}`,
+          state: "OPEN",
+          mergedAt: null,
+          headRefOid: headByCard.get(cardId),
+        };
+      }),
       getCiObservations,
       findChangesRequestedPullRequest: vi.fn(async () => null),
       getPullRequestConversationComments: vi.fn(async () => []),
@@ -2559,26 +2304,20 @@ describe("task-session production dispatch", () => {
     );
 
     expect(getCiObservations).toHaveBeenCalledTimes(4);
-    expect(
-      new Set(getCiObservations.mock.calls.map(([input]) => input.headSha)),
-    ).toEqual(new Set(headByCard.values()));
-    expect(
-      taskStore.read("card-one")?.reviewObservation?.ciEvaluation,
-    ).toMatchObject({
-      status: "waiting",
-      expectedCheckNames: ["Build"],
-      pendingChecks: ["Build"],
-    });
-    expect(
-      taskStore.read("card-two")?.reviewObservation?.ciEvaluation,
-    ).toMatchObject({
-      status: "waiting",
-      expectedCheckNames: ["Build"],
-      pendingChecks: ["Build"],
-    });
-    expect(new TaskMutationQueue(project.contextRoot, project).list()).toEqual(
-      [],
+    expect(new Set(getCiObservations.mock.calls.map(([input]) => input.headSha))).toEqual(
+      new Set(headByCard.values()),
     );
+    expect(taskStore.read("card-one")?.reviewObservation?.ciEvaluation).toMatchObject({
+      status: "waiting",
+      expectedCheckNames: ["Build"],
+      pendingChecks: ["Build"],
+    });
+    expect(taskStore.read("card-two")?.reviewObservation?.ciEvaluation).toMatchObject({
+      status: "waiting",
+      expectedCheckNames: ["Build"],
+      pendingChecks: ["Build"],
+    });
+    expect(new TaskMutationQueue(project.contextRoot, project).list()).toEqual([]);
     expect(openCode).not.toHaveBeenCalled();
   });
 
@@ -2656,9 +2395,7 @@ describe("task-session production dispatch", () => {
       primarySessionId: "ses_primary-task",
     });
     expect(openCodeRun).not.toHaveBeenCalled();
-    expect(fs.readFileSync(path.join(worktreePath, "src.ts"), "utf8")).toBe(
-      "preserve me\n",
-    );
+    expect(fs.readFileSync(path.join(worktreePath, "src.ts"), "utf8")).toBe("preserve me\n");
     expect(queue.getActive()).toMatchObject({
       cardId: card.id,
       operationKey: "restart-operation",

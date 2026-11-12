@@ -4,11 +4,7 @@ export type WorkflowFailureCategory =
 export class WorkflowError extends Error {
   readonly category: WorkflowFailureCategory;
 
-  constructor(
-    category: WorkflowFailureCategory,
-    message: string,
-    options?: ErrorOptions,
-  ) {
+  constructor(category: WorkflowFailureCategory, message: string, options?: ErrorOptions) {
     super(message, options);
 
     this.name = "WorkflowError";

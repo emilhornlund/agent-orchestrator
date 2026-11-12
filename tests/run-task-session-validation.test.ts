@@ -20,10 +20,7 @@ import {
   runTaskSessionValidation,
 } from "../src/task-session/run-task-session-validation.js";
 import { runTaskSessionCoverage } from "../src/task-session/run-task-session-coverage.js";
-import {
-  configureProcessRuntime,
-  getProcessRuntime,
-} from "../src/process/process-runtime.js";
+import { configureProcessRuntime, getProcessRuntime } from "../src/process/process-runtime.js";
 
 const execFile = promisify(nodeExecFile);
 
@@ -41,8 +38,7 @@ afterEach(() => {
     fs.rmSync(temporaryRoot, { recursive: true, force: true });
     temporaryRoot = undefined;
   }
-  for (const root of additionalTemporaryRoots)
-    fs.rmSync(root, { recursive: true, force: true });
+  for (const root of additionalTemporaryRoots) fs.rmSync(root, { recursive: true, force: true });
   additionalTemporaryRoots = [];
 });
 
@@ -52,9 +48,7 @@ function createFixture(
     coverageCommand?: string | null;
   } = {},
 ) {
-  temporaryRoot = fs.mkdtempSync(
-    path.join(os.tmpdir(), "agent-orchestrator-validation-runner-"),
-  );
+  temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-validation-runner-"));
   const repositoryPath = path.join(temporaryRoot, "repository");
   const worktreeRoot = path.join(temporaryRoot, "worktrees");
   const worktreePath = path.join(worktreeRoot, "card-one");
@@ -154,9 +148,7 @@ function runValidation(
     commands: fixture.commands,
     signal: overrides.signal ?? new AbortController().signal,
     timeoutMilliseconds: overrides.timeoutMilliseconds ?? 30_000,
-    ...(overrides.secretValues === undefined
-      ? {}
-      : { secretValues: overrides.secretValues }),
+    ...(overrides.secretValues === undefined ? {} : { secretValues: overrides.secretValues }),
   });
 }
 
@@ -175,8 +167,7 @@ describe("runTaskSessionValidation", () => {
       });
       fixture.commands = new CommandRunner();
       if (gate === "coverage")
-        fixture.project.repository.coverageCommand =
-          fixture.project.repository.validationCommand;
+        fixture.project.repository.coverageCommand = fixture.project.repository.validationCommand;
 
       const result =
         gate === "coverage"
@@ -198,21 +189,15 @@ describe("runTaskSessionValidation", () => {
       expect(result?.exitCode).toBe(0);
       expect(result?.diagnostic).toHaveLength(2_000);
       expect(result?.diagnostic).toContain("[truncated]");
-      const [executionId] = fs.readdirSync(
-        path.join(artifactRoot, "process-executions"),
-      );
+      const [executionId] = fs.readdirSync(path.join(artifactRoot, "process-executions"));
       expect(executionId).toBeDefined();
-      const evidencePath = path.join(
-        artifactRoot,
-        "process-executions",
-        executionId!,
+      const evidencePath = path.join(artifactRoot, "process-executions", executionId!);
+      expect(fs.readFileSync(path.join(evidencePath, "stdout.txt"), "utf8")).toBe(
+        "o".repeat(3_000),
       );
-      expect(
-        fs.readFileSync(path.join(evidencePath, "stdout.txt"), "utf8"),
-      ).toBe("o".repeat(3_000));
-      expect(
-        fs.readFileSync(path.join(evidencePath, "stderr.txt"), "utf8"),
-      ).toBe("e".repeat(3_000));
+      expect(fs.readFileSync(path.join(evidencePath, "stderr.txt"), "utf8")).toBe(
+        "e".repeat(3_000),
+      );
     },
   );
   it("runs the exact configured command in the owned worktree and records evidence", async () => {
@@ -243,9 +228,7 @@ describe("runTaskSessionValidation", () => {
       diagnostic: "all tests passed",
       contentIdentity: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
     });
-    expect(Date.parse(result.completedAt)).toBeGreaterThanOrEqual(
-      Date.parse(result.startedAt),
-    );
+    expect(Date.parse(result.completedAt)).toBeGreaterThanOrEqual(Date.parse(result.startedAt));
     expect(fixture.taskRecordStore.read("card-one")?.phase).toBe("validation");
   });
 
@@ -285,9 +268,7 @@ describe("runTaskSessionValidation", () => {
 
   it("records timeout and abort outcomes as failures", async () => {
     const timeoutFixture = createFixture();
-    timeoutFixture.runCommand.mockRejectedValue(
-      new CommandTimeoutError(30_000),
-    );
+    timeoutFixture.runCommand.mockRejectedValue(new CommandTimeoutError(30_000));
 
     await expect(runValidation(timeoutFixture)).resolves.toMatchObject({
       exitCode: null,
@@ -428,19 +409,14 @@ describe("runTaskSessionValidation", () => {
     const result = await runValidation(fixture);
     expect(result.status).toBe("failed");
     expect(result.exitCode).toBe(7);
-    expect(
-      fs.readFileSync(
-        path.join(fixture.worktreePath, "validation.marker"),
-        "utf8",
-      ),
-    ).toBe("ran");
+    expect(fs.readFileSync(path.join(fixture.worktreePath, "validation.marker"), "utf8")).toBe(
+      "ran",
+    );
   });
 
   it("records a generic execution exception as uncertain rather than a verified nonzero failure", async () => {
     const fixture = createFixture();
-    fixture.runCommand.mockRejectedValue(
-      new Error("process outcome unavailable"),
-    );
+    fixture.runCommand.mockRejectedValue(new Error("process outcome unavailable"));
     await expect(runValidation(fixture)).resolves.toMatchObject({
       status: "uncertain",
       exitCode: null,
@@ -455,9 +431,7 @@ describe("runTaskSessionValidation", () => {
   ])(
     "executes only the configured commands with real processes ($name)",
     async ({ validation, coverage }) => {
-      const markerRoot = fs.mkdtempSync(
-        path.join(os.tmpdir(), "quality-matrix-"),
-      );
+      const markerRoot = fs.mkdtempSync(path.join(os.tmpdir(), "quality-matrix-"));
       additionalTemporaryRoots.push(markerRoot);
       const markerValidation = path.join(markerRoot, "validation.marker");
       const markerCoverage = path.join(markerRoot, "coverage.marker");
@@ -561,10 +535,7 @@ describe("runTaskSessionValidation", () => {
         validationCommand: `${process.execPath} -e "require('fs').writeFileSync('second-project.marker', 'second')"`,
       },
     } as ProjectConfig;
-    const secondStore = new TaskExecutionStore(
-      path.join(secondRoot, "state"),
-      secondProject,
-    );
+    const secondStore = new TaskExecutionStore(path.join(secondRoot, "state"), secondProject);
     first.getCurrentBranch.mockImplementation(async (worktreePath) =>
       worktreePath === secondWorktree ? "agent/card-two" : "agent/card-one",
     );
@@ -622,87 +593,69 @@ describe("runTaskSessionValidation", () => {
       status: "passed",
       command: secondProject.repository.validationCommand,
     });
-    expect(
-      fs.readFileSync(
-        path.join(first.worktreePath, "first-project.marker"),
-        "utf8",
-      ),
-    ).toBe("first");
-    expect(
-      fs.readFileSync(
-        path.join(secondWorktree, "second-project.marker"),
-        "utf8",
-      ),
-    ).toBe("second");
-    expect(
-      fs.existsSync(path.join(first.worktreePath, "second-project.marker")),
-    ).toBe(false);
-    expect(
-      fs.existsSync(path.join(secondWorktree, "first-project.marker")),
-    ).toBe(false);
+    expect(fs.readFileSync(path.join(first.worktreePath, "first-project.marker"), "utf8")).toBe(
+      "first",
+    );
+    expect(fs.readFileSync(path.join(secondWorktree, "second-project.marker"), "utf8")).toBe(
+      "second",
+    );
+    expect(fs.existsSync(path.join(first.worktreePath, "second-project.marker"))).toBe(false);
+    expect(fs.existsSync(path.join(secondWorktree, "first-project.marker"))).toBe(false);
   });
 
   it("rejects a wrong branch before command execution", async () => {
     const branchFixture = createFixture();
     branchFixture.getCurrentBranch.mockResolvedValue("agent/other-card");
 
-    await expect(runValidation(branchFixture)).rejects.toThrow(
-      "branch mismatch",
-    );
+    await expect(runValidation(branchFixture)).rejects.toThrow("branch mismatch");
     expect(branchFixture.runCommand).not.toHaveBeenCalled();
   });
 
   it("allows only explicitly identified exhausted feedback review validation", async () => {
     const fixture = createFixture();
     const previous = fixture.taskRecordStore.read("card-one")!;
-    const changed = fixture.taskRecordStore.compareAndSwap(
-      "card-one",
-      previous.revision,
-      {
-        ...previous,
-        phase: "review",
-        feedbackRemediation: {
-          operationId: "feedback:head:round",
-          headSha: "a".repeat(40),
-          ledgerRevision: 1,
-          status: "changed",
-        },
-        retryCounters: { ...previous.retryCounters, review: 1 },
-        reviewRepair: {
-          cycleId: previous.operationKey,
-          status: "exhausted",
-          maxAttempts: 1,
-          finalReview: {
-            version: 1,
-            projectId: "project-one",
-            cardId: "card-one",
-            verdict: "fail",
-            requirementAssessments: [
-              {
-                requirementId: "REQ-1",
-                status: "unsatisfied",
-                details: "Remains for human review",
-                evidence: [],
-              },
-            ],
-            blockingFindings: [
-              {
-                kind: "defect",
-                summary: "Unresolved",
-                detail: "Needs human review",
-              },
-            ],
-            reviewedContentIdentity: `sha256:${"a".repeat(64)}`,
-          },
-        },
-        revision: previous.revision + 1,
-        updatedAt: "2026-10-24T09:00:01.000Z",
+    const changed = fixture.taskRecordStore.compareAndSwap("card-one", previous.revision, {
+      ...previous,
+      phase: "review",
+      feedbackRemediation: {
+        operationId: "feedback:head:round",
+        headSha: "a".repeat(40),
+        ledgerRevision: 1,
+        status: "changed",
       },
-    );
+      retryCounters: { ...previous.retryCounters, review: 1 },
+      reviewRepair: {
+        cycleId: previous.operationKey,
+        status: "exhausted",
+        maxAttempts: 1,
+        finalReview: {
+          version: 1,
+          projectId: "project-one",
+          cardId: "card-one",
+          verdict: "fail",
+          requirementAssessments: [
+            {
+              requirementId: "REQ-1",
+              status: "unsatisfied",
+              details: "Remains for human review",
+              evidence: [],
+            },
+          ],
+          blockingFindings: [
+            {
+              kind: "defect",
+              summary: "Unresolved",
+              detail: "Needs human review",
+            },
+          ],
+          reviewedContentIdentity: `sha256:${"a".repeat(64)}`,
+        },
+      },
+      revision: previous.revision + 1,
+      updatedAt: "2026-10-24T09:00:01.000Z",
+    });
     expect(changed.phase).toBe("review");
-    await expect(runValidation(fixture)).rejects.toThrow(
-      "requires validation or publication",
-    );
+    await expect(runValidation(fixture)).rejects.toThrow("requires validation or publication");
     await expect(
       runTaskSessionValidation({
         project: fixture.project,

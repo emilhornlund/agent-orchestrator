@@ -9,8 +9,7 @@ export const MAX_PULL_REQUEST_DESCRIPTION_CHANGES = 20;
 export const MAX_PULL_REQUEST_DESCRIPTION_VALIDATION = 20;
 export const MAX_PULL_REQUEST_DESCRIPTION_ITEM_LENGTH = 500;
 
-export type PullRequestDescriptionFailureType =
-  "JSON parsing" | "schema validation";
+export type PullRequestDescriptionFailureType = "JSON parsing" | "schema validation";
 
 export class PullRequestDescriptionParseError extends Error {
   constructor(
@@ -47,11 +46,7 @@ function validateNonBlankString(
   return null;
 }
 
-function validateStringArray(
-  value: unknown,
-  path: string,
-  maximumCount: number,
-): string | null {
+function validateStringArray(value: unknown, path: string, maximumCount: number): string | null {
   if (!Array.isArray(value)) {
     return `${path} must be an array of non-blank strings`;
   }
@@ -77,16 +72,12 @@ function validateStringArray(
 
 function normalizePullRequestDescriptionOutput(output: string): string {
   const trimmedOutput = output.trim();
-  const fencedOutput = /^```(?:json)?\r?\n([\s\S]*)\r?\n```$/.exec(
-    trimmedOutput,
-  );
+  const fencedOutput = /^```(?:json)?\r?\n([\s\S]*)\r?\n```$/.exec(trimmedOutput);
 
   return fencedOutput?.[1]?.trim() ?? trimmedOutput;
 }
 
-export function parsePullRequestDescription(
-  output: string,
-): PullRequestDescription {
+export function parsePullRequestDescription(output: string): PullRequestDescription {
   let parsed: unknown;
 
   try {
@@ -107,9 +98,7 @@ export function parsePullRequestDescription(
   }
 
   const expectedFields = new Set(["summary", "changes", "validation"]);
-  const unexpectedFields = Object.keys(parsed).filter(
-    (field) => !expectedFields.has(field),
-  );
+  const unexpectedFields = Object.keys(parsed).filter((field) => !expectedFields.has(field));
 
   if (unexpectedFields.length > 0) {
     throw new PullRequestDescriptionParseError(

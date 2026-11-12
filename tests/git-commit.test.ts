@@ -14,11 +14,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-async function runGit(
-  cwd: string,
-  args: string[],
-  environment?: GitEnvironment,
-): Promise<string> {
+async function runGit(cwd: string, args: string[], environment?: GitEnvironment): Promise<string> {
   const { stdout } = await execFileAsync("git", args, {
     cwd,
     encoding: "utf8",
@@ -30,12 +26,8 @@ async function runGit(
 
 describe("GitClient deterministic commit execution", () => {
   it("stages every change, creates exactly one clean commit, and uses the configured identity", async () => {
-    const repositoryPath = fs.mkdtempSync(
-      path.join(os.tmpdir(), "agent-orchestrator-git-commit-"),
-    );
-    const messageDirectory = fs.mkdtempSync(
-      path.join(os.tmpdir(), "agent-orchestrator-message-"),
-    );
+    const repositoryPath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-git-commit-"));
+    const messageDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-message-"));
     const identity = {
       name: "Configured Agent",
       email: "configured-agent@example.com",
@@ -66,25 +58,23 @@ describe("GitClient deterministic commit execution", () => {
         "feat(files): apply the deterministic commit\n\n- Stage all file changes.\n- Preserve the complete message.\n\nThe resulting commit is reproducible.";
       const messagePath = path.join(messageDirectory, "message.txt");
       fs.writeFileSync(messagePath, message);
-      const git = new GitClient((cwd, args, environment) =>
-        runGit(cwd, args, environment),
-      );
+      const git = new GitClient((cwd, args, environment) => runGit(cwd, args, environment));
 
       await git.stageAll(repositoryPath);
       await git.commit(repositoryPath, messagePath, identity);
 
       const finalHead = await git.getHeadSha(repositoryPath);
       expect(finalHead).not.toBe(initialHead);
-      await expect(
-        git.getCommitCountBetween(repositoryPath, initialHead, finalHead),
-      ).resolves.toBe(1);
+      await expect(git.getCommitCountBetween(repositoryPath, initialHead, finalHead)).resolves.toBe(
+        1,
+      );
       await expect(git.getStatus(repositoryPath)).resolves.toBe("");
       await expect(git.getCommitMessage(repositoryPath)).resolves.toContain(
         "feat(files): apply the deterministic commit\n\n- Stage all file changes.",
       );
-      await expect(
-        runGit(repositoryPath, ["show", "-s", "--format=%an <%ae>"]),
-      ).resolves.toBe("Configured Agent <configured-agent@example.com>");
+      await expect(runGit(repositoryPath, ["show", "-s", "--format=%an <%ae>"])).resolves.toBe(
+        "Configured Agent <configured-agent@example.com>",
+      );
       await expect(
         runGit(repositoryPath, ["show", "--format=", "--name-status", "HEAD"]),
       ).resolves.toContain("A\tadded.txt");

@@ -74,9 +74,7 @@ describe("FeedbackLedgerStore", () => {
       requestRevision: 2,
     });
     expect(changed.entries[0]?.unresolvedReason).toBeUndefined();
-    const refreshed = store.mergeIncoming("card", [
-      entry("id", "Please fix a new issue"),
-    ]);
+    const refreshed = store.mergeIncoming("card", [entry("id", "Please fix a new issue")]);
     expect(refreshed.entries[0]).toMatchObject({
       actionability: "actionable",
       requestRevision: 2,
@@ -119,22 +117,12 @@ describe("FeedbackLedgerStore", () => {
   it("rejects stale writes, wrong-task access, and malformed persisted data", () => {
     const { store } = fixture();
     const ledger = store.create("card", [entry("id")]);
-    expect(() =>
-      store.compareAndSwap("card", 2, { ...ledger, revision: 3 }),
-    ).toThrow(FeedbackLedgerConflictError);
+    expect(() => store.compareAndSwap("card", 2, { ...ledger, revision: 3 })).toThrow(
+      FeedbackLedgerConflictError,
+    );
     expect(() => store.read("other-card")).not.toThrow();
-    const file = path.join(
-      root,
-      "state",
-      "feedback-ledgers",
-      "project",
-      "card.json",
-    );
-    fs.writeFileSync(
-      file,
-      JSON.stringify({ ...ledger, cardId: "other-card" }),
-      "utf8",
-    );
+    const file = path.join(root, "state", "feedback-ledgers", "project", "card.json");
+    fs.writeFileSync(file, JSON.stringify({ ...ledger, cardId: "other-card" }), "utf8");
     expect(() => store.read("card")).toThrow("ownership mismatch");
     fs.writeFileSync(file, "{broken", "utf8");
     expect(() => store.read("card")).toThrow("Could not parse feedback ledger");

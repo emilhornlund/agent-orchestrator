@@ -22,10 +22,7 @@ import { type TrelloCard, type TrelloClient } from "../trello/trello-client.js";
 import { annotateCardFailure, annotateFailure } from "./failure-diagnostic.js";
 import { trelloReconciliationError } from "./trello-reconciliation-error.js";
 import { WorkflowError } from "./workflow-error.js";
-import {
-  clearPreparedConflict,
-  type PreparedConflictHandoff,
-} from "./prepared-conflict-state.js";
+import { clearPreparedConflict, type PreparedConflictHandoff } from "./prepared-conflict-state.js";
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -88,9 +85,7 @@ async function cleanupTerminalWorktree(
       signal,
     });
     if (!signal.aborted)
-      cardLog.info(
-        `Terminal task worktree cleanup completed for ${worktreePath}`,
-      );
+      cardLog.info(`Terminal task worktree cleanup completed for ${worktreePath}`);
   } catch (error) {
     cardLog.warn(
       `Terminal task cleanup was not completed for ${worktreePath} and ${branch}: ${message(error)}`,
@@ -122,12 +117,7 @@ export async function completeMergedTaskSessionPullRequest(options: {
   if (pullRequest.state !== "MERGED" || pullRequest.mergedAt === null)
     throw new Error("Completion requires a verified merged pull request");
   const branch = taskResources(project, card.id).branch;
-  await clearTerminalActivity(
-    options.github,
-    project,
-    pullRequest.url,
-    cardLog,
-  );
+  await clearTerminalActivity(options.github, project, pullRequest.url, cardLog);
   if (!options.preserveWorktree) {
     const remoteHead = await git.getRemoteBranchSha(
       project.repository.path,
@@ -138,9 +128,7 @@ export async function completeMergedTaskSessionPullRequest(options: {
     if (signal.aborted) return;
     if (remoteHead !== null) {
       if (remoteHead !== pullRequest.headRefOid)
-        throw new Error(
-          "Terminal remote branch differs from the verified PR head; preserving it",
-        );
+        throw new Error("Terminal remote branch differs from the verified PR head; preserving it");
       try {
         await git.deleteRemoteBranch(
           project.repository.path,
@@ -151,14 +139,7 @@ export async function completeMergedTaskSessionPullRequest(options: {
         );
       } catch (error) {
         if (!isMissingBranchDeletionError(error)) throw error;
-        if (
-          await git.remoteBranchExists(
-            project.repository.path,
-            "origin",
-            branch,
-            project,
-          )
-        ) {
+        if (await git.remoteBranchExists(project.repository.path, "origin", branch, project)) {
           throw error;
         }
       }
@@ -169,10 +150,7 @@ export async function completeMergedTaskSessionPullRequest(options: {
     clearTerminalConflict(project, card, options.preparedConflict, cardLog);
   const alreadyDone = card.idList === project.trello.doneListId;
   if (!alreadyDone) {
-    if (
-      options.emailNotifier &&
-      (options.emailNotifier.isEventEnabled?.("done") ?? true)
-    )
+    if (options.emailNotifier && (options.emailNotifier.isEventEnabled?.("done") ?? true))
       enqueueNotification(
         options.emailNotifier,
         project.id,
@@ -204,9 +182,7 @@ export async function completeMergedTaskSessionPullRequest(options: {
         { reconciliationListId: project.trello.reviewListId },
       );
     }
-    cardLog.event(
-      `Merged pull request transitioned card to Done: ${pullRequest.url}`,
-    );
+    cardLog.event(`Merged pull request transitioned card to Done: ${pullRequest.url}`);
     await notifyCompletion(
       options.emailNotifier,
       { project, card, pullRequestUrl: pullRequest.url },
@@ -221,9 +197,7 @@ export async function completeMergedTaskSessionPullRequest(options: {
       await trello.addComment(card.id, options.completionComment);
     } catch (error) {
       throwIfWorkflowMutationPending(project.id);
-      cardLog.warn(
-        `Could not add merged PR completion note: ${message(error)}`,
-      );
+      cardLog.warn(`Could not add merged PR completion note: ${message(error)}`);
     }
   }
   if (options.preserveWorktree) {
@@ -231,14 +205,7 @@ export async function completeMergedTaskSessionPullRequest(options: {
       "Task artifacts preserved after human merge; interrupted or unshipped work remains available for recovery",
     );
   } else {
-    await cleanupTerminalWorktree(
-      git,
-      project,
-      card,
-      cardLog,
-      signal,
-      pullRequest.headRefOid!,
-    );
+    await cleanupTerminalWorktree(git, project, card, cardLog, signal, pullRequest.headRefOid!);
   }
 }
 
@@ -257,15 +224,8 @@ export async function returnClosedTaskSessionPullRequestToBacklog(options: {
   const cardLog = logger.child({ projectId: project.id, cardId: card.id });
   if (signal.aborted) return;
   if (pullRequest.state !== "CLOSED" || pullRequest.mergedAt !== null)
-    throw new Error(
-      "Backlog closure requires a verified unmerged pull request",
-    );
-  await clearTerminalActivity(
-    options.github,
-    project,
-    pullRequest.url,
-    cardLog,
-  );
+    throw new Error("Backlog closure requires a verified unmerged pull request");
+  await clearTerminalActivity(options.github, project, pullRequest.url, cardLog);
   if (!options.preserveWorktree)
     clearTerminalConflict(project, card, options.preparedConflict, cardLog);
   const alreadyBacklog = card.idList === project.trello.backlogListId;
@@ -282,9 +242,7 @@ export async function returnClosedTaskSessionPullRequestToBacklog(options: {
         { reconciliationListId: project.trello.reviewListId },
       );
     }
-    cardLog.event(
-      `Closed pull request returned card to Backlog: ${pullRequest.url}`,
-    );
+    cardLog.event(`Closed pull request returned card to Backlog: ${pullRequest.url}`);
   }
   // The move and explanatory comment are separate obligations. In particular,
   // finding the card in Backlog after restart does not prove comment delivery.
@@ -305,15 +263,11 @@ export async function returnClosedTaskSessionPullRequestToBacklog(options: {
       commits = await options.github.getPullRequestCommitShas({
         cwd: project.repository.path,
         repository: project.repository.github,
-        pullRequestNumber: Number(
-          new URL(pullRequest.url).pathname.split("/").at(-1),
-        ),
+        pullRequestNumber: Number(new URL(pullRequest.url).pathname.split("/").at(-1)),
         project,
       });
       if (commits.at(-1) !== pullRequest.headRefOid)
-        throw new Error(
-          "Closed PR history does not preserve the implementation",
-        );
+        throw new Error("Closed PR history does not preserve the implementation");
     } catch {
       await assertTerminalArtifactIsolation(project, git);
       cardLog.warn(
@@ -321,14 +275,7 @@ export async function returnClosedTaskSessionPullRequestToBacklog(options: {
       );
       return;
     }
-    await cleanupTerminalWorktree(
-      git,
-      project,
-      card,
-      cardLog,
-      signal,
-      pullRequest.headRefOid,
-    );
+    await cleanupTerminalWorktree(git, project, card, cardLog, signal, pullRequest.headRefOid);
   }
 }
 

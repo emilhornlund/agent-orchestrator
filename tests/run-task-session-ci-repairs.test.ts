@@ -43,10 +43,7 @@ function fixture() {
     createdAt: "2026-10-24T09:00:00.000Z",
     updatedAt: "2026-10-24T09:00:00.000Z",
   });
-  const evaluation = (
-    headSha: string,
-    status: "failed" | "passed",
-  ): CiCheckEvaluation =>
+  const evaluation = (headSha: string, status: "failed" | "passed"): CiCheckEvaluation =>
     status === "passed"
       ? { status, expectedHeadSha: headSha, expectedCheckNames: ["Build"] }
       : {
@@ -100,17 +97,14 @@ describe("runTaskSessionCiRepairs", () => {
     await runTaskSessionCiRepairs({
       ...f.base,
       maxAttempts: 1,
-      observeChecks: async (sha) =>
-        f.evaluation(sha, sha === f.sha ? "failed" : "passed"),
+      observeChecks: async (sha) => f.evaluation(sha, sha === f.sha ? "failed" : "passed"),
     });
     const completed = f.store.read("card")!;
     expect(completed.ciRepair).toMatchObject({
       initiatingEventId: "feedback:explicit-retry:revision:2",
       cycleId: "operation:ci:feedback:explicit-retry:revision:2",
     });
-    expect(ciRepairEventId(completed, f.sha)).toBe(
-      ciRepairEventId(retry, f.sha),
-    );
+    expect(ciRepairEventId(completed, f.sha)).toBe(ciRepairEventId(retry, f.sha));
     expect(f.base.repairPrimarySession).toHaveBeenCalledWith(
       [],
       1,
@@ -156,10 +150,9 @@ describe("runTaskSessionCiRepairs", () => {
   it("resumes an active final-pass CI repair with its exact durable ID and pass", async () => {
     const f = fixture();
     const operationId = "operation:ci:pass:2";
-    const promptArtifact = f.store.writePrimaryResultArtifact(
-      `${operationId}:prompt`,
-      { prompt: "persisted CI prompt" },
-    );
+    const promptArtifact = f.store.writePrimaryResultArtifact(`${operationId}:prompt`, {
+      prompt: "persisted CI prompt",
+    });
     const diagnostics = [
       {
         name: "Build",
@@ -236,8 +229,7 @@ describe("runTaskSessionCiRepairs", () => {
     const next = "b".repeat(40);
     const result = await runTaskSessionCiRepairs({
       ...f.base,
-      observeChecks: async (sha) =>
-        f.evaluation(sha, sha === f.sha ? "failed" : "passed"),
+      observeChecks: async (sha) => f.evaluation(sha, sha === f.sha ? "failed" : "passed"),
       publishSamePullRequest: async () => next,
     });
     expect(result).toMatchObject({

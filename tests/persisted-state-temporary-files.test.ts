@@ -113,9 +113,7 @@ function createFixture(): {
   trustedPath: string;
   rejectedPath: string;
 } {
-  temporaryRoot = fs.mkdtempSync(
-    path.join(os.tmpdir(), "agent-orchestrator-state-cleanup-"),
-  );
+  temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-state-cleanup-"));
   const project = createProject(temporaryRoot);
   const contextRoot = path.join(temporaryRoot, "context");
   const values = createStateValues(project);
@@ -166,14 +164,10 @@ describe("persisted state temporary-file cleanup", () => {
 
     cleanupPersistedStateTemporaryFiles([fixture.project], fixture.contextRoot);
 
-    expect(fs.readFileSync(fixture.preparedPath, "utf8")).toBe(
-      preparedContents,
-    );
+    expect(fs.readFileSync(fixture.preparedPath, "utf8")).toBe(preparedContents);
     expect(fs.readFileSync(fixture.blockPath, "utf8")).toBe(blockContents);
     expect(fs.readFileSync(fixture.trustedPath, "utf8")).toBe(trustedContents);
-    expect(fs.readFileSync(fixture.rejectedPath, "utf8")).toBe(
-      rejectedContents,
-    );
+    expect(fs.readFileSync(fixture.rejectedPath, "utf8")).toBe(rejectedContents);
   });
 
   it("removes stale temporary files for every persisted state store", () => {
@@ -227,10 +221,7 @@ describe("persisted state temporary-file cleanup", () => {
       path.dirname(fixture.blockPath),
       `.${RECONCILIATION_BLOCK_FILENAME}.${process.pid}.active`,
     );
-    const unknownPreparedPath = path.join(
-      path.dirname(fixture.preparedPath),
-      "notes.txt",
-    );
+    const unknownPreparedPath = path.join(path.dirname(fixture.preparedPath), "notes.txt");
     const nonMatchingBlockPath = path.join(
       path.dirname(fixture.blockPath),
       `.${RECONCILIATION_BLOCK_FILENAME}.${staleProcessId}`,
@@ -266,16 +257,11 @@ describe("persisted state temporary-file cleanup", () => {
   });
 
   it("treats missing state directories as harmless", () => {
-    temporaryRoot = fs.mkdtempSync(
-      path.join(os.tmpdir(), "agent-orchestrator-state-cleanup-"),
-    );
+    temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-state-cleanup-"));
     const project = createProject(temporaryRoot);
 
     expect(() =>
-      cleanupPersistedStateTemporaryFiles(
-        [project],
-        path.join(temporaryRoot!, "missing-context"),
-      ),
+      cleanupPersistedStateTemporaryFiles([project], path.join(temporaryRoot!, "missing-context")),
     ).not.toThrow();
   });
 
@@ -309,10 +295,7 @@ describe("persisted state temporary-file cleanup", () => {
     });
 
     try {
-      cleanupPersistedStateTemporaryFiles(
-        [fixture.project],
-        fixture.contextRoot,
-      );
+      cleanupPersistedStateTemporaryFiles([fixture.project], fixture.contextRoot);
 
       expect(fs.existsSync(stalePreparedPath)).toBe(true);
       expect(fs.existsSync(staleTrustedPath)).toBe(false);

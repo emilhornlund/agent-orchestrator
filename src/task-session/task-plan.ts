@@ -1,8 +1,6 @@
 import { z } from "zod";
 
-const stableId = z
-  .string()
-  .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u, "Must be a nonempty stable ID");
+const stableId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u, "Must be a nonempty stable ID");
 
 const nonEmptyText = z.string().refine((value) => value.trim().length > 0, {
   message: "Must not be blank",
@@ -62,10 +60,7 @@ const taskPlanSchema = z
 
       const stepRequirementIds = new Set<string>();
 
-      for (const [
-        requirementIndex,
-        requirementId,
-      ] of step.requirementIds.entries()) {
+      for (const [requirementIndex, requirementId] of step.requirementIds.entries()) {
         if (stepRequirementIds.has(requirementId)) {
           ctx.addIssue({
             code: "custom",

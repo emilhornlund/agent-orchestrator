@@ -8,10 +8,7 @@ import { ObservedPrTerminalError } from "../task-session/terminal-pr-fence.js";
 import os from "node:os";
 import path from "node:path";
 
-import {
-  canonicalizeGitHubRepository,
-  type ProjectConfig,
-} from "../config/config.js";
+import { canonicalizeGitHubRepository, type ProjectConfig } from "../config/config.js";
 import { GitHubCredentialProvider } from "../github/github-credential-provider.js";
 import { getGitHubOperationProject } from "../github/github-operation-context.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
@@ -82,9 +79,7 @@ export type RunGit = (
   signalOverride?: AbortSignal | null,
 ) => Promise<string>;
 
-export function getGitIdentityEnvironment(
-  identity: GitIdentity,
-): GitEnvironment {
+export function getGitIdentityEnvironment(identity: GitIdentity): GitEnvironment {
   return {
     GIT_AUTHOR_NAME: identity.name,
     GIT_AUTHOR_EMAIL: identity.email,
@@ -93,15 +88,9 @@ export function getGitIdentityEnvironment(
   };
 }
 
-const defaultRunGit: RunGit = async (
-  cwd,
-  args,
-  environment,
-  signalOverride,
-) => {
+const defaultRunGit: RunGit = async (cwd, args, environment, signalOverride) => {
   const runtime = getProcessRuntime();
-  const signal =
-    signalOverride === null ? undefined : (signalOverride ?? runtime.signal);
+  const signal = signalOverride === null ? undefined : (signalOverride ?? runtime.signal);
   const operationTimeoutMilliseconds =
     (getGitHubOperationProject()?.opencode.timeoutMinutes ??
       runtime.operationTimeoutMilliseconds / 60_000) * 60_000;
@@ -110,11 +99,7 @@ const defaultRunGit: RunGit = async (
     environment?.GITHUB_TOKEN,
     ...runtime.secretValues,
   ].filter((value): value is string => value !== undefined);
-  const execution = beginProcessEvidence(
-    `git ${args.join(" ")}`,
-    cwd,
-    secretValues,
-  );
+  const execution = beginProcessEvidence(`git ${args.join(" ")}`, cwd, secretValues);
   return new Promise((resolve, reject) => {
     const child = spawn("git", args, {
       cwd,
@@ -137,22 +122,14 @@ const defaultRunGit: RunGit = async (
       try {
         execution.append(stream, text);
         if (execution.failure !== undefined) throw execution.failure;
-        if (stream === "stdout")
-          stdout = appendBoundedOutput(stdout, text, stream);
+        if (stream === "stdout") stdout = appendBoundedOutput(stdout, text, stream);
         else stderr = appendBoundedOutput(stderr, text, stream);
       } catch (error) {
         recorderFailure =
-          error instanceof Error
-            ? error
-            : new ProcessEvidenceError("Process recording failed");
-        signalProcessGroup(child.pid, "SIGTERM", (signal) =>
-          child.kill(signal),
-        );
+          error instanceof Error ? error : new ProcessEvidenceError("Process recording failed");
+        signalProcessGroup(child.pid, "SIGTERM", (signal) => child.kill(signal));
         killTimer = setTimeout(
-          () =>
-            signalProcessGroup(child.pid, "SIGKILL", (signal) =>
-              child.kill(signal),
-            ),
+          () => signalProcessGroup(child.pid, "SIGKILL", (signal) => child.kill(signal)),
           5_000,
         );
       }
@@ -168,10 +145,7 @@ const defaultRunGit: RunGit = async (
       timedOut = true;
       signalProcessGroup(child.pid, "SIGTERM", (signal) => child.kill(signal));
       killTimer = setTimeout(
-        () =>
-          signalProcessGroup(child.pid, "SIGKILL", (signal) =>
-            child.kill(signal),
-          ),
+        () => signalProcessGroup(child.pid, "SIGKILL", (signal) => child.kill(signal)),
         5_000,
       );
     }, operationTimeoutMilliseconds);
@@ -179,10 +153,7 @@ const defaultRunGit: RunGit = async (
       if (settled) return;
       signalProcessGroup(child.pid, "SIGTERM", (signal) => child.kill(signal));
       killTimer = setTimeout(
-        () =>
-          signalProcessGroup(child.pid, "SIGKILL", (signal) =>
-            child.kill(signal),
-          ),
+        () => signalProcessGroup(child.pid, "SIGKILL", (signal) => child.kill(signal)),
         5_000,
       );
     };
@@ -191,17 +162,13 @@ const defaultRunGit: RunGit = async (
     child.stdout.on("data", (chunk: Buffer | string) =>
       append(
         "stdout",
-        stdoutRedactor.push(
-          typeof chunk === "string" ? chunk : stdoutDecoder.write(chunk),
-        ),
+        stdoutRedactor.push(typeof chunk === "string" ? chunk : stdoutDecoder.write(chunk)),
       ),
     );
     child.stderr.on("data", (chunk: Buffer | string) =>
       append(
         "stderr",
-        stderrRedactor.push(
-          typeof chunk === "string" ? chunk : stderrDecoder.write(chunk),
-        ),
+        stderrRedactor.push(typeof chunk === "string" ? chunk : stderrDecoder.write(chunk)),
       ),
     );
     child.once("error", (error) => {
@@ -220,13 +187,7 @@ const defaultRunGit: RunGit = async (
         reject(finishError);
         return;
       }
-      reject(
-        new ProcessExecutionError(
-          "Git",
-          execution.executionId,
-          "spawn-failure",
-        ),
-      );
+      reject(new ProcessExecutionError("Git", execution.executionId, "spawn-failure"));
     });
     child.once("close", async (code, signalName) => {
       if (settled) return;
@@ -245,9 +206,7 @@ const defaultRunGit: RunGit = async (
           recorderFailure ??=
             finishError instanceof Error
               ? finishError
-              : new ProcessEvidenceError(
-                  "Process evidence finalization failed",
-                );
+              : new ProcessEvidenceError("Process evidence finalization failed");
         }
         reject(error);
         return;
@@ -302,14 +261,10 @@ const defaultRunGit: RunGit = async (
 export class GitClient {
   /** Concrete Git journal readback. Requests contain objects/refs, never shell
    * commands. Reconciliation observes the original object, not today's HEAD. */
-  async reconcileMutation(
-    request: GitMutationRequest,
-    project?: ProjectConfig,
-  ): Promise<void> {
+  async reconcileMutation(request: GitMutationRequest, project?: ProjectConfig): Promise<void> {
     rejectJournaledDispatch();
     const authority = mutationAuthority(project?.id);
-    if (!authority)
-      throw new Error("Git reconciliation requires attempt authority");
+    if (!authority) throw new Error("Git reconciliation requires attempt authority");
     const run = authority.store.read()!;
     const args = request.args;
     const { branch, path: worktree } = runTaskResources(run);
@@ -320,13 +275,10 @@ export class GitClient {
         value.worktree !== worktree ||
         value.branch !== branch ||
         !run.resources.some(
-          (resource) =>
-            resource.kind === "worktree" && resource.path === worktree,
+          (resource) => resource.kind === "worktree" && resource.path === worktree,
         )
       )
-        throw new Error(
-          "Worktree creation differs from attempt resource intent",
-        );
+        throw new Error("Worktree creation differs from attempt resource intent");
       await workflowMutation({
         authority,
         kind: "git-worktree",
@@ -341,21 +293,13 @@ export class GitClient {
               value.start,
             );
           else {
-            if (
-              (await this.getRefSha(
-                value.cwd,
-                `refs/heads/${value.branch}`,
-              )) !== value.start
-            )
+            if ((await this.getRefSha(value.cwd, `refs/heads/${value.branch}`)) !== value.start)
               throw new Error("Worktree branch changed after intent");
             await this.addWorktree(value.cwd, value.worktree, value.branch);
           }
         },
         observe: async () => {
-          if (
-            !fs.existsSync(value.worktree) ||
-            fs.lstatSync(value.worktree).isSymbolicLink()
-          )
+          if (!fs.existsSync(value.worktree) || fs.lstatSync(value.worktree).isSymbolicLink())
             return null;
           const actual = {
             branch: await this.getCurrentBranch(value.worktree),
@@ -381,8 +325,7 @@ export class GitClient {
       (args.cwd !== run.pinned.repositoryPath ||
         !run.resources.some(
           (resource) =>
-            resource.kind ===
-              (request.args.kind === "worktree" ? "worktree" : "branch") &&
+            resource.kind === (request.args.kind === "worktree" ? "worktree" : "branch") &&
             resource.path ===
               (request.args.kind === "worktree"
                 ? request.args.resource
@@ -391,20 +334,11 @@ export class GitClient {
     )
       throw new Error("Cleanup resource is not owned by this attempt");
     const common = await this.getCommonGitDirectory(run.pinned.repositoryPath);
-    if (
-      request.route !== "git-cleanup" &&
-      (await this.getCommonGitDirectory(args.cwd)) !== common
-    )
+    if (request.route !== "git-cleanup" && (await this.getCommonGitDirectory(args.cwd)) !== common)
       throw new Error("Git common repository differs from attempt");
     const verifyDestination = async (destination: string, fetch?: string) => {
-      const actual = await this.resolvePublicationDestinations(
-        args.cwd,
-        run.pinned.repository,
-      );
-      if (
-        actual.push !== destination ||
-        (fetch !== undefined && actual.fetch !== fetch)
-      )
+      const actual = await this.resolvePublicationDestinations(args.cwd, run.pinned.repository);
+      if (actual.push !== destination || (fetch !== undefined && actual.fetch !== fetch))
         throw new Error("Git destination changed after intent");
     };
     if (request.route === "git-commit") {
@@ -419,22 +353,14 @@ export class GitClient {
             (await this.getHeadSha(value.cwd)) !== value.parent ||
             (await this.getIndexTreeSha(value.cwd)) !== value.tree ||
             (await this.getCurrentBranch(value.cwd)) !== value.branch ||
-            (await this.getRefSha(value.cwd, `refs/heads/${value.branch}`)) !==
-              value.parent
+            (await this.getRefSha(value.cwd, `refs/heads/${value.branch}`)) !== value.parent
           )
             throw new Error("Commit inputs changed after intent");
-          const temporary = fs.mkdtempSync(
-            path.join(os.tmpdir(), "orchestrator-journal-commit-"),
-          );
+          const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "orchestrator-journal-commit-"));
           const messagePath = path.join(temporary, "message");
           try {
             fs.writeFileSync(messagePath, value.message, { mode: 0o600 });
-            await this.commit(
-              value.cwd,
-              messagePath,
-              value.identity,
-              "verbatim",
-            );
+            await this.commit(value.cwd, messagePath, value.identity, "verbatim");
           } finally {
             fs.rmSync(temporary, { recursive: true, force: true });
           }
@@ -444,12 +370,10 @@ export class GitClient {
           const sha = await this.getHeadSha(value.cwd);
           return parents.length === 1 &&
             (await this.getCurrentBranch(value.cwd)) === value.branch &&
-            (await this.getRefSha(value.cwd, `refs/heads/${value.branch}`)) ===
-              sha &&
+            (await this.getRefSha(value.cwd, `refs/heads/${value.branch}`)) === sha &&
             parents[0] === value.parent &&
             (await this.getCommitTreeSha(value.cwd)) === value.tree &&
-            (await this.getVerbatimCommitMessage(value.cwd)) ===
-              value.message &&
+            (await this.getVerbatimCommitMessage(value.cwd)) === value.message &&
             !(await this.hasChanges(value.cwd))
             ? {
                 id: sha,
@@ -478,17 +402,10 @@ export class GitClient {
           if (
             (await this.getHeadSha(value.cwd)) !== value.sha ||
             (await this.getCurrentBranch(value.cwd)) !== value.branch ||
-            (await this.getRefSha(value.cwd, `refs/heads/${value.branch}`)) !==
-              value.sha
+            (await this.getRefSha(value.cwd, `refs/heads/${value.branch}`)) !== value.sha
           )
             throw new Error("Push task branch/ref changed after intent");
-          await this.push(
-            value.cwd,
-            value.destination,
-            value.branch,
-            project,
-            value.sha,
-          );
+          await this.push(value.cwd, value.destination, value.branch, project, value.sha);
         },
         observe: async () => {
           await verifyDestination(value.destination, value.fetch);
@@ -531,18 +448,12 @@ export class GitClient {
               throw new Error("Unsafe worktree cleanup");
             await this.removeWorktree(value.cwd, value.resource);
           } else if (value.kind === "branch") {
-            const actual = await this.getRefSha(
-              value.cwd,
-              `refs/heads/${value.resource}`,
-            );
+            const actual = await this.getRefSha(value.cwd, `refs/heads/${value.resource}`);
             if (actual === null) return;
-            if (actual !== value.sha)
-              throw new Error("Cleanup branch changed after intent");
-            if (value.sha !== null)
-              await this.deleteBranch(value.cwd, value.resource);
+            if (actual !== value.sha) throw new Error("Cleanup branch changed after intent");
+            if (value.sha !== null) await this.deleteBranch(value.cwd, value.resource);
           } else {
-            if (!value.destination)
-              throw new Error("Remote cleanup destination missing");
+            if (!value.destination) throw new Error("Remote cleanup destination missing");
             await verifyDestination(value.destination);
             const actual = await this.getRemoteBranchSha(
               value.cwd,
@@ -551,8 +462,7 @@ export class GitClient {
               project,
             );
             if (actual === null) return;
-            if (actual !== value.sha)
-              throw new Error("Remote cleanup ref changed after intent");
+            if (actual !== value.sha) throw new Error("Remote cleanup ref changed after intent");
             if (value.sha !== null)
               await this.deleteRemoteBranch(
                 value.cwd,
@@ -566,23 +476,14 @@ export class GitClient {
         observe: async () => {
           let absent: boolean;
           if (value.kind === "worktree") {
-            const registrations = await this.runGit(value.cwd, [
-              "worktree",
-              "list",
-              "--porcelain",
-            ]);
+            const registrations = await this.runGit(value.cwd, ["worktree", "list", "--porcelain"]);
             absent =
               !fs.existsSync(value.resource) &&
               !registrations.split("\n").includes(`worktree ${value.resource}`);
           } else if (value.kind === "branch")
-            absent =
-              (await this.getRefSha(
-                value.cwd,
-                `refs/heads/${value.resource}`,
-              )) === null;
+            absent = (await this.getRefSha(value.cwd, `refs/heads/${value.resource}`)) === null;
           else {
-            if (!value.destination)
-              throw new Error("Remote cleanup destination missing");
+            if (!value.destination) throw new Error("Remote cleanup destination missing");
             await verifyDestination(value.destination);
             absent =
               (await this.getRemoteBranchSha(
@@ -617,20 +518,11 @@ export class GitClient {
         while (args[commandIndex] === "-c") commandIndex += 2;
         const command = args[commandIndex];
         if (
-          [
-            "push",
-            "commit",
-            "add",
-            "reset",
-            "clean",
-            "update-ref",
-            "fetch",
-            "init",
-          ].includes(command ?? "") ||
+          ["push", "commit", "add", "reset", "clean", "update-ref", "fetch", "init"].includes(
+            command ?? "",
+          ) ||
           (command === "worktree" &&
-            ["add", "remove", "prune"].includes(
-              args[commandIndex + 1] ?? "",
-            )) ||
+            ["add", "remove", "prune"].includes(args[commandIndex + 1] ?? "")) ||
           (command === "branch" && args[commandIndex + 1] === "-D") ||
           (command === "remote" && args[commandIndex + 1] === "add")
         )
@@ -639,9 +531,7 @@ export class GitClient {
           return environment === undefined
             ? runGit(cwd, args, undefined, signalOverride)
             : runGit(cwd, args, environment, signalOverride);
-        return environment === undefined
-          ? runGit(cwd, args)
-          : runGit(cwd, args, environment);
+        return environment === undefined ? runGit(cwd, args) : runGit(cwd, args, environment);
       };
       return projectId === undefined
         ? dispatch()
@@ -658,9 +548,7 @@ export class GitClient {
 
     const credential = await this.credentials.resolve(operationProject);
     const authenticatedArgs =
-      credential.mode === "github-app"
-        ? ["-c", "credential.helper=", ...args]
-        : args;
+      credential.mode === "github-app" ? ["-c", "credential.helper=", ...args] : args;
 
     const dispatch = async (): Promise<string> => {
       try {
@@ -671,10 +559,7 @@ export class GitClient {
 
         return redactSecrets(output, credential.secretValues);
       } catch (error) {
-        if (
-          error instanceof ProcessExecutionError ||
-          error instanceof ObservedPrTerminalError
-        )
+        if (error instanceof ProcessExecutionError || error instanceof ObservedPrTerminalError)
           throw error;
         const safeError = redactError(error, credential.secretValues);
 
@@ -699,12 +584,8 @@ export class GitClient {
   async isValidRepository(repositoryPath: string): Promise<boolean> {
     try {
       return (
-        (
-          await this.runGit(repositoryPath, [
-            "rev-parse",
-            "--is-inside-work-tree",
-          ])
-        ).trim() === "true"
+        (await this.runGit(repositoryPath, ["rev-parse", "--is-inside-work-tree"])).trim() ===
+        "true"
       );
     } catch {
       return false;
@@ -712,24 +593,16 @@ export class GitClient {
   }
 
   /** Read-only verification of the configured checkout's origin identity. */
-  async assertOriginMatches(
-    repositoryPath: string,
-    expectedRepository: string,
-  ): Promise<void> {
-    const output = await this.runGit(repositoryPath, [
-      "remote",
-      "get-url",
-      "origin",
-    ]);
+  async assertOriginMatches(repositoryPath: string, expectedRepository: string): Promise<void> {
+    const output = await this.runGit(repositoryPath, ["remote", "get-url", "origin"]);
     const remote = output.trim().replace(/\.git$/iu, "");
     let actual: string;
     try {
       actual = canonicalizeGitHubRepository(remote);
     } catch (error) {
-      throw new Error(
-        `Repository origin is not a supported GitHub identity: ${remote}`,
-        { cause: error },
-      );
+      throw new Error(`Repository origin is not a supported GitHub identity: ${remote}`, {
+        cause: error,
+      });
     }
     const expected = canonicalizeGitHubRepository(expectedRepository);
     if (actual !== expected)
@@ -757,14 +630,10 @@ export class GitClient {
     // NUL framing retains empty URL values that a trimmed get-url result alone
     // could hide. Do not turn an empty/multiple configured destination into one.
     if (
-      entries.filter((entry) => entry.startsWith("remote.origin.url\n"))
-        .length !== 1 ||
-      entries.filter((entry) => entry.startsWith("remote.origin.pushurl\n"))
-        .length > 1
+      entries.filter((entry) => entry.startsWith("remote.origin.url\n")).length !== 1 ||
+      entries.filter((entry) => entry.startsWith("remote.origin.pushurl\n")).length > 1
     )
-      throw new Error(
-        "Publication requires a single configured origin destination per direction",
-      );
+      throw new Error("Publication requires a single configured origin destination per direction");
     const resolve = async (remote: string, push: boolean): Promise<string> => {
       const output = await this.runGit(repositoryPath, [
         "remote",
@@ -777,25 +646,17 @@ export class GitClient {
       if (
         urls.length !== 1 ||
         !urls[0] ||
-        !/^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)/iu.test(
-          urls[0],
-        )
+        !/^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)/iu.test(urls[0])
       )
-        throw new Error(
-          "Publication requires one supported GitHub destination per direction",
-        );
+        throw new Error("Publication requires one supported GitHub destination per direction");
       let actual: string;
       try {
         actual = canonicalizeGitHubRepository(urls[0]);
       } catch {
-        throw new Error(
-          "Publication Git destination is not a supported repository identity",
-        );
+        throw new Error("Publication Git destination is not a supported repository identity");
       }
       if (actual !== expected)
-        throw new Error(
-          "Publication Git destination differs from the pinned repository",
-        );
+        throw new Error("Publication Git destination differs from the pinned repository");
       return urls[0];
     };
     const fetch = await resolve("origin", false);
@@ -807,22 +668,14 @@ export class GitClient {
     // than emulating Git's precedence or mutating repository configuration.
     for (const entry of entries) {
       if (entry.startsWith("remote.origin.")) continue;
-      const match = /^url\.(.*)\.(insteadof|pushinsteadof)\n([\s\S]*)$/u.exec(
-        entry,
-      );
-      if (!match)
-        throw new Error("Malformed publication Git URL rewrite configuration");
+      const match = /^url\.(.*)\.(insteadof|pushinsteadof)\n([\s\S]*)$/u.exec(entry);
+      if (!match) throw new Error("Malformed publication Git URL rewrite configuration");
       const base = match[1]!,
         kind = match[2]!,
         prefix = match[3]!;
       for (const url of kind === "insteadof" ? [fetch, push] : [push]) {
-        if (
-          url.startsWith(prefix) &&
-          `${base}${url.slice(prefix.length)}` !== url
-        )
-          throw new Error(
-            "Publication concrete destination is subject to another Git URL rewrite",
-          );
+        if (url.startsWith(prefix) && `${base}${url.slice(prefix.length)}` !== url)
+          throw new Error("Publication concrete destination is subject to another Git URL rewrite");
       }
     }
     return { fetch, push };
@@ -835,18 +688,10 @@ export class GitClient {
     project?: ProjectConfig,
   ): Promise<void> {
     rejectJournaledDispatch();
-    await this.runAuthenticated(
-      repositoryPath,
-      ["fetch", remote, branch],
-      project,
-    );
+    await this.runAuthenticated(repositoryPath, ["fetch", remote, branch], project);
   }
 
-  async rebase(
-    repositoryPath: string,
-    baseRef: string,
-    identity: GitIdentity,
-  ): Promise<void> {
+  async rebase(repositoryPath: string, baseRef: string, identity: GitIdentity): Promise<void> {
     void repositoryPath;
     void baseRef;
     void identity;
@@ -882,10 +727,7 @@ export class GitClient {
     );
   }
 
-  async completeTargetMerge(
-    repositoryPath: string,
-    identity: GitIdentity,
-  ): Promise<void> {
+  async completeTargetMerge(repositoryPath: string, identity: GitIdentity): Promise<void> {
     rejectJournaledDispatch();
     if ((await this.getMergeHead(repositoryPath)) === null)
       throw new Error("No active merge to complete");
@@ -896,29 +738,18 @@ export class GitClient {
     );
   }
 
-  async stagePaths(
-    repositoryPath: string,
-    paths: readonly string[],
-  ): Promise<void> {
+  async stagePaths(repositoryPath: string, paths: readonly string[]): Promise<void> {
     rejectJournaledDispatch();
-    if (paths.length > 0)
-      await this.runGit(repositoryPath, ["add", "--", ...paths]);
+    if (paths.length > 0) await this.runGit(repositoryPath, ["add", "--", ...paths]);
   }
 
   async getMergeHead(repositoryPath: string): Promise<string | null> {
-    const mergePath = await this.runGit(repositoryPath, [
-      "rev-parse",
-      "--git-path",
-      "MERGE_HEAD",
-    ]);
+    const mergePath = await this.runGit(repositoryPath, ["rev-parse", "--git-path", "MERGE_HEAD"]);
     if (!fs.existsSync(path.resolve(repositoryPath, mergePath))) return null;
     return this.resolveCommitSha(repositoryPath, "MERGE_HEAD");
   }
 
-  async getTargetMergePaths(
-    repositoryPath: string,
-    target: string,
-  ): Promise<string[]> {
+  async getTargetMergePaths(repositoryPath: string, target: string): Promise<string[]> {
     const output = await this.runGit(repositoryPath, [
       "diff",
       "--name-only",
@@ -929,11 +760,7 @@ export class GitClient {
   }
 
   async getConflictedPaths(repositoryPath: string): Promise<string[]> {
-    const output = await this.runGit(repositoryPath, [
-      "diff",
-      "--name-only",
-      "--diff-filter=U",
-    ]);
+    const output = await this.runGit(repositoryPath, ["diff", "--name-only", "--diff-filter=U"]);
 
     return [
       ...new Set(
@@ -974,9 +801,7 @@ export class GitClient {
 
     const [backend, directory] = activeRebases[0]!;
     const readRequired = (name: string): string => {
-      const value = fs
-        .readFileSync(path.resolve(repositoryPath, directory, name), "utf8")
-        .trim();
+      const value = fs.readFileSync(path.resolve(repositoryPath, directory, name), "utf8").trim();
 
       if (value.length === 0) {
         throw new Error(`Git rebase state file ${name} is empty`);
@@ -1014,18 +839,9 @@ export class GitClient {
     };
   }
 
-  async isAncestor(
-    repositoryPath: string,
-    ancestor: string,
-    descendant: string,
-  ): Promise<boolean> {
+  async isAncestor(repositoryPath: string, ancestor: string, descendant: string): Promise<boolean> {
     try {
-      await this.runGit(repositoryPath, [
-        "merge-base",
-        "--is-ancestor",
-        ancestor,
-        descendant,
-      ]);
+      await this.runGit(repositoryPath, ["merge-base", "--is-ancestor", ancestor, descendant]);
 
       return true;
     } catch {
@@ -1066,8 +882,7 @@ export class GitClient {
       if (journaled) {
         if (
           (await this.getCurrentBranch(repositoryPath)) !== branch ||
-          (await this.getRefSha(repositoryPath, `refs/heads/${branch}`)) !==
-            sha ||
+          (await this.getRefSha(repositoryPath, `refs/heads/${branch}`)) !== sha ||
           (await this.getHeadSha(repositoryPath)) !== sha
         )
           throw new Error("Push task branch/ref changed before transport");
@@ -1091,12 +906,7 @@ export class GitClient {
     await this.runAuthenticated(
       repositoryPath,
       journaled
-        ? [
-            "push",
-            "--no-follow-tags",
-            remote,
-            `${pushSha!}:refs/heads/${branch}`,
-          ]
+        ? ["push", "--no-follow-tags", remote, `${pushSha!}:refs/heads/${branch}`]
         : ["push", "--set-upstream", remote, branch],
       project,
     );
@@ -1120,19 +930,12 @@ export class GitClient {
   }
 
   async branchExists(repositoryPath: string, branch: string): Promise<boolean> {
-    const output = await this.runGit(repositoryPath, [
-      "branch",
-      "--list",
-      branch,
-    ]);
+    const output = await this.runGit(repositoryPath, ["branch", "--list", branch]);
 
     return output.length > 0;
   }
 
-  async getStatus(
-    repositoryPath: string,
-    signalOverride?: AbortSignal | null,
-  ): Promise<string> {
+  async getStatus(repositoryPath: string, signalOverride?: AbortSignal | null): Promise<string> {
     return this.runGit(
       repositoryPath,
       ["status", "--porcelain=v1", "--untracked-files=all"],
@@ -1202,14 +1005,7 @@ export class GitClient {
   ): Promise<string[]> {
     const output = await this.runGit(
       repositoryPath,
-      [
-        "ls-files",
-        "--others",
-        "--ignored",
-        "--exclude-standard",
-        "--full-name",
-        "-z",
-      ],
+      ["ls-files", "--others", "--ignored", "--exclude-standard", "--full-name", "-z"],
       undefined,
       signalOverride,
     );
@@ -1238,16 +1034,8 @@ export class GitClient {
     return (await this.getStatus(repositoryPath)).length > 0;
   }
 
-  async getHeadSha(
-    repositoryPath: string,
-    signalOverride?: AbortSignal | null,
-  ): Promise<string> {
-    return this.runGit(
-      repositoryPath,
-      ["rev-parse", "HEAD"],
-      undefined,
-      signalOverride,
-    );
+  async getHeadSha(repositoryPath: string, signalOverride?: AbortSignal | null): Promise<string> {
+    return this.runGit(repositoryPath, ["rev-parse", "HEAD"], undefined, signalOverride);
   }
 
   async getCommitParentSha(repositoryPath: string): Promise<string> {
@@ -1269,36 +1057,24 @@ export class GitClient {
       !shaPattern.test(options.pullRequestHeadSha) ||
       options.pullRequestCommitShas.length === 0 ||
       options.pullRequestCommitShas.some((sha) => !shaPattern.test(sha)) ||
-      new Set(options.pullRequestCommitShas).size !==
-        options.pullRequestCommitShas.length ||
+      new Set(options.pullRequestCommitShas).size !== options.pullRequestCommitShas.length ||
       !options.pullRequestCommitShas.some(
         (sha) => sha.toLowerCase() === options.pullRequestHeadSha.toLowerCase(),
       ) ||
       !Number.isSafeInteger(options.pullRequestNumber) ||
       options.pullRequestNumber < 1
     ) {
-      throw new Error(
-        "Implementation comparison requires identified commits and pull request",
-      );
+      throw new Error("Implementation comparison requires identified commits and pull request");
     }
 
     const temporaryRepository = fs.mkdtempSync(
       path.join(os.tmpdir(), "agent-orchestrator-recovery-git-"),
     );
     try {
+      await this.runAuthenticated(temporaryRepository, ["init", "--quiet"], options.project);
       await this.runAuthenticated(
         temporaryRepository,
-        ["init", "--quiet"],
-        options.project,
-      );
-      await this.runAuthenticated(
-        temporaryRepository,
-        [
-          "remote",
-          "add",
-          "origin",
-          `https://github.com/${options.project.repository.github}.git`,
-        ],
+        ["remote", "add", "origin", `https://github.com/${options.project.repository.github}.git`],
         options.project,
       );
       await this.runAuthenticated(
@@ -1318,19 +1094,14 @@ export class GitClient {
         ["rev-parse", "refs/recovery/pull-request"],
         options.project,
       );
-      if (
-        fetchedHead.toLowerCase() !== options.pullRequestHeadSha.toLowerCase()
-      )
-        return false;
+      if (fetchedHead.toLowerCase() !== options.pullRequestHeadSha.toLowerCase()) return false;
 
       const originalParent = await this.runAuthenticated(
         temporaryRepository,
         ["rev-parse", `${options.implementationCommit}^`],
         options.project,
       );
-      const prCommitSet = new Set(
-        options.pullRequestCommitShas.map((sha) => sha.toLowerCase()),
-      );
+      const prCommitSet = new Set(options.pullRequestCommitShas.map((sha) => sha.toLowerCase()));
       const roots: string[] = [];
       for (const sha of options.pullRequestCommitShas) {
         const parent = await this.runAuthenticated(
@@ -1349,11 +1120,7 @@ export class GitClient {
       const rangeCommits = (
         await this.runAuthenticated(
           temporaryRepository,
-          [
-            "rev-list",
-            "--reverse",
-            `${recoveredParent}..${options.pullRequestHeadSha}`,
-          ],
+          ["rev-list", "--reverse", `${recoveredParent}..${options.pullRequestHeadSha}`],
           options.project,
         )
       )
@@ -1410,23 +1177,12 @@ export class GitClient {
     return path.resolve(repositoryPath, directory);
   }
 
-  async resolveCommitSha(
-    repositoryPath: string,
-    revision: string,
-  ): Promise<string> {
-    return this.runGit(repositoryPath, [
-      "rev-parse",
-      "--verify",
-      `${revision}^{commit}`,
-    ]);
+  async resolveCommitSha(repositoryPath: string, revision: string): Promise<string> {
+    return this.runGit(repositoryPath, ["rev-parse", "--verify", `${revision}^{commit}`]);
   }
 
   async getRefSha(repositoryPath: string, ref: string): Promise<string | null> {
-    const name = await this.runGit(repositoryPath, [
-      "for-each-ref",
-      "--format=%(refname)",
-      ref,
-    ]);
+    const name = await this.runGit(repositoryPath, ["for-each-ref", "--format=%(refname)", ref]);
     if (name.trim() !== ref) return null;
     return this.resolveCommitSha(repositoryPath, ref);
   }
@@ -1446,11 +1202,7 @@ export class GitClient {
     return `sha256:${createHash("sha256").update(canonical).digest("hex")}`;
   }
 
-  async createRefIfAbsent(
-    repositoryPath: string,
-    ref: string,
-    sha: string,
-  ): Promise<void> {
+  async createRefIfAbsent(repositoryPath: string, ref: string, sha: string): Promise<void> {
     rejectJournaledDispatch();
     const zero = "0".repeat(sha.length);
     await this.runGit(repositoryPath, ["update-ref", ref, sha, zero]);
@@ -1483,10 +1235,7 @@ export class GitClient {
   }
 
   /** Stage the complete task worktree except reviewed unrelated paths. */
-  async stageAllExcept(
-    repositoryPath: string,
-    excludedPaths: string[],
-  ): Promise<void> {
+  async stageAllExcept(repositoryPath: string, excludedPaths: string[]): Promise<void> {
     rejectJournaledDispatch();
     const uniquePaths = [...new Set(excludedPaths)];
     for (const filePath of uniquePaths) {
@@ -1527,11 +1276,7 @@ export class GitClient {
   }
 
   async getCommitParentShas(repositoryPath: string): Promise<string[]> {
-    const parents = await this.runGit(repositoryPath, [
-      "log",
-      "-1",
-      "--format=%P",
-    ]);
+    const parents = await this.runGit(repositoryPath, ["log", "-1", "--format=%P"]);
     return parents.trim().split(/\s+/u).filter(Boolean);
   }
 
@@ -1546,9 +1291,7 @@ export class GitClient {
     let dispatchedMessage: string | undefined;
     if (authority) {
       const rawMessage = fs.readFileSync(messageFilePath, "utf8");
-      const message = prepareVerbatimCommitMessage(
-        sanitizeControlledText(rawMessage),
-      );
+      const message = prepareVerbatimCommitMessage(sanitizeControlledText(rawMessage));
       const request: Extract<GitMutationRequest, { route: "git-commit" }> = {
         route: "git-commit",
         args: {
@@ -1571,10 +1314,8 @@ export class GitClient {
         })
       ) {
         if (
-          (await this.getRefSha(
-            repositoryPath,
-            `refs/heads/${request.args.branch}`,
-          )) !== request.args.parent
+          (await this.getRefSha(repositoryPath, `refs/heads/${request.args.branch}`)) !==
+          request.args.parent
         )
           throw new Error("Commit task ref changed before transport");
         dispatchedMessage = rawMessage;
@@ -1600,9 +1341,7 @@ export class GitClient {
       dispatchedMessage === undefined
         ? undefined
         : fs.mkdtempSync(path.join(os.tmpdir(), "journal-commit-transport-"));
-    const transportMessagePath = directory
-      ? path.join(directory, "message")
-      : messageFilePath;
+    const transportMessagePath = directory ? path.join(directory, "message") : messageFilePath;
     if (directory)
       fs.writeFileSync(transportMessagePath, dispatchedMessage!, {
         mode: 0o600,
@@ -1647,36 +1386,17 @@ export class GitClient {
     repositoryPath: string,
     signalOverride?: AbortSignal | null,
   ): Promise<string> {
-    return this.runGit(
-      repositoryPath,
-      ["branch", "--show-current"],
-      undefined,
-      signalOverride,
-    );
+    return this.runGit(repositoryPath, ["branch", "--show-current"], undefined, signalOverride);
   }
 
-  async getChangedFiles(
-    repositoryPath: string,
-    baseRef: string,
-  ): Promise<string> {
-    return this.runGit(repositoryPath, [
-      "diff",
-      "--name-only",
-      `${baseRef}...HEAD`,
-    ]);
+  async getChangedFiles(repositoryPath: string, baseRef: string): Promise<string> {
+    return this.runGit(repositoryPath, ["diff", "--name-only", `${baseRef}...HEAD`]);
   }
 
-  async addWorktree(
-    repositoryPath: string,
-    worktreePath: string,
-    branch: string,
-  ): Promise<void> {
+  async addWorktree(repositoryPath: string, worktreePath: string, branch: string): Promise<void> {
     const authority = mutationAuthority(undefined);
     if (authority) {
-      const start = await this.getRefSha(
-        repositoryPath,
-        `refs/heads/${branch}`,
-      );
+      const start = await this.getRefSha(repositoryPath, `refs/heads/${branch}`);
       if (!start) throw new Error("Worktree branch has no observed object");
       const request: GitMutationRequest = {
         route: "git-worktree",
@@ -1693,12 +1413,7 @@ export class GitClient {
         return;
       }
     }
-    await this.runGit(repositoryPath, [
-      "worktree",
-      "add",
-      worktreePath,
-      branch,
-    ]);
+    await this.runGit(repositoryPath, ["worktree", "add", worktreePath, branch]);
   }
 
   async addWorktreeWithNewBranch(
@@ -1725,20 +1440,10 @@ export class GitClient {
       }
       startPoint = request.args.start;
     }
-    await this.runGit(repositoryPath, [
-      "worktree",
-      "add",
-      "-b",
-      branch,
-      worktreePath,
-      startPoint,
-    ]);
+    await this.runGit(repositoryPath, ["worktree", "add", "-b", branch, worktreePath, startPoint]);
   }
 
-  async removeWorktree(
-    repositoryPath: string,
-    worktreePath: string,
-  ): Promise<void> {
+  async removeWorktree(repositoryPath: string, worktreePath: string): Promise<void> {
     const authority = mutationAuthority(undefined);
     if (authority) {
       // Refuse unsafe cleanup before publishing a dispatch obligation. Repeat
@@ -1748,18 +1453,14 @@ export class GitClient {
         (fs.lstatSync(worktreePath).isSymbolicLink() ||
           (await this.getCleanupStatus(worktreePath)).trim() !== "")
       )
-        throw new Error(
-          "Unsafe worktree cleanup; artifacts preserved without dispatch",
-        );
+        throw new Error("Unsafe worktree cleanup; artifacts preserved without dispatch");
       const request: GitMutationRequest = {
         route: "git-cleanup",
         args: {
           cwd: repositoryPath,
           resource: worktreePath,
           kind: "worktree",
-          sha: fs.existsSync(worktreePath)
-            ? await this.getHeadSha(worktreePath)
-            : null,
+          sha: fs.existsSync(worktreePath) ? await this.getHeadSha(worktreePath) : null,
         },
       };
       if (!consumeJournaledDispatch(authority, request)) {
@@ -1819,14 +1520,7 @@ export class GitClient {
     branch: string,
     project?: ProjectConfig,
   ): Promise<boolean> {
-    return (
-      (await this.getRemoteBranchSha(
-        repositoryPath,
-        remote,
-        branch,
-        project,
-      )) !== null
-    );
+    return (await this.getRemoteBranchSha(repositoryPath, remote, branch, project)) !== null;
   }
 
   async getRemoteBranchSha(
@@ -1850,29 +1544,19 @@ export class GitClient {
     const lines = remoteOutput.split(/\r?\n/);
 
     if (lines.length !== 1) {
-      throw new Error(
-        `Git returned an invalid remote branch result for ${branch}`,
-      );
+      throw new Error(`Git returned an invalid remote branch result for ${branch}`);
     }
 
     const fields = lines[0]?.split(/\s+/);
 
     if (fields === undefined || fields.length !== 2) {
-      throw new Error(
-        `Git returned an invalid remote branch result for ${branch}`,
-      );
+      throw new Error(`Git returned an invalid remote branch result for ${branch}`);
     }
 
     const [sha, ref] = fields;
 
-    if (
-      sha === undefined ||
-      sha.length === 0 ||
-      ref !== `refs/heads/${branch}`
-    ) {
-      throw new Error(
-        `Git returned an invalid remote branch result for ${branch}`,
-      );
+    if (sha === undefined || sha.length === 0 || ref !== `refs/heads/${branch}`) {
+      throw new Error(`Git returned an invalid remote branch result for ${branch}`);
     }
 
     return sha;
@@ -1901,12 +1585,7 @@ export class GitClient {
           kind: "remote-branch",
           sha:
             expectedHead ??
-            (await this.getRemoteBranchSha(
-              repositoryPath,
-              destinations.push,
-              branch,
-              project,
-            )),
+            (await this.getRemoteBranchSha(repositoryPath, destinations.push, branch, project)),
           destination: destinations.push,
         },
       };
@@ -1916,20 +1595,10 @@ export class GitClient {
       }
     }
     if (expectedHead !== undefined) {
-      const actual = await this.getRemoteBranchSha(
-        repositoryPath,
-        remote,
-        branch,
-        project,
-      );
+      const actual = await this.getRemoteBranchSha(repositoryPath, remote, branch, project);
       if (actual === null) return;
-      if (actual !== expectedHead)
-        throw new Error("Remote cleanup ref changed before deletion");
+      if (actual !== expectedHead) throw new Error("Remote cleanup ref changed before deletion");
     }
-    await this.runAuthenticated(
-      repositoryPath,
-      ["push", remote, "--delete", branch],
-      project,
-    );
+    await this.runAuthenticated(repositoryPath, ["push", remote, "--delete", branch], project);
   }
 }

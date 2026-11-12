@@ -9,9 +9,7 @@ const END = "<!-- agent-orchestrator-outcome:end -->";
 export async function refreshPrAutomationOutcome(options: {
   github: Pick<
     GitHubClient,
-    | "getPullRequestDescription"
-    | "editPullRequestDescription"
-    | "ensurePullRequestDraft"
+    "getPullRequestDescription" | "editPullRequestDescription" | "ensurePullRequestDraft"
   >;
   project: ProjectConfig;
   card: TrelloCard;
@@ -28,12 +26,8 @@ export async function refreshPrAutomationOutcome(options: {
   };
   if (options.draft) await options.github.ensurePullRequestDraft(request);
   const current = await options.github.getPullRequestDescription(request);
-  const starts = [
-    ...current.matchAll(/<!-- agent-orchestrator-outcome:start -->/gu),
-  ];
-  const ends = [
-    ...current.matchAll(/<!-- agent-orchestrator-outcome:end -->/gu),
-  ];
+  const starts = [...current.matchAll(/<!-- agent-orchestrator-outcome:start -->/gu)];
+  const ends = [...current.matchAll(/<!-- agent-orchestrator-outcome:end -->/gu)];
   if (
     starts.length !== ends.length ||
     starts.length > 1 ||
@@ -48,16 +42,13 @@ export async function refreshPrAutomationOutcome(options: {
     `Revision: ${options.headSha}`,
     "These are the latest observed results; older validation summaries describe earlier snapshots.",
     ...options.facts.map(
-      (fact) =>
-        `- ${fact.replaceAll("<!-- agent-orchestrator-", "[managed marker: ")}`,
+      (fact) => `- ${fact.replaceAll("<!-- agent-orchestrator-", "[managed marker: ")}`,
     ),
     `Trello: ${options.card.url}`,
     END,
   ].join("\n");
   const next = starts[0]
-    ? current.slice(0, starts[0].index) +
-      section +
-      current.slice(ends[0]!.index + END.length)
+    ? current.slice(0, starts[0].index) + section + current.slice(ends[0]!.index + END.length)
     : `${current}\n\n${section}`;
   if (next !== current)
     await options.github.editPullRequestDescription({
@@ -66,7 +57,5 @@ export async function refreshPrAutomationOutcome(options: {
       expectedBody: current,
     });
   if ((await options.github.getPullRequestDescription(request)) !== next)
-    throw new Error(
-      "PR outcome description was not verified; preserving pending presentation",
-    );
+    throw new Error("PR outcome description was not verified; preserving pending presentation");
 }

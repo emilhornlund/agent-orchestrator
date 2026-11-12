@@ -25,8 +25,7 @@ afterEach(async () => {
 });
 const setup = async (ids: string[], sharedRoot = false) => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "notification-authority-"));
-  const fixtures: Awaited<ReturnType<typeof notificationAuthorityFixture>>[] =
-    [];
+  const fixtures: Awaited<ReturnType<typeof notificationAuthorityFixture>>[] = [];
   for (const id of ids) {
     const f = await notificationAuthorityFixture(
       root,
@@ -49,29 +48,20 @@ const setup = async (ids: string[], sharedRoot = false) => {
     const url = new URL(input);
     if (url.pathname === "/1/members/me")
       return Promise.resolve(Response.json({ id: "orchestrator" }));
-    const f = fixtures.find((item) =>
-      url.pathname.includes(`/${item.project.id}-`),
-    );
+    const f = fixtures.find((item) => url.pathname.includes(`/${item.project.id}-`));
     if (!f) throw new Error(`Unknown fixture URL ${url.pathname}`);
     return f.fetch(url, init);
   });
   return fixtures;
 };
 describe("notification authority through production polling and workers", () => {
-  it.each([
-    "malformed",
-    "unsupported",
-    "missing-artifact",
-    "corrupt-artifact",
-  ] as const)(
+  it.each(["malformed", "unsupported", "missing-artifact", "corrupt-artifact"] as const)(
     "isolates A's %s source in a shared runtime root while B drains existing and recovered events exactly once",
     async (corruption) => {
       const [a, b] = await setup(["a", "b"], true);
       if (!a || !b) throw new Error("Missing fixture");
       expect(a.pinned.storageRoot).toBe(b.pinned.storageRoot);
-      expect(a.config.workflow.coordinationRoot).toBe(
-        b.config.workflow.coordinationRoot,
-      );
+      expect(a.config.workflow.coordinationRoot).toBe(b.config.workflow.coordinationRoot);
       a.lease.assertHeld();
       b.lease.assertHeld();
       const persistSourceOnly = (f: typeof a, identity: string) => {
@@ -89,18 +79,12 @@ describe("notification authority through production polling and workers", () => 
         );
         return event;
       };
-      const untrusted = persistSourceOnly(
-        a,
-        "A_SOURCE_MUST_NOT_BE_DERIVED_OR_LOGGED",
-      );
+      const untrusted = persistSourceOnly(a, "A_SOURCE_MUST_NOT_BE_DERIVED_OR_LOGGED");
       b.authority.run(() =>
-        enqueueNotification(
-          b.notifier,
-          b.project.id,
-          "attentionRequired",
-          "existing",
-          { subject: "B existing", text: "B existing event" },
-        ),
+        enqueueNotification(b.notifier, b.project.id, "attentionRequired", "existing", {
+          subject: "B existing",
+          text: "B existing event",
+        }),
       );
       persistSourceOnly(b, "B recovered event");
       expect(b.outbox().records()).toHaveLength(1);
@@ -111,9 +95,7 @@ describe("notification authority through production polling and workers", () => 
       );
       let artifactPath: string | undefined;
       if (corruption.endsWith("artifact")) {
-        const artifact = a.authority.store.writeArtifact(
-          Buffer.from("A source artifact"),
-        );
+        const artifact = a.authority.store.writeArtifact(Buffer.from("A source artifact"));
         a.authority.store.referenceMutationArtifact(
           a.authority.store.read()!.revision,
           a.authority.ownerGeneration,
@@ -125,25 +107,16 @@ describe("notification authority through production polling and workers", () => 
       } else if (corruption === "malformed") {
         fs.writeFileSync(sourcePath, "{A_SOURCE_MUST_NOT_BE_DERIVED_OR_LOGGED");
       } else {
-        const source = JSON.parse(
-          fs.readFileSync(sourcePath, "utf8"),
-        ) as Record<string, unknown>;
-        fs.writeFileSync(
-          sourcePath,
-          JSON.stringify({ ...source, version: 999 }),
-        );
+        const source = JSON.parse(fs.readFileSync(sourcePath, "utf8")) as Record<string, unknown>;
+        fs.writeFileSync(sourcePath, JSON.stringify({ ...source, version: 999 }));
       }
       const preservedSource = fs.readFileSync(sourcePath);
       const report = vi.fn();
       await b.outbox().drain(b.notifier, report);
       await b.outbox().drain(b.notifier, report);
       expect(b.sink).toHaveLength(2);
-      expect(b.sink.filter((text) => text === "B existing event")).toHaveLength(
-        1,
-      );
-      expect(
-        b.sink.filter((text) => text.includes("B recovered event")),
-      ).toHaveLength(1);
+      expect(b.sink.filter((text) => text === "B existing event")).toHaveLength(1);
+      expect(b.sink.filter((text) => text.includes("B recovered event"))).toHaveLength(1);
       expect(a.notifier.send).not.toHaveBeenCalled();
       expect(
         b
@@ -159,16 +132,10 @@ describe("notification authority through production polling and workers", () => 
       ).toBe(false);
       expect(fs.readFileSync(sourcePath)).toEqual(preservedSource);
       if (artifactPath) {
-        if (corruption === "missing-artifact")
-          expect(fs.existsSync(artifactPath)).toBe(false);
-        else
-          expect(fs.readFileSync(artifactPath, "utf8")).toBe(
-            "corrupt A artifact",
-          );
+        if (corruption === "missing-artifact") expect(fs.existsSync(artifactPath)).toBe(false);
+        else expect(fs.readFileSync(artifactPath, "utf8")).toBe("corrupt A artifact");
       }
-      const sourceId = createHash("sha256")
-        .update(path.basename(sourcePath))
-        .digest("hex");
+      const sourceId = createHash("sha256").update(path.basename(sourcePath)).digest("hex");
       expect(report).toHaveBeenCalledWith(
         expect.stringContaining(
           `source attempt filename sha256:${sourceId} unavailable or invalid; evidence preserved`,
@@ -195,15 +162,12 @@ describe("notification authority through production polling and workers", () => 
     const completedMove = a.authority.store
       .read()!
       .pendingOperations.find(
-        (op) =>
-          op.id === a.outbox().records()[0]?.trigger?.binding?.operationId,
+        (op) => op.id === a.outbox().records()[0]?.trigger?.binding?.operationId,
       );
     expect(completedMove?.status).toBe("completed");
     await a.outbox().drain(a.notifier, () => {});
     expect(a.sink).toHaveLength(0);
-    expect(
-      a.outbox().records()[0]?.trigger?.binding?.refinementHash,
-    ).toBeDefined();
+    expect(a.outbox().records()[0]?.trigger?.binding?.refinementHash).toBeDefined();
     expect(a.outbox().records()[0]?.dispatches).toHaveLength(0);
   }, 30_000);
   it.each([false, true])(
@@ -211,10 +175,7 @@ describe("notification authority through production polling and workers", () => 
     async (sharedRoot) => {
       const [a, b] = await setup(["a", "b"], sharedRoot);
       if (!a || !b) throw new Error("Missing fixture");
-      const deliveryDirectory = path.join(
-        a.pinned.storageRoot,
-        "notifications",
-      );
+      const deliveryDirectory = path.join(a.pinned.storageRoot, "notifications");
       fs.mkdirSync(deliveryDirectory, { recursive: true });
       const brokenPath = path.join(
         deliveryDirectory,
@@ -246,10 +207,7 @@ describe("notification authority through production polling and workers", () => 
             for (const f of [a, b])
               expect(
                 f.authority.run(() =>
-                  new TaskMutationQueue(
-                    f.pinned.storageRoot,
-                    f.project,
-                  ).getActive(),
+                  new TaskMutationQueue(f.pinned.storageRoot, f.project).getActive(),
                 ),
               ).toBeNull();
           },
@@ -261,23 +219,15 @@ describe("notification authority through production polling and workers", () => 
       }
       for (const f of [a, b]) {
         expect(
-          f.authority.run(() =>
-            new TaskMutationQueue(f.pinned.storageRoot, f.project).getActive(),
-          ),
+          f.authority.run(() => new TaskMutationQueue(f.pinned.storageRoot, f.project).getActive()),
         ).toBeNull();
         await f.authority.releaseVerifiedTerminal();
         expect(
-          f.authority.store
-            .read()
-            ?.pendingOperations.every((op) => op.status === "completed"),
+          f.authority.store.read()?.pendingOperations.every((op) => op.status === "completed"),
         ).toBe(true);
       }
-      expect(a.sink.filter((text) => text.includes("Project: a"))).toHaveLength(
-        0,
-      );
-      expect(a.sink.filter((text) => text.includes("Project: b"))).toHaveLength(
-        1,
-      );
+      expect(a.sink.filter((text) => text.includes("Project: a"))).toHaveLength(0);
+      expect(a.sink.filter((text) => text.includes("Project: b"))).toHaveLength(1);
       expect(a.authority.store.read()?.compatibility).toEqual(
         expect.objectContaining({
           [Object.keys(a.authority.store.read()!.compatibility).find((key) =>
@@ -290,9 +240,7 @@ describe("notification authority through production polling and workers", () => 
       a.saveCard();
       fs.unlinkSync(brokenPath);
       await a.outbox().drain(a.notifier, () => {});
-      expect(a.sink.filter((text) => text.includes("Project: a"))).toHaveLength(
-        1,
-      );
+      expect(a.sink.filter((text) => text.includes("Project: a"))).toHaveLength(1);
       expect(a.sink.join("\n")).toContain("Refined task title: Refined task");
     },
     30_000,
@@ -303,9 +251,7 @@ describe("notification authority through production polling and workers", () => 
       vi.useFakeTimers({ toFake: ["Date"] });
       const [a, b] = await setup(["a", "b"], sharedRoot);
       if (!a || !b) throw new Error("Missing fixture");
-      const original = a.authority.store.mutateCompatibility.bind(
-        a.authority.store,
-      );
+      const original = a.authority.store.mutateCompatibility.bind(a.authority.store);
       const failure = vi
         .spyOn(a.authority.store, "mutateCompatibility")
         .mockImplementation((options) => {
@@ -316,13 +262,9 @@ describe("notification authority through production polling and workers", () => 
       await a.poll();
       expect(a.authority.store.read()?.lifecycle).toBe("refinement");
       expect(a.card.idList).toBe(a.project.trello.workingListId);
+      expect(a.authority.store.read()?.compatibility["notification-storage-wait"]).toBeDefined();
       expect(
-        a.authority.store.read()?.compatibility["notification-storage-wait"],
-      ).toBeDefined();
-      expect(
-        a.authority.run(() =>
-          new TaskMutationQueue(a.pinned.storageRoot, a.project).getActive(),
-        ),
+        a.authority.run(() => new TaskMutationQueue(a.pinned.storageRoot, a.project).getActive()),
       ).not.toBeNull();
       await a.poll();
       expect(a.engineer).toHaveBeenCalledTimes(1);
@@ -348,10 +290,7 @@ describe("notification authority through production polling and workers", () => 
             expect(b.authority.store.read()?.lifecycle).toBe("refined");
             expect(
               b.authority.run(() =>
-                new TaskMutationQueue(
-                  b.pinned.storageRoot,
-                  b.project,
-                ).getActive(),
+                new TaskMutationQueue(b.pinned.storageRoot, b.project).getActive(),
               ),
             ).toBeNull();
           },
@@ -383,20 +322,14 @@ describe("notification authority through production polling and workers", () => 
       const move = a.trello.moveCard.bind(a.trello);
       if (boundary === "fields")
         vi.spyOn(a.trello, "updateCardContent").mockRejectedValue(
-          new NotificationPreparationError(
-            "Interrupted during field finalization",
-          ),
+          new NotificationPreparationError("Interrupted during field finalization"),
         );
       else
-        vi.spyOn(a.trello, "moveCard").mockImplementation(
-          (card, list, options) => {
-            if (list === a.project.trello.backlogListId)
-              throw new NotificationPreparationError(
-                "Interrupted before final mutation",
-              );
-            return move(card, list, options);
-          },
-        );
+        vi.spyOn(a.trello, "moveCard").mockImplementation((card, list, options) => {
+          if (list === a.project.trello.backlogListId)
+            throw new NotificationPreparationError("Interrupted before final mutation");
+          return move(card, list, options);
+        });
       await a.poll();
       expect(a.authority.store.read()?.lifecycle).toBe("refinement");
       if (boundary === "final-move")

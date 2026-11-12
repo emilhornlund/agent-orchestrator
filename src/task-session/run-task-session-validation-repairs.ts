@@ -1,8 +1,5 @@
 import type { CardAttachmentPromptContext } from "../context/card-attachment-prompt.js";
-import type {
-  OpenCodeClient,
-  OpenCodeRunOptions,
-} from "../opencode/opencode-client.js";
+import type { OpenCodeClient, OpenCodeRunOptions } from "../opencode/opencode-client.js";
 import { extractOpenCodeTextOutput } from "../opencode/opencode-client.js";
 import { buildTaskSessionValidationRepairPrompt } from "../opencode/build-task-session-validation-repair-prompt.js";
 import type { TrelloCard } from "../trello/trello-client.js";
@@ -25,8 +22,7 @@ import { assertOwnedTaskWorktreePath } from "./run-task-session-implementation.j
 import { createHash } from "node:crypto";
 
 export const MAX_VALIDATION_REPAIR_ATTEMPTS = 2;
-export const VALIDATION_REPAIR_EARLY_FINISH_MARKER =
-  "VALIDATION_REPAIR_FINISHED_EARLY";
+export const VALIDATION_REPAIR_EARLY_FINISH_MARKER = "VALIDATION_REPAIR_FINISHED_EARLY";
 
 export class StaleTaskSessionValidationEvidenceError extends Error {
   constructor(
@@ -46,9 +42,7 @@ export class TaskSessionValidationRepairExhaustedError extends Error {
     public readonly validation?: TaskSessionValidationResult,
     public readonly coverage?: TaskSessionValidationResult | null,
   ) {
-    super(
-      `Task-session local quality gates did not pass after ${attempts} repair attempts`,
-    );
+    super(`Task-session local quality gates did not pass after ${attempts} repair attempts`);
     this.name = "TaskSessionValidationRepairExhaustedError";
   }
 }
@@ -75,16 +69,11 @@ export interface RunTaskSessionValidationRepairsOptions {
     card: TrelloCard;
     attachmentContext?: CardAttachmentPromptContext;
   }>;
-  repairRunOptions: Omit<
-    OpenCodeRunOptions,
-    "cwd" | "prompt" | "sessionId" | "captureSessionId"
-  >;
+  repairRunOptions: Omit<OpenCodeRunOptions, "cwd" | "prompt" | "sessionId" | "captureSessionId">;
   primaryOperationEvidence?: { trustedRoot: string; cwd?: string };
   inspectPrimaryOperation?: (
     operationId: string,
-    entry: NonNullable<
-      NonNullable<TaskExecutionRecord["primaryOperations"]>[string]
-    >,
+    entry: NonNullable<NonNullable<TaskExecutionRecord["primaryOperations"]>[string]>,
   ) => Promise<PendingPrimaryInspection>;
   inspectPrimarySession?: NonNullable<PrimarySessionRecoveryOptions["inspect"]>;
 }
@@ -97,9 +86,7 @@ export interface TaskSessionValidationRepairResult {
 }
 
 function nextTimestamp(previousTimestamp: string): string {
-  return new Date(
-    Math.max(Date.now(), Date.parse(previousTimestamp) + 1),
-  ).toISOString();
+  return new Date(Math.max(Date.now(), Date.parse(previousTimestamp) + 1)).toISOString();
 }
 
 function updateRecord(
@@ -124,9 +111,7 @@ function validationResultFromEvidence(
 
   const status =
     evidence.status ??
-    (evidence.exitCode === 0 && evidence.command.trim().length > 0
-      ? "passed"
-      : "uncertain");
+    (evidence.exitCode === 0 && evidence.command.trim().length > 0 ? "passed" : "uncertain");
   return {
     ...evidence,
     status,
@@ -166,8 +151,7 @@ async function assertValidationPrerequisites(
   const { validation, expectedPrimarySessionId, card } = options;
 
   const exhaustedPublicationRecovery =
-    record.phase === "publication" &&
-    record.validationRepair?.status === "exhausted";
+    record.phase === "publication" && record.validationRepair?.status === "exhausted";
   if (record.phase !== "validation" && !exhaustedPublicationRecovery) {
     throw new TaskSessionValidationRepairError(
       `Validation repair requires the validation phase, found ${record.phase}`,
@@ -175,19 +159,14 @@ async function assertValidationPrerequisites(
     );
   }
 
-  if (
-    exhaustedPublicationRecovery &&
-    record.validationRepair?.activePrimaryOperation !== undefined
-  )
+  if (exhaustedPublicationRecovery && record.validationRepair?.activePrimaryOperation !== undefined)
     throw new TaskSessionValidationRepairError(
       "Exhausted publication cannot bypass an unresolved validation repair operation",
       record.retryCounters.validation,
     );
 
   if (exhaustedPublicationRecovery) {
-    const unresolvedOperation = Object.values(
-      record.primaryOperations ?? {},
-    ).find(
+    const unresolvedOperation = Object.values(record.primaryOperations ?? {}).find(
       (operation) =>
         operation !== undefined &&
         (["intent", "dispatched", "ambiguous"].includes(operation.status) ||
@@ -221,9 +200,7 @@ async function assertValidationPrerequisites(
     );
   }
 
-  const actualBranch = await validation.git.getCurrentBranch(
-    validation.worktreePath,
-  );
+  const actualBranch = await validation.git.getCurrentBranch(validation.worktreePath);
 
   if (actualBranch !== validation.expectedBranch) {
     throw new TaskSessionValidationRepairError(
@@ -236,19 +213,11 @@ async function assertValidationPrerequisites(
 export async function runTaskSessionValidationWithRepairs(
   options: RunTaskSessionValidationRepairsOptions,
 ): Promise<TaskSessionValidationRepairResult> {
-  const { validation, openCode, planStore, card, expectedPrimarySessionId } =
-    options;
-  const { project, cardId, expectedBranch, operationKey, worktreePath } =
-    validation;
+  const { validation, openCode, planStore, card, expectedPrimarySessionId } = options;
+  const { project, cardId, expectedBranch, operationKey, worktreePath } = validation;
 
-  if (
-    !Number.isSafeInteger(validation.timeoutMilliseconds) ||
-    validation.timeoutMilliseconds < 1
-  ) {
-    throw new TaskSessionValidationRepairError(
-      "Validation repair timeout must be positive",
-      0,
-    );
+  if (!Number.isSafeInteger(validation.timeoutMilliseconds) || validation.timeoutMilliseconds < 1) {
+    throw new TaskSessionValidationRepairError("Validation repair timeout must be positive", 0);
   }
 
   if (card.id !== cardId) {
@@ -270,10 +239,7 @@ export async function runTaskSessionValidationWithRepairs(
 
   const plan = planStore.read(cardId);
 
-  if (
-    plan !== null &&
-    (plan.plan.projectId !== project.id || plan.plan.cardId !== cardId)
-  )
+  if (plan !== null && (plan.plan.projectId !== project.id || plan.plan.cardId !== cardId))
     throw new TaskSessionValidationRepairError(
       "Validation repair plan identity does not match the owned task",
       record.retryCounters.validation,
@@ -281,8 +247,7 @@ export async function runTaskSessionValidationWithRepairs(
 
   const cycleId = operationKey;
   const configuredMaximum =
-    project.opencode.remediation.validationMaxPasses ??
-    MAX_VALIDATION_REPAIR_ATTEMPTS;
+    project.opencode.remediation.validationMaxPasses ?? MAX_VALIDATION_REPAIR_ATTEMPTS;
   let currentRecord = record;
   let repairState = currentRecord.validationRepair;
 
@@ -323,8 +288,7 @@ export async function runTaskSessionValidationWithRepairs(
   if (repairState?.status === "exhausted") {
     const evidence = repairState.evidence;
     const coverageEvidence = repairState.coverageEvidence;
-    const expectedValidationCommand =
-      project.repository.validationCommand ?? "";
+    const expectedValidationCommand = project.repository.validationCommand ?? "";
     const expectedCoverageCommand = project.repository.coverageCommand ?? "";
     if (evidence !== undefined && coverageEvidence !== undefined) {
       const currentIdentity = await getTaskSessionSourceSnapshotIdentity(
@@ -377,8 +341,7 @@ export async function runTaskSessionValidationWithRepairs(
     const coverageEvidence = repairState.coverageEvidence;
     const coverageIsCurrent =
       coverageCommand === undefined ||
-      (coverageEvidence !== undefined &&
-        coverageEvidence.command === coverageCommand);
+      (coverageEvidence !== undefined && coverageEvidence.command === coverageCommand);
 
     if (!coverageIsCurrent) {
       currentRecord = updateRecord(validation.taskRecordStore, currentRecord, {
@@ -396,20 +359,15 @@ export async function runTaskSessionValidationWithRepairs(
 
       if (
         currentIdentity !== evidence.contentIdentity ||
-        (coverageEvidence !== undefined &&
-          currentIdentity !== coverageEvidence.contentIdentity)
+        (coverageEvidence !== undefined && currentIdentity !== coverageEvidence.contentIdentity)
       ) {
-        currentRecord = updateRecord(
-          validation.taskRecordStore,
-          currentRecord,
-          {
-            validationRepair: {
-              cycleId,
-              status: "active",
-              maxAttempts,
-            },
+        currentRecord = updateRecord(validation.taskRecordStore, currentRecord, {
+          validationRepair: {
+            cycleId,
+            status: "active",
+            maxAttempts,
           },
-        );
+        });
       } else {
         return {
           validation: evidence,
@@ -428,18 +386,13 @@ export async function runTaskSessionValidationWithRepairs(
     const context = await options.prepareContext?.();
     const repairCard = context?.card ?? card;
     if (repairCard.id !== cardId)
-      throw new Error(
-        "Refreshed validation repair context belongs to another task",
-      );
+      throw new Error("Refreshed validation repair context belongs to another task");
     const attachmentContext =
-      context === undefined
-        ? options.attachmentContext
-        : context.attachmentContext;
+      context === undefined ? options.attachmentContext : context.attachmentContext;
     return { card: repairCard, attachmentContext };
   };
   while (true) {
-    const reservedOperation =
-      currentRecord.validationRepair?.activePrimaryOperation;
+    const reservedOperation = currentRecord.validationRepair?.activePrimaryOperation;
     if (reservedOperation !== undefined) {
       await prepareRepairContext();
       if (reservedOperation.promptArtifact === undefined)
@@ -447,15 +400,13 @@ export async function runTaskSessionValidationWithRepairs(
           "Reserved validation repair lacks its persisted prompt; preserving the reservation",
           reservedOperation.pass,
         );
-      const promptArtifact: unknown =
-        validation.taskRecordStore.readPrimaryResultArtifact({
-          reference: reservedOperation.promptArtifact
-            .reference as `sha256:${string}`,
-          bytes: reservedOperation.promptArtifact.bytes,
-          ...(reservedOperation.promptArtifact.path === undefined
-            ? {}
-            : { path: reservedOperation.promptArtifact.path }),
-        });
+      const promptArtifact: unknown = validation.taskRecordStore.readPrimaryResultArtifact({
+        reference: reservedOperation.promptArtifact.reference as `sha256:${string}`,
+        bytes: reservedOperation.promptArtifact.bytes,
+        ...(reservedOperation.promptArtifact.path === undefined
+          ? {}
+          : { path: reservedOperation.promptArtifact.path }),
+      });
       if (
         typeof promptArtifact !== "object" ||
         promptArtifact === null ||
@@ -466,10 +417,12 @@ export async function runTaskSessionValidationWithRepairs(
           "Persisted validation repair prompt artifact is invalid",
           reservedOperation.pass,
         );
-      const repairRecord = loadOwnedTaskExecutionRecord(
-        validation.taskRecordStore,
-        { projectId: project.id, cardId, expectedBranch, operationKey },
-      );
+      const repairRecord = loadOwnedTaskExecutionRecord(validation.taskRecordStore, {
+        projectId: project.id,
+        cardId,
+        expectedBranch,
+        operationKey,
+      });
       await assertValidationPrerequisites(options, repairRecord);
       let resumedRepairResult;
       try {
@@ -492,10 +445,7 @@ export async function runTaskSessionValidationWithRepairs(
             activity: `validation-repair-pass-${reservedOperation.pass}`,
             inspectPending: (entry) => {
               if (options.inspectPrimaryOperation !== undefined)
-                return options.inspectPrimaryOperation(
-                  reservedOperation.operationId,
-                  entry,
-                );
+                return options.inspectPrimaryOperation(reservedOperation.operationId, entry);
               if (options.primaryOperationEvidence === undefined)
                 return Promise.resolve({ status: "unknown" });
               return inspectPrimaryOperationEvidence(
@@ -537,34 +487,25 @@ export async function runTaskSessionValidationWithRepairs(
         reservedOperation.beforeContentIdentity !== undefined &&
         currentRepair?.evidence !== undefined &&
         currentRepair.coverageEvidence !== undefined &&
-        currentRepair.evidence.contentIdentity ===
-          reservedOperation.beforeContentIdentity &&
+        currentRepair.evidence.contentIdentity === reservedOperation.beforeContentIdentity &&
         currentRepair.coverageEvidence.contentIdentity ===
           reservedOperation.beforeContentIdentity &&
-        currentRepair.evidence.command ===
-          (project.repository.validationCommand ?? "") &&
-        currentRepair.coverageEvidence.command ===
-          (project.repository.coverageCommand ?? "")
+        currentRepair.evidence.command === (project.repository.validationCommand ?? "") &&
+        currentRepair.coverageEvidence.command === (project.repository.coverageCommand ?? "")
       ) {
-        currentRecord = updateRecord(
-          validation.taskRecordStore,
-          currentRecord,
-          {
-            validationRepair: {
-              cycleId,
-              status: "exhausted",
-              maxAttempts,
-              stopReason: "no-change",
-              evidence: currentRepair.evidence,
-              coverageEvidence: currentRepair.coverageEvidence,
-            },
+        currentRecord = updateRecord(validation.taskRecordStore, currentRecord, {
+          validationRepair: {
+            cycleId,
+            status: "exhausted",
+            maxAttempts,
+            stopReason: "no-change",
+            evidence: currentRepair.evidence,
+            coverageEvidence: currentRepair.coverageEvidence,
           },
-        );
+        });
         return {
           validation: validationResultFromEvidence(currentRepair.evidence),
-          coverage: validationResultFromEvidence(
-            currentRepair.coverageEvidence,
-          ),
+          coverage: validationResultFromEvidence(currentRepair.coverageEvidence),
           attempts: currentRecord.retryCounters.validation,
           record: currentRecord,
         };
@@ -579,9 +520,7 @@ export async function runTaskSessionValidationWithRepairs(
             : explicitlyFinishedEarly(resumedRepairResult.output)
               ? { finishAfterNextCheck: "finished-early" }
               : {}),
-          ...(currentRepair?.evidence === undefined
-            ? {}
-            : { evidence: currentRepair.evidence }),
+          ...(currentRepair?.evidence === undefined ? {} : { evidence: currentRepair.evidence }),
           ...(currentRepair?.coverageEvidence === undefined
             ? {}
             : { coverageEvidence: currentRepair.coverageEvidence }),
@@ -591,15 +530,9 @@ export async function runTaskSessionValidationWithRepairs(
     }
     const validationResult = await runTaskSessionValidation(validation);
     const coverageResult = await runTaskSessionCoverage(validation);
-    if (
-      validationResult.status === "skipped" &&
-      coverageResult.status === "skipped"
-    ) {
+    if (validationResult.status === "skipped" && coverageResult.status === "skipped") {
       const latestRecord = validation.taskRecordStore.read(cardId);
-      if (
-        latestRecord === null ||
-        latestRecord.revision !== currentRecord.revision
-      )
+      if (latestRecord === null || latestRecord.revision !== currentRecord.revision)
         throw new TaskSessionValidationRepairError(
           "Task ownership changed before skipped quality evidence could be persisted",
           currentRecord.retryCounters.validation,
@@ -621,10 +554,8 @@ export async function runTaskSessionValidationWithRepairs(
       };
     }
     const allQualityGatesPassed =
-      (validationResult.status === "passed" ||
-        validationResult.status === "skipped") &&
-      (coverageResult.status === "passed" ||
-        coverageResult.status === "skipped");
+      (validationResult.status === "passed" || validationResult.status === "skipped") &&
+      (coverageResult.status === "passed" || coverageResult.status === "skipped");
 
     if (allQualityGatesPassed) {
       const currentIdentity = await getTaskSessionSourceSnapshotIdentity(
@@ -634,12 +565,10 @@ export async function runTaskSessionValidationWithRepairs(
 
       if (
         currentIdentity !== validationResult.contentIdentity ||
-        (coverageResult !== null &&
-          currentIdentity !== coverageResult.contentIdentity)
+        (coverageResult !== null && currentIdentity !== coverageResult.contentIdentity)
       ) {
         throw new StaleTaskSessionValidationEvidenceError(
-          coverageResult !== null &&
-            currentIdentity !== coverageResult.contentIdentity
+          coverageResult !== null && currentIdentity !== coverageResult.contentIdentity
             ? coverageResult.contentIdentity
             : validationResult.contentIdentity,
           currentIdentity,
@@ -756,11 +685,10 @@ export async function runTaskSessionValidationWithRepairs(
         ...validationResult,
         diagnostic: validationResult.diagnostic.slice(0, 8_000),
       };
-      const promptArtifact =
-        validation.taskRecordStore.writePrimaryResultArtifact(
-          `${repairOperationId}:prompt`,
-          { prompt },
-        );
+      const promptArtifact = validation.taskRecordStore.writePrimaryResultArtifact(
+        `${repairOperationId}:prompt`,
+        { prompt },
+      );
       currentRecord = updateRecord(validation.taskRecordStore, currentRecord, {
         retryCounters: {
           ...currentRecord.retryCounters,
@@ -784,15 +712,12 @@ export async function runTaskSessionValidationWithRepairs(
       });
     }
 
-    const repairRecord = loadOwnedTaskExecutionRecord(
-      validation.taskRecordStore,
-      {
-        projectId: project.id,
-        cardId,
-        expectedBranch,
-        operationKey,
-      },
-    );
+    const repairRecord = loadOwnedTaskExecutionRecord(validation.taskRecordStore, {
+      projectId: project.id,
+      cardId,
+      expectedBranch,
+      operationKey,
+    });
     await assertValidationPrerequisites(options, repairRecord);
 
     let repairResult;
@@ -849,43 +774,33 @@ export async function runTaskSessionValidationWithRepairs(
 
     currentRecord = validation.taskRecordStore.read(cardId) ?? currentRecord;
     await assertValidationPrerequisites(options, currentRecord);
-    if (
-      currentRecord.validationRepair?.activePrimaryOperation?.operationId ===
-      repairOperationId
-    ) {
+    if (currentRecord.validationRepair?.activePrimaryOperation?.operationId === repairOperationId) {
       const afterContentIdentity = await getTaskSessionSourceSnapshotIdentity(
         validation.git,
         worktreePath,
       );
       const repairedWithoutContentChange =
-        currentRecord.validationRepair.activePrimaryOperation
-          .beforeContentIdentity !== undefined &&
-        currentRecord.validationRepair.activePrimaryOperation
-          .beforeContentIdentity === afterContentIdentity;
+        currentRecord.validationRepair.activePrimaryOperation.beforeContentIdentity !== undefined &&
+        currentRecord.validationRepair.activePrimaryOperation.beforeContentIdentity ===
+          afterContentIdentity;
       if (repairedWithoutContentChange) {
         const beforeContentIdentity =
-          currentRecord.validationRepair.activePrimaryOperation
-            .beforeContentIdentity;
+          currentRecord.validationRepair.activePrimaryOperation.beforeContentIdentity;
         const observedQualityMatchesReservedContent =
-          currentRecord.validationRepair.evidence?.contentIdentity ===
-            beforeContentIdentity &&
+          currentRecord.validationRepair.evidence?.contentIdentity === beforeContentIdentity &&
           currentRecord.validationRepair.coverageEvidence?.contentIdentity ===
             beforeContentIdentity;
         if (observedQualityMatchesReservedContent) {
-          currentRecord = updateRecord(
-            validation.taskRecordStore,
-            currentRecord,
-            {
-              validationRepair: {
-                cycleId,
-                status: "exhausted",
-                maxAttempts,
-                stopReason: "no-change",
-                evidence: toValidationEvidence(validationResult),
-                coverageEvidence: toValidationEvidence(coverageResult),
-              },
+          currentRecord = updateRecord(validation.taskRecordStore, currentRecord, {
+            validationRepair: {
+              cycleId,
+              status: "exhausted",
+              maxAttempts,
+              stopReason: "no-change",
+              evidence: toValidationEvidence(validationResult),
+              coverageEvidence: toValidationEvidence(coverageResult),
             },
-          );
+          });
           return {
             validation: validationResult,
             coverage: coverageResult,
@@ -900,9 +815,7 @@ export async function runTaskSessionValidationWithRepairs(
           cycleId,
           status: "active",
           maxAttempts,
-          ...(finishedEarly
-            ? { finishAfterNextCheck: "finished-early" as const }
-            : {}),
+          ...(finishedEarly ? { finishAfterNextCheck: "finished-early" as const } : {}),
         },
       });
     }

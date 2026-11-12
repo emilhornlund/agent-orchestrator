@@ -9,14 +9,8 @@ import {
 } from "../process/child-environment.js";
 
 import { logger } from "../logging/logger.js";
-import {
-  createSecretRedactor,
-  redactSecrets,
-} from "../security/redact-secrets.js";
-import {
-  appendSessionLog,
-  appendSessionSection,
-} from "../logging/session-log.js";
+import { createSecretRedactor, redactSecrets } from "../security/redact-secrets.js";
+import { appendSessionLog, appendSessionSection } from "../logging/session-log.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { isolatedOpenCodeDispatch } from "./isolated-dispatch.js";
 import {
@@ -92,11 +86,7 @@ export class OpenCodeDefaultProviderResolutionError extends Error {
 export class OpenCodeTimeoutError extends Error {
   public readonly treeStopped: boolean;
   public readonly executionId: string | undefined;
-  constructor(
-    timeoutMilliseconds: number,
-    executionId?: string,
-    treeStopped = false,
-  ) {
+  constructor(timeoutMilliseconds: number, executionId?: string, treeStopped = false) {
     super(
       `OpenCode exceeded safety timeout of ${timeoutMilliseconds}ms${executionId === undefined ? "" : `; diagnostics: process-executions/${executionId}/stderr.txt`}`,
     );
@@ -106,9 +96,7 @@ export class OpenCodeTimeoutError extends Error {
   }
 }
 
-export type RunOpenCode = (
-  options: OpenCodeRunOptions,
-) => Promise<OpenCodeRunResult>;
+export type RunOpenCode = (options: OpenCodeRunOptions) => Promise<OpenCodeRunResult>;
 
 /** Add an exact configured selection only when the CLI reports it as invalid. */
 export function reportUnavailableOpenCodeSelection(
@@ -126,12 +114,8 @@ export function reportUnavailableOpenCodeSelection(
     return result;
   }
   const selected = [
-    selection.model === undefined
-      ? undefined
-      : `model=${JSON.stringify(selection.model)}`,
-    selection.variant === undefined
-      ? undefined
-      : `variant=${JSON.stringify(selection.variant)}`,
+    selection.model === undefined ? undefined : `model=${JSON.stringify(selection.model)}`,
+    selection.variant === undefined ? undefined : `variant=${JSON.stringify(selection.variant)}`,
   ].filter((value) => value !== undefined);
   return {
     ...result,
@@ -167,9 +151,7 @@ function assertValidSessionId(sessionId: string): void {
   }
 }
 
-export function buildOpenCodeArguments(
-  options: OpenCodeArgumentOptions,
-): string[] {
+export function buildOpenCodeArguments(options: OpenCodeArgumentOptions): string[] {
   const { cwd, model, variant, prompt, sessionId, captureSessionId } = options;
 
   if (sessionId !== undefined) {
@@ -222,22 +204,14 @@ export class OpenCodeTextOutputParseError extends Error {
 
 function parseOpenCodeEventV1(value: unknown): string | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new OpenCodeSessionIdParseError(
-      "Structured OpenCode output contains a non-object event",
-    );
+    throw new OpenCodeSessionIdParseError("Structured OpenCode output contains a non-object event");
   }
 
   if (!("type" in value) || typeof value.type !== "string") {
-    throw new OpenCodeSessionIdParseError(
-      "Structured OpenCode event is missing its event type",
-    );
+    throw new OpenCodeSessionIdParseError("Structured OpenCode event is missing its event type");
   }
 
-  if (
-    "version" in value &&
-    value.version !== undefined &&
-    value.version !== 1
-  ) {
+  if ("version" in value && value.version !== undefined && value.version !== 1) {
     throw new OpenCodeSessionIdParseError(
       `Unsupported OpenCode JSON event version: ${String(value.version)}`,
     );
@@ -248,18 +222,15 @@ function parseOpenCodeEventV1(value: unknown): string | undefined {
   }
 
   if (typeof value.sessionID !== "string") {
-    throw new OpenCodeSessionIdParseError(
-      "Structured OpenCode event has an invalid sessionID",
-    );
+    throw new OpenCodeSessionIdParseError("Structured OpenCode event has an invalid sessionID");
   }
 
   try {
     assertValidSessionId(value.sessionID);
   } catch (error) {
-    throw new OpenCodeSessionIdParseError(
-      "Structured OpenCode event has an invalid sessionID",
-      { cause: error },
-    );
+    throw new OpenCodeSessionIdParseError("Structured OpenCode event has an invalid sessionID", {
+      cause: error,
+    });
   }
 
   return value.sessionID;
@@ -269,9 +240,7 @@ export function parseOpenCodeSessionId(output: string): string {
   const lines = output.split(/\r?\n/u).filter((line) => line.trim().length > 0);
 
   if (lines.length === 0) {
-    throw new OpenCodeSessionIdParseError(
-      "Structured OpenCode output did not contain any events",
-    );
+    throw new OpenCodeSessionIdParseError("Structured OpenCode output did not contain any events");
   }
 
   const sessionIds = new Set<string>();
@@ -381,9 +350,7 @@ function hasStructuredProviderOutage(output: string): boolean {
         Array.isArray(event) ||
         !("type" in event) ||
         event.type !== "error" ||
-        ("version" in event &&
-          event.version !== undefined &&
-          event.version !== 1) ||
+        ("version" in event && event.version !== undefined && event.version !== 1) ||
         !("error" in event) ||
         typeof event.error !== "object" ||
         event.error === null ||
@@ -393,16 +360,11 @@ function hasStructuredProviderOutage(output: string): boolean {
       const error = event.error as Record<string, unknown>;
       if (typeof error.data !== "object" || error.data === null) continue;
       const data = error.data as Record<string, unknown>;
-      if (
-        error.name === "APIError" &&
-        [429, 502, 503, 504].includes(data.statusCode as number)
-      )
+      if (error.name === "APIError" && [429, 502, 503, 504].includes(data.statusCode as number))
         return true;
       const cause = data.cause;
       const causeCode =
-        cause !== null && typeof cause === "object" && "code" in cause
-          ? cause.code
-          : undefined;
+        cause !== null && typeof cause === "object" && "code" in cause ? cause.code : undefined;
       if (
         error.name === "FetchError" &&
         [data.code, causeCode].some((code) =>
@@ -463,10 +425,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
       }
 
       if (sessionLogPath) {
-        appendSessionSection(
-          sessionLogPath,
-          sessionLabel ?? "OpenCode session",
-        );
+        appendSessionSection(sessionLogPath, sessionLabel ?? "OpenCode session");
 
         appendSessionLog(
           sessionLogPath,
@@ -493,8 +452,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
         return;
       }
       const effectiveProvider =
-        providerFromModel(model) ??
-        providerForOpenCodeDefault(environmentSource);
+        providerFromModel(model) ?? providerForOpenCodeDefault(environmentSource);
       if (
         model === undefined &&
         effectiveProvider === undefined &&
@@ -518,12 +476,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
       }
 
       const childEnvironment = {
-        ...buildChildEnvironment(
-          "opencode",
-          environment,
-          process.env,
-          effectiveProvider,
-        ),
+        ...buildChildEnvironment("opencode", environment, process.env, effectiveProvider),
         OPENCODE_CONFIG_CONTENT: buildOpenCodeConfigContent(readOnly),
       };
       const arguments_ = buildOpenCodeArguments({
@@ -578,8 +531,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
         try {
           appendSessionLog(sessionLogPath, text);
         } catch (error) {
-          recorderFailure ??=
-            error instanceof Error ? error : new Error(String(error));
+          recorderFailure ??= error instanceof Error ? error : new Error(String(error));
         }
       }
 
@@ -610,12 +562,8 @@ const defaultRunOpenCode: RunOpenCode = async ({
           }
 
           if (sessionLogPath)
-            recordSession(
-              "\nOpenCode did not exit after SIGTERM; sending SIGKILL\n",
-            );
-          signalProcessTree(child.pid, "SIGKILL", (signal) =>
-            child.kill(signal),
-          );
+            recordSession("\nOpenCode did not exit after SIGTERM; sending SIGKILL\n");
+          signalProcessTree(child.pid, "SIGKILL", (signal) => child.kill(signal));
         }, shutdownGraceMilliseconds);
 
         forceKillTimeout.unref();
@@ -741,13 +689,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
         }
         effectiveSignal.removeEventListener("abort", handleAbort);
 
-        reject(
-          new ProcessExecutionError(
-            "OpenCode",
-            execution.executionId,
-            "spawn-failure",
-          ),
-        );
+        reject(new ProcessExecutionError("OpenCode", execution.executionId, "spawn-failure"));
       });
 
       child.once("close", async (code, signalName) => {
@@ -770,9 +712,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
             recorderFailure ??=
               finishError instanceof Error
                 ? finishError
-                : new ProcessEvidenceError(
-                    "OpenCode evidence finalization failed",
-                  );
+                : new ProcessEvidenceError("OpenCode evidence finalization failed");
           }
           reject(error);
           return;
@@ -822,9 +762,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
                 output,
                 errorOutput,
                 processExecutionId: execution.executionId,
-                ...(failureClassification === undefined
-                  ? {}
-                  : { failureClassification }),
+                ...(failureClassification === undefined ? {} : { failureClassification }),
                 ...((capturedSessionId ?? sessionId) === undefined
                   ? {}
                   : { sessionId: capturedSessionId ?? sessionId }),
@@ -832,9 +770,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
               ...((capturedSessionId ?? sessionId) === undefined
                 ? {}
                 : { sessionId: capturedSessionId ?? sessionId }),
-              ...(failureClassification === undefined
-                ? {}
-                : { failureClassification }),
+              ...(failureClassification === undefined ? {} : { failureClassification }),
               ...(signalName === null ? {} : { signal: signalName }),
             },
           );
@@ -842,9 +778,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
           recorderFailure ??=
             error instanceof Error
               ? error
-              : new ProcessEvidenceError(
-                  "OpenCode evidence finalization failed",
-                );
+              : new ProcessEvidenceError("OpenCode evidence finalization failed");
         }
         recorderFailure ??= execution.failure;
         if (recorderFailure !== undefined) {
@@ -857,13 +791,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
         }
 
         if (timedOut) {
-          reject(
-            new OpenCodeTimeoutError(
-              timeoutMilliseconds,
-              execution.executionId,
-              true,
-            ),
-          );
+          reject(new OpenCodeTimeoutError(timeoutMilliseconds, execution.executionId, true));
           return;
         }
 
@@ -879,9 +807,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
               output,
               errorOutput,
               processExecutionId: execution.executionId,
-              ...(failureClassification !== undefined
-                ? { failureClassification }
-                : {}),
+              ...(failureClassification !== undefined ? { failureClassification } : {}),
             },
             { model, variant },
           ),
@@ -898,10 +824,7 @@ export class OpenCodeClient {
 
   async run(options: OpenCodeRunOptions): Promise<OpenCodeRunResult> {
     const projectId = ProjectRunAuthority.currentProjectId();
-    const authority =
-      projectId === undefined
-        ? undefined
-        : ProjectRunAuthority.current(projectId);
+    const authority = projectId === undefined ? undefined : ProjectRunAuthority.current(projectId);
     assertNoTerminalPr(authority, true);
     return withTaskExecutionActivity(authority, () =>
       withAiExecutionCapacity(options.signal, async () => {
@@ -928,18 +851,14 @@ export class OpenCodeClient {
         const result =
           projectId === undefined
             ? await this.runOwned(dispatchOptions)
-            : await ProjectRunAuthority.dispatch(projectId, () =>
-                this.runOwned(dispatchOptions),
-              );
+            : await ProjectRunAuthority.dispatch(projectId, () => this.runOwned(dispatchOptions));
         assertNoTerminalPr(authority);
         return result;
       }),
     );
   }
 
-  private async runOwned(
-    options: OpenCodeRunOptions,
-  ): Promise<OpenCodeRunResult> {
+  private async runOwned(options: OpenCodeRunOptions): Promise<OpenCodeRunResult> {
     if (options.sessionId !== undefined) {
       assertValidSessionId(options.sessionId);
     }
@@ -961,9 +880,7 @@ export class OpenCodeClient {
     });
 
     if (options.captureSessionId !== true) {
-      return options.sessionId === undefined
-        ? result
-        : { ...result, sessionId: options.sessionId };
+      return options.sessionId === undefined ? result : { ...result, sessionId: options.sessionId };
     }
 
     try {

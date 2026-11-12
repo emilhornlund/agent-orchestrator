@@ -88,10 +88,7 @@ const lease = {
   assertHeld() {},
 };
 
-function writeLegacyTaskWithRealStore(
-  runtimeRoot: string,
-  project: ProjectConfig,
-): void {
+function writeLegacyTaskWithRealStore(runtimeRoot: string, project: ProjectConfig): void {
   const store = new TaskExecutionStore(runtimeRoot, project);
   store.create({ ...legacy, revision: 1 } as unknown as TaskExecutionRecord);
   for (let revision = 1; revision < legacy.revision; revision += 1) {
@@ -133,12 +130,10 @@ describe("legacy state import", () => {
     expect(built.record.legacy.retryCounters).toEqual(legacy.retryCounters);
     expect(built.record.legacy.legacyTaskRecord).toEqual(legacy);
     expect(built.record.legacy.sourceManifest).toHaveLength(1);
-    const snapshot = JSON.parse(
-      Buffer.from(built.artifacts[0]!.content).toString(),
-    ) as { sources: { bytesBase64: string }[] };
-    expect(Buffer.from(snapshot.sources[0]!.bytesBase64, "base64")).toEqual(
-      bytes,
-    );
+    const snapshot = JSON.parse(Buffer.from(built.artifacts[0]!.content).toString()) as {
+      sources: { bytesBase64: string }[];
+    };
+    expect(Buffer.from(snapshot.sources[0]!.bytesBase64, "base64")).toEqual(bytes);
   });
 
   it("rejects unsupported records rather than turning them into an empty/new claim", () => {
@@ -162,45 +157,42 @@ describe("legacy state import", () => {
     ["human-feedback", "human-feedback"],
     ["attention-required", "implementation"],
     ["done", "human-review"],
-  ] as const)(
-    "maps legacy %s to a visible nonterminal checkpoint",
-    (phase, expected) => {
-      const raw = { ...legacy, phase };
-      const bytes = Buffer.from(JSON.stringify(raw));
-      const sources = [
-        {
-          family: "task-executions",
-          path: "/legacy/task.json",
-          projectId: raw.projectId,
-          cardId: raw.cardId,
-          sha256: createHash("sha256").update(bytes).digest("hex"),
-          bytes,
-          parsed: raw,
-        },
-      ];
-      const mapped = buildLegacyRunSnapshot({
-        rawTask: raw,
-        sources,
-        pinned,
-        lease,
-        now: new Date("2026-11-01T00:00:00.000Z"),
-      });
-      expect(mapped.record.lifecycle).toBe("waiting");
-      expect(mapped.record.checkpoint).toBe(expected);
-      expect(mapped.record.wait.reason).toBe(
-        phase === "done"
-          ? "legacy-terminal-unverified"
-          : phase === "attention-required"
-            ? "legacy-attention-required"
-            : "legacy-execution-reconciliation",
-      );
-      expect(mapped.record.legacy.recoveryDisposition).toBe(
-        phase === "done" || phase === "attention-required"
-          ? "operator-reconciliation-required"
-          : "task-session-reconcile",
-      );
-    },
-  );
+  ] as const)("maps legacy %s to a visible nonterminal checkpoint", (phase, expected) => {
+    const raw = { ...legacy, phase };
+    const bytes = Buffer.from(JSON.stringify(raw));
+    const sources = [
+      {
+        family: "task-executions",
+        path: "/legacy/task.json",
+        projectId: raw.projectId,
+        cardId: raw.cardId,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        bytes,
+        parsed: raw,
+      },
+    ];
+    const mapped = buildLegacyRunSnapshot({
+      rawTask: raw,
+      sources,
+      pinned,
+      lease,
+      now: new Date("2026-11-01T00:00:00.000Z"),
+    });
+    expect(mapped.record.lifecycle).toBe("waiting");
+    expect(mapped.record.checkpoint).toBe(expected);
+    expect(mapped.record.wait.reason).toBe(
+      phase === "done"
+        ? "legacy-terminal-unverified"
+        : phase === "attention-required"
+          ? "legacy-attention-required"
+          : "legacy-execution-reconciliation",
+    );
+    expect(mapped.record.legacy.recoveryDisposition).toBe(
+      phase === "done" || phase === "attention-required"
+        ? "operator-reconciliation-required"
+        : "task-session-reconcile",
+    );
+  });
 
   it("restarts across each durable handoff barrier without replaying external writes", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "legacy-handoff-"));
@@ -255,11 +247,7 @@ describe("legacy state import", () => {
           });
           break;
         } catch (error) {
-          if (
-            !(error instanceof Error) ||
-            error.message !== "simulated process kill"
-          )
-            throw error;
+          if (!(error instanceof Error) || error.message !== "simulated process kill") throw error;
         }
       }
       expect(killed).toEqual(
@@ -332,13 +320,7 @@ describe("legacy state import", () => {
         (current) => current,
       );
       expect(progressed.revision).toBeGreaterThan(beforeProgress.revision);
-      fs.unlinkSync(
-        path.join(
-          storageRoot,
-          "attempts",
-          `${candidate.record.attemptId}.json`,
-        ),
-      );
+      fs.unlinkSync(path.join(storageRoot, "attempts", `${candidate.record.attemptId}.json`));
       expect(() =>
         migrateLegacyAttempt({
           store: successorStore,
@@ -349,13 +331,7 @@ describe("legacy state import", () => {
         }),
       ).toThrow(/candidate that is missing/);
       expect(
-        fs.existsSync(
-          path.join(
-            storageRoot,
-            "attempts",
-            `${candidate.record.attemptId}.json`,
-          ),
-        ),
+        fs.existsSync(path.join(storageRoot, "attempts", `${candidate.record.attemptId}.json`)),
       ).toBe(false);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -390,13 +366,8 @@ describe("legacy state import", () => {
         operationKey: "feedback-op-1",
         enqueuedAt: legacy.updatedAt,
       });
-      const originalQueueBytes = fs.readFileSync(
-        path.join(queues, "project-one.json"),
-      );
-      fs.writeFileSync(
-        path.join(queues, "other-project.json"),
-        "{ malformed unrelated queue",
-      );
+      const originalQueueBytes = fs.readFileSync(path.join(queues, "project-one.json"));
+      fs.writeFileSync(path.join(queues, "other-project.json"), "{ malformed unrelated queue");
       new TaskMutationBlockStore(runtime, projectId).report(
         "migration-scope",
         "migration-identity",
@@ -437,9 +408,7 @@ describe("legacy state import", () => {
           version: 1,
           projectId,
           cardId: "card-one",
-          requirements: [
-            { id: "REQ-1", text: "Preserve", verification: "Compare" },
-          ],
+          requirements: [{ id: "REQ-1", text: "Preserve", verification: "Compare" }],
           steps: [
             {
               id: "STEP-1",
@@ -559,29 +528,19 @@ describe("legacy state import", () => {
         worktreeRoot: project.repository.worktreeRoot,
         storageRoot: runtime,
       };
-      const migrationRegistry = new RunRegistry(
-        runtime,
-        integrationId,
-        migrationLease,
-      );
+      const migrationRegistry = new RunRegistry(runtime, integrationId, migrationLease);
       const importedAttempt = migrateLegacyProject({
         runtimeRoot: runtime,
         project,
         pinned: migrationPinned,
         lease: migrationLease,
-        store: new RunStore(
-          runtime,
-          "migration-candidate",
-          migrationPinned,
-          migrationLease,
-        ),
+        store: new RunStore(runtime, "migration-candidate", migrationPinned, migrationLease),
         storeForAttempt: (attemptId) =>
           new RunStore(runtime, attemptId, migrationPinned, migrationLease),
         registry: migrationRegistry,
       });
       expect(importedAttempt.status).toBe("imported");
-      if (importedAttempt.status !== "imported")
-        throw new Error("expected imported attempt");
+      if (importedAttempt.status !== "imported") throw new Error("expected imported attempt");
       expect(importedAttempt.record).toMatchObject({
         lifecycle: "waiting",
         publicationState: "unknown",
@@ -602,9 +561,7 @@ describe("legacy state import", () => {
         `prepared-conflict-card-one`,
         ProjectRunAuthority.reconciliationBlockKey(projectId),
       ])
-        expect(
-          importedAttempt.record.compatibility[projectionKey],
-        ).toBeDefined();
+        expect(importedAttempt.record.compatibility[projectionKey]).toBeDefined();
       for (const source of result.records)
         expect(fs.readFileSync(source.path)).toEqual(Buffer.from(source.bytes));
       const migratedStore = new RunStore(
@@ -620,30 +577,14 @@ describe("legacy state import", () => {
           ProjectRunAuthority.queueKey(projectId),
           (value) => value,
         ),
-      ).toEqual(
-        result.records.find(
-          (source) => source.family === "task-mutation-queues",
-        )?.parsed,
-      );
-      const importedAuthority = new ProjectRunAuthority(
-        projectId,
-        migratedStore,
-        generation,
-      );
+      ).toEqual(result.records.find((source) => source.family === "task-mutation-queues")?.parsed);
+      const importedAuthority = new ProjectRunAuthority(projectId, migratedStore, generation);
       importedAuthority.run(() => {
-        expect(
-          new TaskExecutionStore(runtime, project).read("card-one"),
-        ).toEqual(legacy);
+        expect(new TaskExecutionStore(runtime, project).read("card-one")).toEqual(legacy);
         expect(new TaskMutationQueue(runtime, project).list()).toHaveLength(1);
-        expect(
-          new TaskPlanStore(runtime, project).read("card-one"),
-        ).not.toBeNull();
-        expect(
-          new FeedbackLedgerStore(runtime, project).read("card-one"),
-        ).not.toBeNull();
-        expect(new PrMaintenanceStore(runtime, project).inspect()).toHaveLength(
-          1,
-        );
+        expect(new TaskPlanStore(runtime, project).read("card-one")).not.toBeNull();
+        expect(new FeedbackLedgerStore(runtime, project).read("card-one")).not.toBeNull();
+        expect(new PrMaintenanceStore(runtime, project).inspect()).toHaveLength(1);
         expect(
           new TaskMutationBlockStore(runtime, projectId).report(
             "migration-scope",
@@ -655,14 +596,10 @@ describe("legacy state import", () => {
         expect(readPendingCommitState(project, "card-one")).not.toBeNull();
         expect(readRejectedCommitState(project, "card-one")).not.toBeNull();
         expect(readPreparedConflict(project, "card-one")).not.toBeNull();
-        expect(loadReconciliationBlock(runtime, projectId).status).toBe(
-          "loaded",
-        );
+        expect(loadReconciliationBlock(runtime, projectId).status).toBe("loaded");
       });
       const maintenanceFile = path.join(maintenance, "project-one.json");
-      const originalMaintenance = JSON.parse(
-        fs.readFileSync(maintenanceFile, "utf8"),
-      ) as {
+      const originalMaintenance = JSON.parse(fs.readFileSync(maintenanceFile, "utf8")) as {
         operations: {
           pullRequest: { number: number; url: string };
           expectedRemoteHead: string;
@@ -674,9 +611,7 @@ describe("legacy state import", () => {
       originalMaintenance.operations[0]!.expectedRemoteHead = "c".repeat(40);
       fs.writeFileSync(maintenanceFile, JSON.stringify(originalMaintenance));
       expect(
-        inventoryLegacyProject({ runtimeRoot: runtime, project }).blockers.join(
-          " ",
-        ),
+        inventoryLegacyProject({ runtimeRoot: runtime, project }).blockers.join(" "),
       ).toContain("conflicting PR");
       fs.writeFileSync(
         maintenanceFile,
@@ -694,39 +629,31 @@ describe("legacy state import", () => {
           ],
         }),
       );
-      const headOnlyConflict = JSON.parse(
-        fs.readFileSync(maintenanceFile, "utf8"),
-      ) as { operations: { expectedRemoteHead: string }[] };
+      const headOnlyConflict = JSON.parse(fs.readFileSync(maintenanceFile, "utf8")) as {
+        operations: { expectedRemoteHead: string }[];
+      };
       headOnlyConflict.operations[0]!.expectedRemoteHead = "c".repeat(40);
       fs.writeFileSync(maintenanceFile, JSON.stringify(headOnlyConflict));
+      expect(new PrMaintenanceStore(runtime, project).inspect()[0]?.expectedRemoteHead).toBe(
+        "c".repeat(40),
+      );
+      expect(new TaskExecutionStore(runtime, project).read("card-one")?.pullRequest?.headSha).toBe(
+        "a".repeat(40),
+      );
       expect(
-        new PrMaintenanceStore(runtime, project).inspect()[0]
-          ?.expectedRemoteHead,
-      ).toBe("c".repeat(40));
-      expect(
-        new TaskExecutionStore(runtime, project).read("card-one")?.pullRequest
-          ?.headSha,
-      ).toBe("a".repeat(40));
-      expect(
-        inventoryLegacyProject({ runtimeRoot: runtime, project }).blockers.join(
-          " ",
-        ),
+        inventoryLegacyProject({ runtimeRoot: runtime, project }).blockers.join(" "),
       ).toContain("conflicting PR number, URL, or head");
       headOnlyConflict.operations[0]!.expectedRemoteHead = "a".repeat(40);
       fs.writeFileSync(maintenanceFile, JSON.stringify(headOnlyConflict));
       const selectedQueue = path.join(queues, "project-one.json");
       fs.writeFileSync(selectedQueue, "{");
       expect(
-        inventoryLegacyProject({ runtimeRoot: runtime, project }).blockers.join(
-          " ",
-        ),
+        inventoryLegacyProject({ runtimeRoot: runtime, project }).blockers.join(" "),
       ).toContain("project-one.json");
       expect(fs.readFileSync(selectedQueue, "utf8")).toBe("{");
       fs.unlinkSync(referencedLog);
       expect(
-        inventoryLegacyProject({ runtimeRoot: runtime, project }).blockers.join(
-          " ",
-        ),
+        inventoryLegacyProject({ runtimeRoot: runtime, project }).blockers.join(" "),
       ).toContain("referenced artifact");
       fs.writeFileSync(referencedLog, "preserved diagnostic bytes");
       fs.writeFileSync(
@@ -740,22 +667,15 @@ describe("legacy state import", () => {
         }),
       );
       expect(
-        inventoryLegacyProject({ runtimeRoot: runtime, project }).blockers.join(
-          " ",
-        ),
+        inventoryLegacyProject({ runtimeRoot: runtime, project }).blockers.join(" "),
       ).toContain("configured project-one");
-      fs.writeFileSync(
-        path.join(queues, "project-one.json"),
-        originalQueueBytes,
-      );
+      fs.writeFileSync(path.join(queues, "project-one.json"), originalQueueBytes);
       const selectedFile = path.join(queues, "project-one.json");
       const selectedBackup = path.join(queues, "project-one.saved");
       fs.renameSync(selectedFile, selectedBackup);
       fs.mkdirSync(selectedFile);
       expect(
-        inventoryLegacyProject({ runtimeRoot: runtime, project }).blockers.join(
-          " ",
-        ),
+        inventoryLegacyProject({ runtimeRoot: runtime, project }).blockers.join(" "),
       ).toContain("unsafe, non-file");
       fs.rmdirSync(selectedFile);
       fs.renameSync(selectedBackup, selectedFile);
@@ -764,9 +684,7 @@ describe("legacy state import", () => {
       const unrelatedTarget = path.join(root, "unrelated-target");
       fs.writeFileSync(unrelatedTarget, "not project state");
       fs.symlinkSync(unrelatedTarget, unrelated);
-      expect(
-        inventoryLegacyProject({ runtimeRoot: runtime, project }).blockers,
-      ).toEqual([]);
+      expect(inventoryLegacyProject({ runtimeRoot: runtime, project }).blockers).toEqual([]);
       fs.unlinkSync(unrelated);
       const projectPinned = {
         ...pinned,
@@ -777,17 +695,8 @@ describe("legacy state import", () => {
         storageRoot: path.join(root, "state"),
       };
       const attemptId = `legacy-${createHash("sha256").update(`${projectId}\0${legacy.cardId}\0${legacy.createdAt}`).digest("hex").slice(0, 32)}`;
-      const runStore = new RunStore(
-        projectPinned.storageRoot,
-        attemptId,
-        projectPinned,
-        lease,
-      );
-      const runRegistry = new RunRegistry(
-        projectPinned.storageRoot,
-        lease.integrationId,
-        lease,
-      );
+      const runStore = new RunStore(projectPinned.storageRoot, attemptId, projectPinned, lease);
+      const runRegistry = new RunRegistry(projectPinned.storageRoot, lease.integrationId, lease);
       const migrated = migrateLegacyProject({
         runtimeRoot: runtime,
         project,
@@ -804,9 +713,7 @@ describe("legacy state import", () => {
   });
 
   it("blocks a card-scoped .json directory instead of interpreting it as no legacy task", () => {
-    const root = fs.mkdtempSync(
-      path.join(os.tmpdir(), "legacy-nonfile-authority-"),
-    );
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "legacy-nonfile-authority-"));
     try {
       const projectId = "project-one";
       const repositoryPath = path.join(root, "repo");
@@ -823,10 +730,9 @@ describe("legacy state import", () => {
           defaultBranch: "main",
         },
       } as unknown as ProjectConfig;
-      fs.mkdirSync(
-        path.join(runtimeRoot, "task-executions", projectId, "card-one.json"),
-        { recursive: true },
-      );
+      fs.mkdirSync(path.join(runtimeRoot, "task-executions", projectId, "card-one.json"), {
+        recursive: true,
+      });
       const pinnedIdentity = {
         ...pinned,
         projectId,
@@ -834,16 +740,11 @@ describe("legacy state import", () => {
         worktreeRoot,
         storageRoot,
       };
-      const malformedAttempt = new RunStore(
-        storageRoot,
-        "legacy-attempt",
-        pinnedIdentity,
-        lease,
-      );
+      const malformedAttempt = new RunStore(storageRoot, "legacy-attempt", pinnedIdentity, lease);
       const registry = new RunRegistry(storageRoot, lease.integrationId, lease);
-      expect(
-        inventoryLegacyProject({ runtimeRoot, project }).blockers.join(" "),
-      ).toContain("card-one.json");
+      expect(inventoryLegacyProject({ runtimeRoot, project }).blockers.join(" ")).toContain(
+        "card-one.json",
+      );
       expect(() =>
         migrateLegacyProject({
           runtimeRoot,
@@ -925,9 +826,7 @@ describe("legacy state import", () => {
           version: 1,
           projectId: project.id,
           cardId: "card-one",
-          requirements: [
-            { id: "REQ-1", text: "Keep scope", verification: "Compare" },
-          ],
+          requirements: [{ id: "REQ-1", text: "Keep scope", verification: "Compare" }],
           steps: [
             {
               id: "STEP-1",
@@ -1049,10 +948,7 @@ describe("legacy state import", () => {
       });
       expect(initialInventory.blockers).toEqual([]);
       const originalSources = new Map(
-        initialInventory.records.map((source) => [
-          source.path,
-          Buffer.from(source.bytes),
-        ]),
+        initialInventory.records.map((source) => [source.path, Buffer.from(source.bytes)]),
       );
       const stages = [
         "artifacts-durable",
@@ -1078,11 +974,7 @@ describe("legacy state import", () => {
         });
         const exited = once(child, "exit");
         try {
-          for (
-            let attempt = 0;
-            attempt < 1_000 && !fs.existsSync(barrier);
-            attempt += 1
-          ) {
+          for (let attempt = 0; attempt < 1_000 && !fs.existsSync(barrier); attempt += 1) {
             if (child.exitCode !== null) break;
             await new Promise((resolve) => setTimeout(resolve, 10));
           }
@@ -1091,11 +983,7 @@ describe("legacy state import", () => {
             `${stage}: child failed to reach durable barrier; exit=${String(child.exitCode)}`,
           ).toBe(true);
         } finally {
-          if (
-            child.exitCode === null &&
-            child.signalCode === null &&
-            child.pid
-          ) {
+          if (child.exitCode === null && child.signalCode === null && child.pid) {
             process.kill(-child.pid, "SIGKILL");
           }
           await exited;
@@ -1123,12 +1011,7 @@ describe("legacy state import", () => {
       });
       expect(finalInventory.blockers).toEqual([]);
       expect(
-        new Map(
-          finalInventory.records.map((source) => [
-            source.path,
-            Buffer.from(source.bytes),
-          ]),
-        ),
+        new Map(finalInventory.records.map((source) => [source.path, Buffer.from(source.bytes)])),
       ).toEqual(originalSources);
       const integrationId = "canonical-project";
       const attemptId = `legacy-${createHash("sha256").update(`project-one\0${legacy.cardId}\0${legacy.createdAt}`).digest("hex").slice(0, 32)}`;
@@ -1156,40 +1039,26 @@ describe("legacy state import", () => {
       expect(imported!.owner.generation).toBeGreaterThan(1);
       expect(imported!.owner.token).toMatch(/^[0-9a-f-]{36}$/u);
       const snapshotArtifact = imported!.artifacts.find(
-        (item) =>
-          item.mediaType ===
-          "application/vnd.agent-orchestrator.legacy-snapshot+json",
+        (item) => item.mediaType === "application/vnd.agent-orchestrator.legacy-snapshot+json",
       )!;
-      const snapshot = JSON.parse(
-        fs.readFileSync(snapshotArtifact.path, "utf8"),
-      ) as { sources: { path: string; sha256: string; bytesBase64: string }[] };
+      const snapshot = JSON.parse(fs.readFileSync(snapshotArtifact.path, "utf8")) as {
+        sources: { path: string; sha256: string; bytesBase64: string }[];
+      };
       for (const source of snapshot.sources) {
         const bytes = Buffer.from(source.bytesBase64, "base64");
-        expect(createHash("sha256").update(bytes).digest("hex")).toBe(
-          source.sha256,
-        );
+        expect(createHash("sha256").update(bytes).digest("hex")).toBe(source.sha256);
         expect(bytes).toEqual(originalSources.get(source.path));
       }
-      const registry = new RunRegistry(
-        pinnedIdentity.storageRoot,
-        integrationId,
-        inspectionLease,
-      );
+      const registry = new RunRegistry(pinnedIdentity.storageRoot, integrationId, inspectionLease);
       expect(registry.read()).toMatchObject({
         attemptId,
         integrationId,
         generation: 1,
       });
-      const markerId = createHash("sha256")
-        .update(`${integrationId}:${attemptId}`)
-        .digest("hex");
+      const markerId = createHash("sha256").update(`${integrationId}:${attemptId}`).digest("hex");
       const marker = JSON.parse(
         fs.readFileSync(
-          path.join(
-            pinnedIdentity.storageRoot,
-            "migrations",
-            `${markerId}.json`,
-          ),
+          path.join(pinnedIdentity.storageRoot, "migrations", `${markerId}.json`),
           "utf8",
         ),
       ) as { stage: string; manifestHash: string; attemptId: string };
@@ -1204,9 +1073,7 @@ describe("legacy state import", () => {
   }, 180_000);
 
   it("refuses symlinked marker directories without touching their targets", () => {
-    const root = fs.mkdtempSync(
-      path.join(os.tmpdir(), "legacy-marker-symlink-"),
-    );
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "legacy-marker-symlink-"));
     try {
       const storage = path.join(root, "state");
       const sourceBytes = Buffer.from(JSON.stringify(legacy));

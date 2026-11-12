@@ -4,10 +4,7 @@ import { randomUUID } from "node:crypto";
 
 import type { Config } from "../config/config.js";
 import { canonicalizeGitHubRepository } from "../config/config.js";
-import {
-  withProjectRegistryLock,
-  type ProjectOwnershipLease,
-} from "./project-ownership.js";
+import { withProjectRegistryLock, type ProjectOwnershipLease } from "./project-ownership.js";
 
 export class ProjectRegistryConflictError extends Error {
   constructor(message: string) {
@@ -80,9 +77,7 @@ function validText(value: unknown): value is string {
 }
 
 function validAbsolutePath(value: unknown): value is string {
-  return (
-    validText(value) && path.isAbsolute(value) && path.resolve(value) === value
-  );
+  return validText(value) && path.isAbsolute(value) && path.resolve(value) === value;
 }
 
 function validateRecord(
@@ -91,9 +86,7 @@ function validateRecord(
   allowRepeatedProjectIds = false,
 ): ProjectRegistryRecord {
   const malformed = (): never => {
-    throw new ProjectRegistryConflictError(
-      `Malformed project registry preserved: ${file}`,
-    );
+    throw new ProjectRegistryConflictError(`Malformed project registry preserved: ${file}`);
   };
   if (typeof value !== "object" || value === null) return malformed();
   const record = value as Partial<ProjectRegistryRecord>;
@@ -126,18 +119,14 @@ function validateRecord(
       return malformed();
     ids.add(entry.projectId);
     const trello = entry.trello as unknown as Record<string, unknown>;
-    if (Object.values(trello).some((field) => !validText(field)))
-      return malformed();
+    if (Object.values(trello).some((field) => !validText(field))) return malformed();
     if (
       entry.integrationId !==
         JSON.stringify({
           trelloBoardId: entry.trello.boardId.trim(),
-          githubRepository: canonicalizeGitHubRepository(
-            entry.repository.github,
-          ),
+          githubRepository: canonicalizeGitHubRepository(entry.repository.github),
         }) ||
-      entry.repository.github !==
-        canonicalizeGitHubRepository(entry.repository.github)
+      entry.repository.github !== canonicalizeGitHubRepository(entry.repository.github)
     )
       return malformed();
     if (entry.activeAttempt !== null) {
@@ -158,16 +147,11 @@ function validateRecord(
   }
   if (
     record.historicalPins !== undefined &&
-    (!Array.isArray(record.historicalPins) ||
-      record.historicalPins.length > maxProjects * 10)
+    (!Array.isArray(record.historicalPins) || record.historicalPins.length > maxProjects * 10)
   )
     return malformed();
   if (record.historicalPins?.length) {
-    validateRecord(
-      { version: 1, generation: 1, projects: record.historicalPins },
-      file,
-      true,
-    );
+    validateRecord({ version: 1, generation: 1, projects: record.historicalPins }, file, true);
   }
   return record as ProjectRegistryRecord;
 }
@@ -181,14 +165,8 @@ function read(file: string): ProjectRegistryRecord | null {
     let value: unknown;
     try {
       const stat = fs.fstatSync(fd);
-      if (
-        !stat.isFile() ||
-        (stat.mode & 0o022) !== 0 ||
-        stat.size > maxRegistryBytes
-      )
-        throw new ProjectRegistryConflictError(
-          `Unsafe project registry preserved: ${file}`,
-        );
+      if (!stat.isFile() || (stat.mode & 0o022) !== 0 || stat.size > maxRegistryBytes)
+        throw new ProjectRegistryConflictError(`Unsafe project registry preserved: ${file}`);
       value = JSON.parse(fs.readFileSync(fd, "utf8"));
     } finally {
       fs.closeSync(fd);
@@ -197,9 +175,7 @@ function read(file: string): ProjectRegistryRecord | null {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     if ((error as NodeJS.ErrnoException).code === "ELOOP")
-      throw new ProjectRegistryConflictError(
-        `Unsafe project registry preserved: ${file}`,
-      );
+      throw new ProjectRegistryConflictError(`Unsafe project registry preserved: ${file}`);
     throw error;
   }
 }
@@ -252,9 +228,7 @@ export async function verifyAndPinProjects(
     leases.map((lease) => [
       JSON.stringify({
         trelloBoardId: lease.identity.trelloBoardId,
-        githubRepository: canonicalizeGitHubRepository(
-          lease.identity.githubRepository,
-        ),
+        githubRepository: canonicalizeGitHubRepository(lease.identity.githubRepository),
       }),
       lease,
     ]),
@@ -269,21 +243,13 @@ export async function verifyAndPinProjects(
     const inventory = [...(current?.projects ?? [])];
     const historicalPins = [...(current?.historicalPins ?? [])];
     for (const next of expected) {
-      const index = inventory.findIndex(
-        (old) => old.projectId === next.projectId,
-      );
+      const index = inventory.findIndex((old) => old.projectId === next.projectId);
       const prior = index < 0 ? undefined : inventory[index];
-      if (
-        prior?.activeAttempt &&
-        immutablePinIdentity(prior) !== immutablePinIdentity(next)
-      )
+      if (prior?.activeAttempt && immutablePinIdentity(prior) !== immutablePinIdentity(next))
         throw new ProjectRegistryConflictError(
           `Active project "${next.projectId}" cannot be removed, redirected, or relocated`,
         );
-      if (
-        prior?.pendingAttempt &&
-        immutablePinIdentity(prior) !== immutablePinIdentity(next)
-      )
+      if (prior?.pendingAttempt && immutablePinIdentity(prior) !== immutablePinIdentity(next))
         throw new ProjectRegistryConflictError(
           `Project "${next.projectId}" has an interrupted attempt handoff that must be recovered before configuration changes`,
         );
@@ -294,8 +260,7 @@ export async function verifyAndPinProjects(
         (old) =>
           old.projectId !== next.projectId &&
           (old.activeAttempt !== null ||
-            (old.pendingAttempt !== null &&
-              old.pendingAttempt !== undefined)) &&
+            (old.pendingAttempt !== null && old.pendingAttempt !== undefined)) &&
           (old.integrationId === next.integrationId ||
             old.repository.github === next.repository.github ||
             old.trello.boardId === next.trello.boardId),
@@ -341,9 +306,7 @@ export async function verifyAndPinProjects(
       projects,
       historicalPins,
     });
-    return expected.map((entry) =>
-      projects.find((pin) => pin.projectId === entry.projectId)!,
-    );
+    return expected.map((entry) => projects.find((pin) => pin.projectId === entry.projectId)!);
   });
 }
 
@@ -356,9 +319,7 @@ export async function updateProjectActiveAttempt(
   lease.assertHeld();
   const expectedIntegrationId = JSON.stringify({
     trelloBoardId: lease.identity.trelloBoardId.trim(),
-    githubRepository: canonicalizeGitHubRepository(
-      lease.identity.githubRepository,
-    ),
+    githubRepository: canonicalizeGitHubRepository(lease.identity.githubRepository),
   });
   const file = path.join(path.resolve(coordinationRoot), registryFile);
   await withProjectRegistryLock(coordinationRoot, () => {
@@ -368,13 +329,8 @@ export async function updateProjectActiveAttempt(
       throw new ProjectRegistryConflictError(
         "Host project pins must exist before publishing an active attempt",
       );
-    const index = current.projects.findIndex(
-      (entry) => entry.projectId === projectId,
-    );
-    if (index < 0)
-      throw new ProjectRegistryConflictError(
-        `Project "${projectId}" is not pinned`,
-      );
+    const index = current.projects.findIndex((entry) => entry.projectId === projectId);
+    if (index < 0) throw new ProjectRegistryConflictError(`Project "${projectId}" is not pinned`);
     const prior = current.projects[index]!;
     if (prior.integrationId !== expectedIntegrationId)
       throw new ProjectRegistryConflictError(
@@ -411,19 +367,13 @@ export async function prepareProjectAttempt(
     lease.assertHeld();
     const file = path.join(path.resolve(coordinationRoot), registryFile);
     const current = read(file);
-    const index =
-      current?.projects.findIndex((entry) => entry.projectId === projectId) ??
-      -1;
+    const index = current?.projects.findIndex((entry) => entry.projectId === projectId) ?? -1;
     if (!current || index < 0)
-      throw new ProjectRegistryConflictError(
-        `Project "${projectId}" is not pinned`,
-      );
+      throw new ProjectRegistryConflictError(`Project "${projectId}" is not pinned`);
     const prior = current.projects[index]!;
     const identity = JSON.stringify({
       trelloBoardId: lease.identity.trelloBoardId.trim(),
-      githubRepository: canonicalizeGitHubRepository(
-        lease.identity.githubRepository,
-      ),
+      githubRepository: canonicalizeGitHubRepository(lease.identity.githubRepository),
     });
     if (prior.integrationId !== identity)
       throw new ProjectRegistryConflictError(
@@ -433,17 +383,11 @@ export async function prepareProjectAttempt(
       throw new ProjectRegistryConflictError(
         `Pending attempt storage must match the pinned storage root for project "${projectId}"`,
       );
-    if (
-      prior.activeAttempt &&
-      prior.activeAttempt.attemptId !== candidate.attemptId
-    )
+    if (prior.activeAttempt && prior.activeAttempt.attemptId !== candidate.attemptId)
       throw new ProjectRegistryConflictError(
         `Project "${projectId}" already has another active attempt`,
       );
-    if (
-      prior.pendingAttempt &&
-      JSON.stringify(prior.pendingAttempt) !== JSON.stringify(candidate)
-    )
+    if (prior.pendingAttempt && JSON.stringify(prior.pendingAttempt) !== JSON.stringify(candidate))
       throw new ProjectRegistryConflictError(
         `Project "${projectId}" has another pending attempt handoff`,
       );
@@ -460,13 +404,9 @@ export async function readHistoricalProjectPins(
   projectId: string,
 ): Promise<readonly HostProjectPin[]> {
   return withProjectRegistryLock(coordinationRoot, () => {
-    const record = read(
-      path.join(path.resolve(coordinationRoot), registryFile),
-    );
+    const record = read(path.join(path.resolve(coordinationRoot), registryFile));
     if (!record) return [];
-    return (record.historicalPins ?? []).filter(
-      (pin) => pin.projectId === projectId,
-    );
+    return (record.historicalPins ?? []).filter((pin) => pin.projectId === projectId);
   });
 }
 
@@ -476,16 +416,12 @@ export async function readProjectPinCandidates(
   projectId: string,
 ): Promise<readonly HostProjectPin[]> {
   return withProjectRegistryLock(coordinationRoot, () => {
-    const record = read(
-      path.join(path.resolve(coordinationRoot), registryFile),
-    );
+    const record = read(path.join(path.resolve(coordinationRoot), registryFile));
     if (!record) return [];
     const current = record.projects.find((pin) => pin.projectId === projectId);
     return [
       ...(current ? [current] : []),
-      ...(record.historicalPins ?? []).filter(
-        (pin) => pin.projectId === projectId,
-      ),
+      ...(record.historicalPins ?? []).filter((pin) => pin.projectId === projectId),
     ];
   });
 }

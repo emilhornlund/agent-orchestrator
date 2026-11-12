@@ -5,10 +5,7 @@ import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import type { CommandRunner } from "../process/command-runner.js";
 import type { TrelloCard } from "../trello/trello-client.js";
 import type { PreparedConflictHandoff } from "./prepared-conflict-state.js";
-import {
-  WorkflowError,
-  type WorkflowFailureCategory,
-} from "./workflow-error.js";
+import { WorkflowError, type WorkflowFailureCategory } from "./workflow-error.js";
 
 export const MAX_PREPARED_CONFLICT_REMEDIATION_ATTEMPTS = 3;
 

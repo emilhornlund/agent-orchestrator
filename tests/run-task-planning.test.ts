@@ -20,14 +20,8 @@ import {
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import type { PrimaryOperationEntry } from "../src/task-session/run-primary-operation.js";
 import { TaskPlanStore } from "../src/task-session/task-plan-store.js";
-import {
-  parseTaskPlanningResult,
-  type TaskPlan,
-} from "../src/task-session/task-plan.js";
-import type {
-  TrelloAttachment,
-  TrelloCard,
-} from "../src/trello/trello-client.js";
+import { parseTaskPlanningResult, type TaskPlan } from "../src/task-session/task-plan.js";
+import type { TrelloAttachment, TrelloCard } from "../src/trello/trello-client.js";
 
 let temporaryRoot: string | undefined;
 
@@ -107,28 +101,16 @@ function createFixture(): {
   repositoryPath: string;
   worktreePath: string;
 } {
-  temporaryRoot = fs.mkdtempSync(
-    path.join(os.tmpdir(), "agent-orchestrator-task-planning-"),
-  );
+  temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-task-planning-"));
   const repositoryPath = path.join(temporaryRoot, "repository");
   const worktreeRoot = path.join(temporaryRoot, "worktrees");
   const worktreePath = path.join(worktreeRoot, card.id);
   const contextRoot = path.join(temporaryRoot, "card-context");
-  const attachmentPath = path.join(
-    contextRoot,
-    projectId,
-    card.id,
-    "attachments",
-    "acceptance.md",
-  );
+  const attachmentPath = path.join(contextRoot, projectId, card.id, "attachments", "acceptance.md");
   fs.mkdirSync(repositoryPath);
   fs.mkdirSync(worktreePath, { recursive: true });
   fs.mkdirSync(path.dirname(attachmentPath), { recursive: true });
-  fs.writeFileSync(
-    repositoryPath + path.sep + "sentinel.txt",
-    "unchanged",
-    "utf8",
-  );
+  fs.writeFileSync(repositoryPath + path.sep + "sentinel.txt", "unchanged", "utf8");
   fs.writeFileSync(attachmentPath, "The settings must persist.", "utf8");
 
   const project = {
@@ -194,10 +176,7 @@ function createFixture(): {
   };
 }
 
-function structuredPlanningOutput(
-  planText: string,
-  sessionId = "ses_planning-one",
-): string {
+function structuredPlanningOutput(planText: string, sessionId = "ses_planning-one"): string {
   return [
     JSON.stringify({ type: "step_start", sessionID: sessionId }),
     JSON.stringify({
@@ -208,9 +187,7 @@ function structuredPlanningOutput(
   ].join("\n");
 }
 
-function createRunOpenCode(
-  planText: string,
-): ReturnType<typeof vi.fn<RunOpenCode>> {
+function createRunOpenCode(planText: string): ReturnType<typeof vi.fn<RunOpenCode>> {
   return vi.fn<RunOpenCode>().mockResolvedValue({
     exitCode: 0,
     output: structuredPlanningOutput(planText),
@@ -223,16 +200,9 @@ describe("buildTaskPlanningPrompt", () => {
     const { attachmentContext } = createFixture();
 
     try {
-      const prompt = buildTaskPlanningPrompt(
-        projectId,
-        card,
-        attachments,
-        attachmentContext,
-      );
+      const prompt = buildTaskPlanningPrompt(projectId, card, attachments, attachmentContext);
 
-      expect(prompt).toContain(
-        'Task identity: {"projectId":"project-one","cardId":"card-one"}',
-      );
+      expect(prompt).toContain('Task identity: {"projectId":"project-one","cardId":"card-one"}');
       expect(prompt).toContain(card.name);
       expect(prompt).toContain(card.desc);
       expect(prompt).toContain("AGENTS.md");
@@ -282,9 +252,7 @@ describe("runTaskPlanningOperation", () => {
     });
     const runOpenCode = vi
       .fn<RunOpenCode>()
-      .mockRejectedValueOnce(
-        new OpenCodeTimeoutError(100, "planning-timeout", true),
-      )
+      .mockRejectedValueOnce(new OpenCodeTimeoutError(100, "planning-timeout", true))
       .mockResolvedValueOnce({
         exitCode: 0,
         output: structuredPlanningOutput(JSON.stringify(validPlan)),
@@ -300,9 +268,7 @@ describe("runTaskPlanningOperation", () => {
         status: "stopped-after-dispatch" as const,
         operationId: entry.id,
         execution: entry.executions,
-        ...(entry.lastSessionId === undefined
-          ? {}
-          : { sessionId: entry.lastSessionId }),
+        ...(entry.lastSessionId === undefined ? {} : { sessionId: entry.lastSessionId }),
       }),
     };
 
@@ -322,9 +288,7 @@ describe("runTaskPlanningOperation", () => {
 
     expect(result.plan).toEqual(validPlan);
     expect(runOpenCode).toHaveBeenCalledTimes(2);
-    expect(
-      fixture.executionStore.read(card.id)?.primaryOperations,
-    ).toMatchObject({
+    expect(fixture.executionStore.read(card.id)?.primaryOperations).toMatchObject({
       [operationId]: { role: "advisory", executions: 2, status: "completed" },
     });
     const restartedStore = new TaskExecutionStore(
@@ -364,30 +328,19 @@ describe("runTaskPlanningOperation", () => {
         "Read the card description and searched the repository for existing preference persistence",
         "Read acceptance.md attachment context",
       ],
-      reason:
-        "The task does not say whether preferences are per-user or shared.",
-      questions: [
-        "Should preferences be isolated per account or shared across all users?",
-      ],
+      reason: "The task does not say whether preferences are per-user or shared.",
+      questions: ["Should preferences be isolated per account or shared across all users?"],
     };
     expect(parseTaskPlanningResult(clarification)).toEqual(clarification);
-    expect(() =>
-      parseTaskPlanningResult({ ...clarification, cardId: "" }),
-    ).toThrow();
-    expect(() =>
-      parseTaskPlanningResult({ ...clarification, questions: [] }),
-    ).toThrow();
-    expect(() =>
-      parseTaskPlanningResult({ ...clarification, surprise: true }),
-    ).toThrow();
+    expect(() => parseTaskPlanningResult({ ...clarification, cardId: "" })).toThrow();
+    expect(() => parseTaskPlanningResult({ ...clarification, questions: [] })).toThrow();
+    expect(() => parseTaskPlanningResult({ ...clarification, surprise: true })).toThrow();
 
     await expect(
       runTaskPlanningOperation({
         taskRecordStore: fixture.executionStore,
         planStore: fixture.planStore,
-        openCode: new OpenCodeClient(
-          createRunOpenCode(JSON.stringify(clarification)),
-        ),
+        openCode: new OpenCodeClient(createRunOpenCode(JSON.stringify(clarification))),
         projectId,
         card,
         attachments,
@@ -492,9 +445,7 @@ describe("runTaskPlanningOperation", () => {
 
   it("rejects a structurally invalid plan artifact", async () => {
     const fixture = createFixture();
-    const runOpenCode = createRunOpenCode(
-      JSON.stringify({ ...validPlan, steps: [] }),
-    );
+    const runOpenCode = createRunOpenCode(JSON.stringify({ ...validPlan, steps: [] }));
 
     await expect(
       runTaskPlanningOperation({
@@ -519,9 +470,7 @@ describe("runTaskPlanningOperation", () => {
 
   it("rejects a valid plan for the wrong card without saving it", async () => {
     const fixture = createFixture();
-    const runOpenCode = createRunOpenCode(
-      JSON.stringify({ ...validPlan, cardId: "another-card" }),
-    );
+    const runOpenCode = createRunOpenCode(JSON.stringify({ ...validPlan, cardId: "another-card" }));
 
     await expect(
       runTaskPlanningOperation({

@@ -36,10 +36,7 @@ export type PendingPrimaryInspection =
 export class PrimaryOperationWaitingError extends Error {
   readonly operationId: string;
   constructor(operationId: string, options?: ErrorOptions) {
-    super(
-      `Primary operation ${operationId} is waiting for authoritative reconciliation`,
-      options,
-    );
+    super(`Primary operation ${operationId} is waiting for authoritative reconciliation`, options);
     this.name = "PrimaryOperationWaitingError";
     this.operationId = operationId;
   }
@@ -60,9 +57,7 @@ export interface RunPrimaryOperationOptions {
 export async function runPrimaryOperation(
   options: RunPrimaryOperationOptions,
 ): Promise<OpenCodeRunResult> {
-  return withAiExecutionCapacity(options.signal, () =>
-    runPrimaryOperationOwned(options),
-  );
+  return withAiExecutionCapacity(options.signal, () => runPrimaryOperationOwned(options));
 }
 
 async function runPrimaryOperationOwned(
@@ -71,31 +66,16 @@ async function runPrimaryOperationOwned(
   const { store, cardId, operationId, activity } = options;
   const entry = store.read(cardId)?.primaryOperations?.[operationId];
   if (entry?.status === "cancelled")
-    throw new PrimaryOperationBlockedError(
-      "Human PR outcome cancelled this primary operation",
-    );
+    throw new PrimaryOperationBlockedError("Human PR outcome cancelled this primary operation");
   if (entry && entry.activity !== activity)
-    throw new PrimaryOperationBlockedError(
-      "Primary operation ID is assigned to another activity",
-    );
+    throw new PrimaryOperationBlockedError("Primary operation ID is assigned to another activity");
   if (entry?.status === "completed") {
-    const result = getCompletedPrimaryExecutionResult(
-      store,
-      cardId,
-      operationId,
-    );
+    const result = getCompletedPrimaryExecutionResult(store, cardId, operationId);
     if (result) return result;
     const inspected = await inspect(options, entry);
     if (inspected.status === "completed") {
-      if (inspected.result.exitCode !== 0)
-        throw new PrimaryOperationWaitingError(operationId);
-      reconcilePendingPrimaryExecution(
-        store,
-        cardId,
-        operationId,
-        "completed",
-        inspected.result,
-      );
+      if (inspected.result.exitCode !== 0) throw new PrimaryOperationWaitingError(operationId);
+      reconcilePendingPrimaryExecution(store, cardId, operationId, "completed", inspected.result);
       return getCompletedPrimaryExecutionResult(store, cardId, operationId)!;
     }
     throw new PrimaryOperationWaitingError(operationId);
@@ -111,13 +91,7 @@ async function runPrimaryOperationOwned(
         reconcilePendingPrimaryExecution(store, cardId, operationId, "unknown");
         throw new PrimaryOperationWaitingError(operationId);
       }
-      reconcilePendingPrimaryExecution(
-        store,
-        cardId,
-        operationId,
-        "completed",
-        inspected.result,
-      );
+      reconcilePendingPrimaryExecution(store, cardId, operationId, "completed", inspected.result);
       return getCompletedPrimaryExecutionResult(store, cardId, operationId)!;
     }
     if (inspected.status === "unknown" || inspected.status === "running") {
@@ -126,18 +100,12 @@ async function runPrimaryOperationOwned(
       throw new PrimaryOperationWaitingError(operationId);
     }
     if (inspected.status === "never-dispatched")
-      reconcilePendingPrimaryExecution(
-        store,
-        cardId,
-        operationId,
-        "not-dispatched",
-      );
+      reconcilePendingPrimaryExecution(store, cardId, operationId, "not-dispatched");
     else {
       if (
         inspected.operationId !== operationId ||
         inspected.execution !== entry.executions ||
-        (entry.lastSessionId !== undefined &&
-          inspected.sessionId !== entry.lastSessionId)
+        (entry.lastSessionId !== undefined && inspected.sessionId !== entry.lastSessionId)
       )
         throw new PrimaryOperationWaitingError(operationId);
       reconcilePendingPrimaryExecution(
@@ -161,21 +129,12 @@ async function runPrimaryOperationOwned(
   }
   for (;;) {
     try {
-      beginPrimaryExecution(
-        store,
-        cardId,
-        operationId,
-        activity,
-        options.sessionId,
-        options.role,
-      );
+      beginPrimaryExecution(store, cardId, operationId, activity, options.sessionId, options.role);
     } catch (error) {
       if (error instanceof PrimaryOperationExhaustedError) {
         const exhausted = store.read(cardId)?.primaryOperations?.[operationId];
         if (exhausted?.status === "exhausted")
-          throw new PrimaryOperationExhaustedError(
-            exhausted.diagnostic ?? error.message,
-          );
+          throw new PrimaryOperationExhaustedError(exhausted.diagnostic ?? error.message);
       }
       throw error;
     }
@@ -185,40 +144,22 @@ async function runPrimaryOperationOwned(
     } catch (error) {
       if (
         (error instanceof AiCapacityCancelledError ||
-          (error instanceof ObservedPrTerminalError &&
-            error.beforeTransport)) &&
-        store.read(cardId)?.primaryOperations?.[operationId]
-          ?.processExecutionId === undefined
+          (error instanceof ObservedPrTerminalError && error.beforeTransport)) &&
+        store.read(cardId)?.primaryOperations?.[operationId]?.processExecutionId === undefined
       ) {
-        reconcilePendingPrimaryExecution(
-          store,
-          cardId,
-          operationId,
-          "not-dispatched",
-        );
+        reconcilePendingPrimaryExecution(store, cardId, operationId, "not-dispatched");
         throw error;
       }
       if (!(error instanceof OpenCodeTimeoutError && error.treeStopped)) {
-        completePrimaryExecution(
-          store,
-          cardId,
-          operationId,
-          "ambiguous",
-          undefined,
-          String(error),
-        );
+        completePrimaryExecution(store, cardId, operationId, "ambiguous", undefined, String(error));
         throw new PrimaryOperationWaitingError(operationId, { cause: error });
       }
       const failure = {
         exitCode: 1,
         output: "",
         errorOutput: error.message,
-        ...(error.executionId === undefined
-          ? {}
-          : { processExecutionId: error.executionId }),
-        ...(options.sessionId === undefined
-          ? {}
-          : { sessionId: options.sessionId }),
+        ...(error.executionId === undefined ? {} : { processExecutionId: error.executionId }),
+        ...(options.sessionId === undefined ? {} : { sessionId: options.sessionId }),
       };
       const record = completePrimaryExecution(
         store,
@@ -238,8 +179,7 @@ async function runPrimaryOperationOwned(
         proof.status !== "stopped-after-dispatch" ||
         proof.operationId !== operationId ||
         proof.execution !== next.executions ||
-        (next.lastSessionId !== undefined &&
-          proof.sessionId !== next.lastSessionId)
+        (next.lastSessionId !== undefined && proof.sessionId !== next.lastSessionId)
       )
         throw new PrimaryOperationWaitingError(operationId);
       const resolved = reconcilePendingPrimaryExecution(
@@ -252,8 +192,7 @@ async function runPrimaryOperationOwned(
       );
       if (resolved.primaryOperations?.[operationId]?.status === "exhausted")
         throw new PrimaryOperationExhaustedError(
-          resolved.primaryOperations[operationId]!.diagnostic ??
-            "Execution budget exhausted",
+          resolved.primaryOperations[operationId]!.diagnostic ?? "Execution budget exhausted",
         );
       if (proof.failureClassification === "dependency-outage")
         throw new PrimaryOperationWaitingError(operationId, {
@@ -272,9 +211,7 @@ async function runPrimaryOperationOwned(
       "failed",
       result,
       result.errorOutput || `exit ${result.exitCode}`,
-      result.failureClassification === "dependency-outage"
-        ? "dependency-outage"
-        : "failure",
+      result.failureClassification === "dependency-outage" ? "dependency-outage" : "failure",
     );
     const saved = record.primaryOperations![operationId]!;
     const proof = await inspect(options, saved);

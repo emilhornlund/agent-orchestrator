@@ -2,9 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const documents = fs
-  .globSync(["*.md", "docs/**/*.md", ".github/**/*.md"])
-  .sort();
+const documents = fs.globSync(["*.md", "docs/**/*.md", ".github/**/*.md"]).sort();
 
 function headingAnchors(markdown: string): Set<string> {
   const anchors = new Set<string>();
@@ -28,34 +26,24 @@ function headingAnchors(markdown: string): Set<string> {
 }
 
 describe("product documentation navigation", () => {
-  it.each(documents)(
-    "keeps local links and section anchors usable in %s",
-    (document) => {
-      const content = fs.readFileSync(document, "utf8");
-      const failures: string[] = [];
-      for (const match of content.matchAll(/\[[^\]]+\]\(([^\s)]+)\)/gu)) {
-        const href = match[1]!;
-        if (/^(?:[a-z][a-z\d+.-]*:|\/\/)/iu.test(href)) continue;
-        const [relativePath, fragment] = href.split("#");
-        const target = relativePath
-          ? path.resolve(
-              path.dirname(document),
-              decodeURIComponent(relativePath),
-            )
-          : path.resolve(document);
-        if (!fs.existsSync(target)) {
-          failures.push(`Missing target: ${href}`);
-        } else if (fragment && target.endsWith(".md")) {
-          if (
-            !headingAnchors(fs.readFileSync(target, "utf8")).has(
-              decodeURIComponent(fragment),
-            )
-          ) {
-            failures.push(`Missing section: ${href}`);
-          }
+  it.each(documents)("keeps local links and section anchors usable in %s", (document) => {
+    const content = fs.readFileSync(document, "utf8");
+    const failures: string[] = [];
+    for (const match of content.matchAll(/\[[^\]]+\]\(([^\s)]+)\)/gu)) {
+      const href = match[1]!;
+      if (/^(?:[a-z][a-z\d+.-]*:|\/\/)/iu.test(href)) continue;
+      const [relativePath, fragment] = href.split("#");
+      const target = relativePath
+        ? path.resolve(path.dirname(document), decodeURIComponent(relativePath))
+        : path.resolve(document);
+      if (!fs.existsSync(target)) {
+        failures.push(`Missing target: ${href}`);
+      } else if (fragment && target.endsWith(".md")) {
+        if (!headingAnchors(fs.readFileSync(target, "utf8")).has(decodeURIComponent(fragment))) {
+          failures.push(`Missing section: ${href}`);
         }
       }
-      expect(failures).toEqual([]);
-    },
-  );
+    }
+    expect(failures).toEqual([]);
+  });
 });

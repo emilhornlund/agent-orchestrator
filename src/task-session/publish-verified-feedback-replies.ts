@@ -2,10 +2,7 @@ import type { ProjectConfig } from "../config/config.js";
 import type { CiCheckEvaluation } from "../github/evaluate-ci-checks.js";
 import { FeedbackLedgerStore } from "./feedback-ledger-store.js";
 import type { FeedbackLedgerEntry } from "./feedback-ledger.js";
-import type {
-  FeedbackVerificationResult,
-  FeedbackDisposition,
-} from "./feedback-verification.js";
+import type { FeedbackVerificationResult, FeedbackDisposition } from "./feedback-verification.js";
 
 export type FeedbackReplyReconciliation =
   | { status: "found"; replyId: string }
@@ -25,11 +22,7 @@ export interface PublishVerifiedFeedbackRepliesOptions {
     entry: FeedbackLedgerEntry,
     marker: string,
   ) => Promise<FeedbackReplyReconciliation>;
-  sendReply: (
-    entry: FeedbackLedgerEntry,
-    body: string,
-    marker: string,
-  ) => Promise<string>;
+  sendReply: (entry: FeedbackLedgerEntry, body: string, marker: string) => Promise<string>;
 }
 
 export interface PublishVerifiedFeedbackRepliesResult {
@@ -44,9 +37,7 @@ export class FeedbackReplyPublicationError extends Error {
   }
 }
 
-function assertPublicationReady(
-  options: PublishVerifiedFeedbackRepliesOptions,
-): void {
+function assertPublicationReady(options: PublishVerifiedFeedbackRepliesOptions): void {
   const head = options.publishedCommitSha;
   if (
     head !== options.observedHeadSha ||
@@ -108,24 +99,16 @@ function updateLedgerEntry(
 ): void {
   const ledger = store.read(cardId);
   if (ledger === null)
-    throw new FeedbackReplyPublicationError(
-      "Feedback ledger disappeared during reply publication",
-    );
-  const index = ledger.entries.findIndex(
-    (entry) => `${entry.kind}:${entry.id}` === key,
-  );
+    throw new FeedbackReplyPublicationError("Feedback ledger disappeared during reply publication");
+  const index = ledger.entries.findIndex((entry) => `${entry.kind}:${entry.id}` === key);
   if (index < 0)
-    throw new FeedbackReplyPublicationError(
-      `Feedback item disappeared from the ledger: ${key}`,
-    );
+    throw new FeedbackReplyPublicationError(`Feedback item disappeared from the ledger: ${key}`);
   const entries = [...ledger.entries];
   entries[index] = { ...entries[index]!, ...update };
   store.compareAndSwap(cardId, ledger.revision, {
     ...ledger,
     revision: ledger.revision + 1,
-    updatedAt: new Date(
-      Math.max(Date.now(), Date.parse(ledger.updatedAt) + 1),
-    ).toISOString(),
+    updatedAt: new Date(Math.max(Date.now(), Date.parse(ledger.updatedAt) + 1)).toISOString(),
     entries,
   });
 }
@@ -148,9 +131,7 @@ function recordReplyOutcome(
       );
     return;
   }
-  const observedAt = new Date(
-    Math.max(Date.now(), Date.parse(ledger.updatedAt) + 1),
-  ).toISOString();
+  const observedAt = new Date(Math.max(Date.now(), Date.parse(ledger.updatedAt) + 1)).toISOString();
   options.ledgerStore.compareAndSwap(options.cardId, ledger.revision, {
     ...ledger,
     revision: ledger.revision + 1,
@@ -168,15 +149,12 @@ export async function publishVerifiedFeedbackReplies(
   assertPublicationReady(options);
   const ledger = options.ledgerStore.read(options.cardId);
   if (ledger === null || ledger.projectId !== options.project.id) {
-    throw new FeedbackReplyPublicationError(
-      "The owning feedback ledger is missing",
-    );
+    throw new FeedbackReplyPublicationError("The owning feedback ledger is missing");
   }
   const dispositions = new Map(
     options.verification.dispositions.map((item) => [item.feedbackId, item]),
   );
-  const publishedReplyIds: PublishVerifiedFeedbackRepliesResult["publishedReplyIds"] =
-    [];
+  const publishedReplyIds: PublishVerifiedFeedbackRepliesResult["publishedReplyIds"] = [];
   const unresolvedFeedbackIds: string[] = [];
 
   const knownOutcomes = new Map(
@@ -187,8 +165,7 @@ export async function publishVerifiedFeedbackReplies(
   );
   const uncertain = new Map(
     [...ledger.entries, ...(ledger.history ?? [])].flatMap((entry) =>
-      entry.replyOperationId &&
-      ["sending", "outcome-unknown"].includes(entry.replyState ?? "")
+      entry.replyOperationId && ["sending", "outcome-unknown"].includes(entry.replyState ?? "")
         ? [[entry.replyOperationId, entry] as const]
         : [],
     ),
@@ -221,8 +198,7 @@ export async function publishVerifiedFeedbackReplies(
       unresolvedFeedbackIds.push(feedbackId);
       continue;
     }
-    if (disposition.status !== "verified-fixed")
-      unresolvedFeedbackIds.push(feedbackId);
+    if (disposition.status !== "verified-fixed") unresolvedFeedbackIds.push(feedbackId);
     const verified = disposition.status === "verified-fixed";
     const evidence = verified ? disposition.evidence : [];
     const resolution = disposition.status;
@@ -253,19 +229,12 @@ export async function publishVerifiedFeedbackReplies(
         resolution,
         unresolvedReason: reason,
       });
-      if (
-        !publishedReplyIds.some(
-          (item) => item.replyId === reconciliation.replyId,
-        )
-      )
+      if (!publishedReplyIds.some((item) => item.replyId === reconciliation.replyId))
         publishedReplyIds.push({ feedbackId, replyId: reconciliation.replyId });
       continue;
     }
 
-    if (
-      entry.replyState === "sending" ||
-      entry.replyState === "outcome-unknown"
-    ) {
+    if (entry.replyState === "sending" || entry.replyState === "outcome-unknown") {
       throw new FeedbackReplyPublicationError(
         `Reply outcome remains uncertain for ${feedbackId}; absence does not authorize resending`,
       );
@@ -293,8 +262,7 @@ export async function publishVerifiedFeedbackReplies(
         ),
         marker,
       );
-      if (replyId.trim().length === 0)
-        throw new Error("GitHub returned an empty reply ID");
+      if (replyId.trim().length === 0) throw new Error("GitHub returned an empty reply ID");
     } catch (error) {
       updateLedgerEntry(options.ledgerStore, options.cardId, feedbackId, {
         status: state,

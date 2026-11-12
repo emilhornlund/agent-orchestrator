@@ -1,17 +1,13 @@
 import path from "node:path";
 import { z } from "zod";
 
-const stableId = z
-  .string()
-  .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u, "Must be a nonempty stable ID");
+const stableId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u, "Must be a nonempty stable ID");
 
 const nonEmptyText = z.string().refine((value) => value.trim().length > 0, {
   message: "Must not be blank",
 });
 
-const contentIdentity = z
-  .string()
-  .regex(/^(?:sha256:[0-9a-f]{64}|[0-9a-f]{40}|[0-9a-f]{64})$/u);
+const contentIdentity = z.string().regex(/^(?:sha256:[0-9a-f]{64}|[0-9a-f]{40}|[0-9a-f]{64})$/u);
 
 const requirementAssessmentSchema = z.strictObject({
   requirementId: stableId,
@@ -47,10 +43,7 @@ const previousFindingAssessmentSchema = z
     justification: nonEmptyText.optional(),
   })
   .superRefine((assessment, ctx) => {
-    if (
-      assessment.status === "superseded" &&
-      assessment.justification === undefined
-    ) {
+    if (assessment.status === "superseded" && assessment.justification === undefined) {
       ctx.addIssue({
         code: "custom",
         path: ["justification"],
@@ -67,9 +60,7 @@ export const implementationReviewResultSchema = z
     verdict: z.enum(["pass", "fail"]),
     requirementAssessments: z.array(requirementAssessmentSchema),
     blockingFindings: z.array(blockingFindingSchema),
-    previousFindingAssessments: z
-      .array(previousFindingAssessmentSchema)
-      .optional(),
+    previousFindingAssessments: z.array(previousFindingAssessmentSchema).optional(),
     reviewedContentIdentity: contentIdentity,
   })
   .superRefine((result, ctx) => {
@@ -87,10 +78,7 @@ export const implementationReviewResultSchema = z
 
       assessmentIds.add(assessment.requirementId);
 
-      if (
-        assessment.status === "satisfied" &&
-        assessment.evidence.length === 0
-      ) {
+      if (assessment.status === "satisfied" && assessment.evidence.length === 0) {
         ctx.addIssue({
           code: "custom",
           path: ["requirementAssessments", index, "evidence"],
@@ -110,8 +98,7 @@ export const implementationReviewResultSchema = z
       ctx.addIssue({
         code: "custom",
         path: ["verdict"],
-        message:
-          "A passing review cannot contain unsatisfied requirements or blocking findings",
+        message: "A passing review cannot contain unsatisfied requirements or blocking findings",
       });
     }
 
@@ -123,15 +110,12 @@ export const implementationReviewResultSchema = z
       ctx.addIssue({
         code: "custom",
         path: ["blockingFindings"],
-        message:
-          "A failed review requires an unsatisfied requirement or blocking finding",
+        message: "A failed review requires an unsatisfied requirement or blocking finding",
       });
     }
   });
 
-export type ImplementationReviewResult = z.infer<
-  typeof implementationReviewResultSchema
->;
+export type ImplementationReviewResult = z.infer<typeof implementationReviewResultSchema>;
 
 const primaryFindingDispositionSchema = z.strictObject({
   findingId: stableId,
@@ -151,9 +135,7 @@ const primaryFindingDispositionReportSchema = z.strictObject({
   requirementDispositions: z.array(primaryRequirementDispositionSchema),
 });
 
-export type PrimaryReviewDispositionReport = z.infer<
-  typeof primaryFindingDispositionReportSchema
->;
+export type PrimaryReviewDispositionReport = z.infer<typeof primaryFindingDispositionReportSchema>;
 
 export interface PersistedReviewFindingDisposition {
   id: string;
@@ -179,14 +161,9 @@ export function hasUndisposedReviewConcerns(
   findings: readonly PersistedReviewFindingDisposition[],
   requirementDispositions: readonly PersistedReviewRequirementDisposition[],
 ): boolean {
-  const findingsById = new Map(
-    findings.map((finding) => [finding.id, finding]),
-  );
+  const findingsById = new Map(findings.map((finding) => [finding.id, finding]));
   const requirementsById = new Map(
-    requirementDispositions.map((disposition) => [
-      disposition.requirementId,
-      disposition,
-    ]),
+    requirementDispositions.map((disposition) => [disposition.requirementId, disposition]),
   );
   const unresolvedFinding = review.blockingFindings.some((finding) => {
     if (finding.id === undefined) return true;
@@ -196,16 +173,14 @@ export function hasUndisposedReviewConcerns(
       persisted.reviewedContentIdentity !== review.reviewedContentIdentity
     );
   });
-  const unresolvedRequirement = review.requirementAssessments.some(
-    (assessment) => {
-      if (assessment.status !== "unsatisfied") return false;
-      const persisted = requirementsById.get(assessment.requirementId);
-      return (
-        persisted?.status !== "dismissed" ||
-        persisted.reviewedContentIdentity !== review.reviewedContentIdentity
-      );
-    },
-  );
+  const unresolvedRequirement = review.requirementAssessments.some((assessment) => {
+    if (assessment.status !== "unsatisfied") return false;
+    const persisted = requirementsById.get(assessment.requirementId);
+    return (
+      persisted?.status !== "dismissed" ||
+      persisted.reviewedContentIdentity !== review.reviewedContentIdentity
+    );
+  });
   return unresolvedFinding || unresolvedRequirement;
 }
 
@@ -218,12 +193,8 @@ export function parsePrimaryReviewDispositionReport(
   expectedRequirementIds: readonly string[],
 ): PrimaryReviewDispositionReport | undefined {
   try {
-    const parsed = primaryFindingDispositionReportSchema.parse(
-      JSON.parse(output) as unknown,
-    );
-    const receivedFindingIds = parsed.findingDispositions.map(
-      ({ findingId }) => findingId,
-    );
+    const parsed = primaryFindingDispositionReportSchema.parse(JSON.parse(output) as unknown);
+    const receivedFindingIds = parsed.findingDispositions.map(({ findingId }) => findingId);
     const receivedRequirementIds = parsed.requirementDispositions.map(
       ({ requirementId }) => requirementId,
     );
@@ -266,17 +237,11 @@ export function parseImplementationReviewResult(
 
   const expectedPreviousIds = expected.previousFindingIds ?? [];
   const assessments = result.previousFindingAssessments ?? [];
-  const assessedPreviousIds = new Set(
-    assessments.map(({ findingId }) => findingId),
-  );
+  const assessedPreviousIds = new Set(assessments.map(({ findingId }) => findingId));
   if (assessedPreviousIds.size !== assessments.length) {
-    throw new Error(
-      "Implementation review duplicated a previous finding assessment",
-    );
+    throw new Error("Implementation review duplicated a previous finding assessment");
   }
-  const missingFindingId = expectedPreviousIds.find(
-    (id) => !assessedPreviousIds.has(id),
-  );
+  const missingFindingId = expectedPreviousIds.find((id) => !assessedPreviousIds.has(id));
   if (missingFindingId !== undefined) {
     throw new Error(
       `Implementation review omitted previous finding assessment: ${missingFindingId}`,
@@ -290,13 +255,8 @@ export function parseImplementationReviewResult(
       `Implementation review assessed unknown previous finding: ${unexpectedFindingId}`,
     );
   }
-  if (
-    expectedPreviousIds.length > 0 &&
-    result.previousFindingAssessments === undefined
-  ) {
-    throw new Error(
-      "Implementation review omitted previous finding assessments",
-    );
+  if (expectedPreviousIds.length > 0 && result.previousFindingAssessments === undefined) {
+    throw new Error("Implementation review omitted previous finding assessments");
   }
 
   const previousAssessments = new Map(
@@ -338,9 +298,7 @@ export function parseImplementationReviewResult(
   for (const assessment of assessments) {
     if (
       assessment.status === "unresolved" &&
-      !result.blockingFindings.some(
-        (finding) => finding.id === assessment.findingId,
-      )
+      !result.blockingFindings.some((finding) => finding.id === assessment.findingId)
     ) {
       throw new Error(
         `Unresolved prior finding must remain in blockingFindings: ${assessment.findingId}`,
@@ -348,10 +306,7 @@ export function parseImplementationReviewResult(
     }
   }
 
-  if (
-    result.projectId !== expected.projectId ||
-    result.cardId !== expected.cardId
-  ) {
+  if (result.projectId !== expected.projectId || result.cardId !== expected.cardId) {
     throw new Error("Implementation review task identity does not match");
   }
 
@@ -367,9 +322,7 @@ export function parseImplementationReviewResult(
     expectedIds.size !== expected.requirementIds.length ||
     (expectedIds.size === 0 && result.requirementAssessments.length > 0)
   ) {
-    throw new Error(
-      "Implementation review assessments must match the available task requirements",
-    );
+    throw new Error("Implementation review assessments must match the available task requirements");
   }
 
   const assessedIds = new Set(
@@ -379,17 +332,13 @@ export function parseImplementationReviewResult(
   const missingId = expected.requirementIds.find((id) => !assessedIds.has(id));
 
   if (missingId !== undefined) {
-    throw new Error(
-      `Implementation review omitted requirement assessment: ${missingId}`,
-    );
+    throw new Error(`Implementation review omitted requirement assessment: ${missingId}`);
   }
 
   const unexpectedId = [...assessedIds].find((id) => !expectedIds.has(id));
 
   if (unexpectedId !== undefined) {
-    throw new Error(
-      `Implementation review assessed unknown requirement: ${unexpectedId}`,
-    );
+    throw new Error(`Implementation review assessed unknown requirement: ${unexpectedId}`);
   }
 
   return result;
@@ -440,19 +389,13 @@ export function parseCachedImplementationReviewResult(
   if (
     new Set(assessmentIds).size !== assessmentIds.length ||
     assessmentIds.length !== (expected.previousFindingIds ?? []).length ||
-    (expected.previousFindingIds ?? []).some(
-      (id) => !assessmentIds.includes(id),
-    )
+    (expected.previousFindingIds ?? []).some((id) => !assessmentIds.includes(id))
   )
-    throw new Error(
-      "Cached implementation review prior assessments are incomplete",
-    );
+    throw new Error("Cached implementation review prior assessments are incomplete");
   for (const assessment of assessments) {
     if (
       assessment.status === "unresolved" &&
-      !cached.blockingFindings.some(
-        (finding) => finding.id === assessment.findingId,
-      )
+      !cached.blockingFindings.some((finding) => finding.id === assessment.findingId)
     )
       throw new Error(
         `Cached unresolved prior finding is missing from blockingFindings: ${assessment.findingId}`,

@@ -51,9 +51,7 @@ export type PreparedConflictHandoff = Omit<
 
 function statePath(project: ProjectConfig, cardId: string): string {
   if (typeof project.repository.worktreeRoot !== "string") {
-    throw new Error(
-      "Prepared conflict handoff requires a configured worktree root",
-    );
+    throw new Error("Prepared conflict handoff requires a configured worktree root");
   }
 
   if (
@@ -75,9 +73,7 @@ function statePath(project: ProjectConfig, cardId: string): string {
     project.id.includes("\\") ||
     path.isAbsolute(project.id)
   ) {
-    throw new Error(
-      `Invalid project ID for prepared conflict handoff: ${project.id}`,
-    );
+    throw new Error(`Invalid project ID for prepared conflict handoff: ${project.id}`);
   }
 
   return path.join(
@@ -89,16 +85,11 @@ function statePath(project: ProjectConfig, cardId: string): string {
   );
 }
 
-export function getPreparedConflictPath(
-  project: ProjectConfig,
-  cardId: string,
-): string {
+export function getPreparedConflictPath(project: ProjectConfig, cardId: string): string {
   return statePath(project, cardId);
 }
 
-export function getPreparedConflictStateDirectory(
-  project: ProjectConfig,
-): string {
+export function getPreparedConflictStateDirectory(project: ProjectConfig): string {
   return path.dirname(statePath(project, "placeholder"));
 }
 
@@ -118,8 +109,7 @@ export function readPreparedConflict(
       value.taskBranch !== taskResources(project, cardId).branch ||
       value.defaultBranch !== project.repository.defaultBranch ||
       (value.rebase.headName !== taskResources(project, cardId).branch &&
-        value.rebase.headName !==
-          `refs/heads/${taskResources(project, cardId).branch}`) ||
+        value.rebase.headName !== `refs/heads/${taskResources(project, cardId).branch}`) ||
       value.trustedTaskCommitSha === undefined ||
       value.rebaseTargetSha === undefined ||
       value.rebase.originalHead !== value.trustedTaskCommitSha ||
@@ -149,12 +139,9 @@ export function readPreparedConflict(
       throw new Error(error.message, { cause: error });
     }
 
-    throw new Error(
-      `Prepared conflict handoff is not valid JSON: ${handoffPath}`,
-      {
-        cause: error,
-      },
-    );
+    throw new Error(`Prepared conflict handoff is not valid JSON: ${handoffPath}`, {
+      cause: error,
+    });
   }
 
   const result = preparedConflictSchema.safeParse(parsed);
@@ -175,8 +162,7 @@ export function readPreparedConflict(
     result.data.taskBranch !== taskResources(project, cardId).branch ||
     result.data.defaultBranch !== project.repository.defaultBranch ||
     (result.data.rebase.headName !== taskResources(project, cardId).branch &&
-      result.data.rebase.headName !==
-        `refs/heads/${taskResources(project, cardId).branch}`) ||
+      result.data.rebase.headName !== `refs/heads/${taskResources(project, cardId).branch}`) ||
     result.data.rebase.originalHead !== trustedTaskCommitSha ||
     result.data.rebase.onto !== rebaseTargetSha
   ) {
@@ -211,9 +197,7 @@ export function writePreparedConflict(
   const rebaseTargetSha = metadata.rebaseTargetSha ?? rebase.onto;
 
   if (trustedTaskCommitSha === undefined) {
-    throw new Error(
-      "Cannot record prepared conflict: trusted task commit is required",
-    );
+    throw new Error("Cannot record prepared conflict: trusted task commit is required");
   }
 
   const handoff: PreparedConflictHandoff = {
@@ -235,9 +219,7 @@ export function writePreparedConflict(
     rebase.headName !== taskResources(project, cardId).branch &&
     rebase.headName !== `refs/heads/${taskResources(project, cardId).branch}`
   ) {
-    throw new Error(
-      "Cannot record prepared conflict: rebase branch is ambiguous",
-    );
+    throw new Error("Cannot record prepared conflict: rebase branch is ambiguous");
   }
 
   if (rebase.originalHead !== trustedTaskCommitSha) {
@@ -276,38 +258,28 @@ export function writePreparedConflict(
   fs.mkdirSync(directory, { recursive: true });
 
   try {
-    fs.writeFileSync(
-      temporaryPath,
-      `${JSON.stringify(result.data, null, 2)}\n`,
-      { encoding: "utf8", mode: 0o600 },
-    );
+    fs.writeFileSync(temporaryPath, `${JSON.stringify(result.data, null, 2)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
     fs.renameSync(temporaryPath, handoffPath);
   } catch (error) {
     fs.rmSync(temporaryPath, { force: true });
-    throw new Error(
-      `Could not persist prepared conflict handoff: ${handoffPath}`,
-      {
-        cause: error,
-      },
-    );
+    throw new Error(`Could not persist prepared conflict handoff: ${handoffPath}`, {
+      cause: error,
+    });
   }
 
   return handoff;
 }
 
-export function readPreparedConflicts(
-  project: ProjectConfig,
-): PreparedConflictHandoff[] {
+export function readPreparedConflicts(project: ProjectConfig): PreparedConflictHandoff[] {
   const authority = ProjectRunAuthority.current(project.id);
   if (authority) {
     return authority
-      .list("prepared-conflict-", (value) =>
-        preparedConflictSchema.parse(value),
-      )
+      .list("prepared-conflict-", (value) => preparedConflictSchema.parse(value))
       .map(({ value }) => value as PreparedConflictHandoff)
-      .filter(
-        (handoff) => readPreparedConflict(project, handoff.cardId) !== null,
-      )
+      .filter((handoff) => readPreparedConflict(project, handoff.cardId) !== null)
       .sort((first, second) => first.cardId.localeCompare(second.cardId));
   }
   if (typeof project.repository.worktreeRoot !== "string") {
@@ -321,9 +293,7 @@ export function readPreparedConflicts(
   }
 
   if (!fs.lstatSync(directory).isDirectory()) {
-    throw new Error(
-      `Prepared conflict state path is not a directory: ${directory}`,
-    );
+    throw new Error(`Prepared conflict state path is not a directory: ${directory}`);
   }
 
   return fs
@@ -339,10 +309,7 @@ export function readPreparedConflicts(
 }
 
 /** Removes only a validated handoff after dedicated remediation is complete. */
-export function clearPreparedConflict(
-  project: ProjectConfig,
-  cardId: string,
-): void {
+export function clearPreparedConflict(project: ProjectConfig, cardId: string): void {
   const handoff = readPreparedConflict(project, cardId);
 
   if (handoff === null) {

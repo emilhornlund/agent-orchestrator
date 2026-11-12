@@ -4,10 +4,7 @@ import { ProjectResourceError } from "../startup/project-resource-error.js";
 
 type Project = Config["projects"][number];
 
-export async function validateProjectTrello(
-  trello: TrelloClient,
-  project: Project,
-): Promise<void> {
+export async function validateProjectTrello(trello: TrelloClient, project: Project): Promise<void> {
   let board: Awaited<ReturnType<TrelloClient["getBoard"]>>;
   let lists: Awaited<ReturnType<TrelloClient["getLists"]>>;
   let labels: Awaited<ReturnType<TrelloClient["getLabels"]>>;
@@ -18,8 +15,7 @@ export async function validateProjectTrello(
   } catch (error) {
     if (error instanceof TrelloRequestError && error.retryable) throw error;
     const transient =
-      error instanceof TypeError &&
-      /fetch|network|socket|connect/i.test(error.message);
+      error instanceof TypeError && /fetch|network|socket|connect/i.test(error.message);
     throw new ProjectResourceError(
       transient ? "unavailable" : "invalid",
       `Trello resource validation failed for project "${project.id}"${transient ? "; temporarily unavailable, retrying before processing" : "; verify board identity and credentials"}`,

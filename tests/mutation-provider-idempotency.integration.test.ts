@@ -18,10 +18,7 @@ describe("VER-WF-001-03 concrete provider-idempotent Git object/ref variant", ()
     const f = createPublicationFixture(root);
     const ledger: { type: string; sha?: string }[] = [];
     const save = () =>
-      fs.writeFileSync(
-        path.join(root, "provider-ledger.json"),
-        JSON.stringify(ledger),
-      );
+      fs.writeFileSync(path.join(root, "provider-ledger.json"), JSON.stringify(ledger));
     let accept: (() => string) | undefined;
     let requests = 0;
     const git = new GitClient(async (cwd, args, environment) => {
@@ -41,9 +38,7 @@ describe("VER-WF-001-03 concrete provider-idempotent Git object/ref variant", ()
         ledger.push({ type: "dispatch" });
         save();
         accept = execute;
-        throw new Error(
-          "Dispatched immutable Git ref transaction still in flight",
-        );
+        throw new Error("Dispatched immutable Git ref transaction still in flight");
       }
       if (args[0] === "ls-remote") {
         ledger.push({ type: "read" });
@@ -53,10 +48,7 @@ describe("VER-WF-001-03 concrete provider-idempotent Git object/ref variant", ()
     });
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
-      const identity = await getTaskSessionSourceSnapshotIdentity(
-        git,
-        f.worktreePath,
-      );
+      const identity = await getTaskSessionSourceSnapshotIdentity(git, f.worktreePath);
       f.authority.run(() =>
         beginInitialPublication(
           {
@@ -95,10 +87,8 @@ describe("VER-WF-001-03 concrete provider-idempotent Git object/ref variant", ()
         vi.setSystemTime(Date.now() + 15_001);
       }
       expect(accept).toBeDefined();
-      const intent = current.store
-        .read()!
-        .pendingOperations.find((op) => op.id === "initial:push")!.mutation!
-        .intent;
+      const intent = current.store.read()!.pendingOperations.find((op) => op.id === "initial:push")!
+        .mutation!.intent;
       await poll();
       expect(
         current.store
@@ -107,9 +97,7 @@ describe("VER-WF-001-03 concrete provider-idempotent Git object/ref variant", ()
           .mutation!.observations.at(-1)?.outcome,
       ).toBe("absent");
       expect(
-        current.store
-          .read()!
-          .pendingOperations.find((op) => op.id === "initial:push")!.status,
+        current.store.read()!.pendingOperations.find((op) => op.id === "initial:push")!.status,
       ).toBe("ambiguous");
       expect(requests).toBe(1);
       ledger.push({ type: "negative-read-after-dispatch" });
@@ -131,17 +119,11 @@ describe("VER-WF-001-03 concrete provider-idempotent Git object/ref variant", ()
       );
       ledger.push({ type: "late-accepted", sha });
       save();
-      for (
-        let pass = 0;
-        pass < 8 && current.store.read()!.lifecycle === "publication";
-        pass++
-      ) {
+      for (let pass = 0; pass < 8 && current.store.read()!.lifecycle === "publication"; pass++) {
         vi.setSystemTime(Date.now() + 15_001);
         await poll();
       }
-      const op = current.store
-        .read()!
-        .pendingOperations.find((op) => op.id === "initial:push")!;
+      const op = current.store.read()!.pendingOperations.find((op) => op.id === "initial:push")!;
       expect(op.status).toBe("completed");
       expect(op.mutation!.intent).toEqual(intent);
       expect(requests).toBe(1);
@@ -152,33 +134,18 @@ describe("VER-WF-001-03 concrete provider-idempotent Git object/ref variant", ()
       ledger.push({ type: "observer-provider-replay", sha });
       save();
       expect(
-        f.isolated.git(
-          path.join(root, "remote.git"),
-          "rev-parse",
-          "refs/heads/agent/card",
-        ),
+        f.isolated.git(path.join(root, "remote.git"), "rev-parse", "refs/heads/agent/card"),
       ).toBe(sha);
       expect(
-        f.isolated.git(
-          path.join(root, "remote.git"),
-          "rev-list",
-          "--count",
-          "main..agent/card",
-        ),
+        f.isolated.git(path.join(root, "remote.git"), "rev-list", "--count", "main..agent/card"),
       ).toBe("1");
       expect(current.services.read().prs).toHaveLength(1);
       expect(
-        ledger.findIndex(
-          (entry) => entry.type === "negative-read-after-dispatch",
-        ),
+        ledger.findIndex((entry) => entry.type === "negative-read-after-dispatch"),
       ).toBeGreaterThan(ledger.findIndex((entry) => entry.type === "dispatch"));
       expect(
-        ledger.findIndex(
-          (entry) => entry.type === "negative-read-after-dispatch",
-        ),
-      ).toBeLessThan(
-        ledger.findIndex((entry) => entry.type === "late-accepted"),
-      );
+        ledger.findIndex((entry) => entry.type === "negative-read-after-dispatch"),
+      ).toBeLessThan(ledger.findIndex((entry) => entry.type === "late-accepted"));
     } finally {
       vi.useRealTimers();
     }

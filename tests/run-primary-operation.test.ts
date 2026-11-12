@@ -27,8 +27,7 @@ import { createHash } from "node:crypto";
 
 const roots: string[] = [];
 afterEach(() => {
-  for (const root of roots.splice(0))
-    fs.rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "run-primary-"));
@@ -117,9 +116,7 @@ describe("runPrimaryOperation", () => {
             status: "stopped-after-dispatch" as const,
             operationId: entry.id,
             execution: entry.executions,
-            ...(entry.lastSessionId === undefined
-              ? {}
-              : { sessionId: entry.lastSessionId }),
+            ...(entry.lastSessionId === undefined ? {} : { sessionId: entry.lastSessionId }),
             failureClassification: "dependency-outage" as const,
           },
     );
@@ -188,9 +185,7 @@ describe("runPrimaryOperation", () => {
     expect(first).toHaveBeenCalledOnce();
     expect(second).toHaveBeenCalledOnce();
     expect(f.store.read("card")?.createdAt).toBe(createdAt);
-    expect(
-      f.store.read("card")?.primaryOperations?.["op:continued"]?.status,
-    ).toBe("completed");
+    expect(f.store.read("card")?.primaryOperations?.["op:continued"]?.status).toBe("completed");
   });
 
   it("continues an exactly authorized stopped operation without repeating inspection or resetting its execution count", async () => {
@@ -226,13 +221,8 @@ describe("runPrimaryOperation", () => {
       .mockResolvedValueOnce(failure)
       .mockResolvedValueOnce(success);
     const inspect = vi.fn(async (e: PrimaryOperationEntry) => stopped(e));
-    expect(
-      await runPrimaryOperation(options(f.store, execute, inspect)),
-    ).toMatchObject(success);
-    const restarted = new TaskExecutionStore(
-      path.join(f.root, "state"),
-      f.project,
-    );
+    expect(await runPrimaryOperation(options(f.store, execute, inspect))).toMatchObject(success);
+    const restarted = new TaskExecutionStore(path.join(f.root, "state"), f.project);
     expect(
       await runPrimaryOperation(
         options(
@@ -248,20 +238,12 @@ describe("runPrimaryOperation", () => {
     const f = fixture();
     const execute = vi.fn().mockResolvedValue(failure);
     await expect(
-      runPrimaryOperation(
-        options(f.store, execute, async () => ({ status: "unknown" }) as const),
-      ),
+      runPrimaryOperation(options(f.store, execute, async () => ({ status: "unknown" }) as const)),
     ).rejects.toBeInstanceOf(PrimaryOperationWaitingError);
     const next = new TaskExecutionStore(path.join(f.root, "state"), f.project);
     const replacement = vi.fn().mockResolvedValue(success);
     await expect(
-      runPrimaryOperation(
-        options(
-          next,
-          replacement,
-          async () => ({ status: "running" }) as const,
-        ),
-      ),
+      runPrimaryOperation(options(next, replacement, async () => ({ status: "running" }) as const)),
     ).rejects.toBeInstanceOf(PrimaryOperationWaitingError);
     expect(replacement).not.toHaveBeenCalled();
   });
@@ -269,13 +251,13 @@ describe("runPrimaryOperation", () => {
     const f = fixture();
     const execute = vi.fn().mockResolvedValue(failure);
     const inspect = vi.fn(async (e: PrimaryOperationEntry) => stopped(e));
-    await expect(
-      runPrimaryOperation(options(f.store, execute, inspect)),
-    ).rejects.toBeInstanceOf(PrimaryOperationExhaustedError);
+    await expect(runPrimaryOperation(options(f.store, execute, inspect))).rejects.toBeInstanceOf(
+      PrimaryOperationExhaustedError,
+    );
     const again = new TaskExecutionStore(path.join(f.root, "state"), f.project);
-    await expect(
-      runPrimaryOperation(options(again, vi.fn(), vi.fn())),
-    ).rejects.toBeInstanceOf(PrimaryOperationExhaustedError);
+    await expect(runPrimaryOperation(options(again, vi.fn(), vi.fn()))).rejects.toBeInstanceOf(
+      PrimaryOperationExhaustedError,
+    );
     expect(execute).toHaveBeenCalledTimes(3);
   });
   it("paces recognized provider outages across restarts without consuming the crash budget", async () => {
@@ -394,15 +376,11 @@ describe("runPrimaryOperation", () => {
     beginPrimaryExecution(store, "card", "op", "work", "session");
     completePrimaryExecution(store, "card", "op", "failed", crash);
     reconcilePendingPrimaryExecution(store, "card", "op", "stopped");
-    expect(store.read("card")?.primaryOperations?.op?.failureExecutions).toBe(
-      1,
-    );
+    expect(store.read("card")?.primaryOperations?.op?.failureExecutions).toBe(1);
     store = new TaskExecutionStore(path.join(f.root, "state"), f.project);
     // Replaying stopped reconciliation after restart is idempotent.
     reconcilePendingPrimaryExecution(store, "card", "op", "stopped");
-    expect(store.read("card")?.primaryOperations?.op?.failureExecutions).toBe(
-      1,
-    );
+    expect(store.read("card")?.primaryOperations?.op?.failureExecutions).toBe(1);
     await expect(
       runPrimaryOperation(
         options(
@@ -444,24 +422,12 @@ describe("runPrimaryOperation", () => {
       dependencyOutages: 0,
       lastSessionId: "session",
     });
-    expect(f.store.read("card")?.primaryOperations?.op).not.toHaveProperty(
-      "retrySafe",
-    );
-    expect(f.store.read("card")?.primaryOperations?.op).not.toHaveProperty(
-      "resultArtifact",
-    );
-    expect(f.store.read("card")?.primaryOperations?.op).not.toHaveProperty(
-      "processExecutionId",
-    );
-    expect(f.store.read("card")?.primaryOperations?.op).not.toHaveProperty(
-      "processMetadataPath",
-    );
-    expect(f.store.read("card")?.primaryOperations?.op).not.toHaveProperty(
-      "processArtifactRoot",
-    );
-    expect(f.store.read("card")?.primaryOperations?.op).not.toHaveProperty(
-      "accountedExecution",
-    );
+    expect(f.store.read("card")?.primaryOperations?.op).not.toHaveProperty("retrySafe");
+    expect(f.store.read("card")?.primaryOperations?.op).not.toHaveProperty("resultArtifact");
+    expect(f.store.read("card")?.primaryOperations?.op).not.toHaveProperty("processExecutionId");
+    expect(f.store.read("card")?.primaryOperations?.op).not.toHaveProperty("processMetadataPath");
+    expect(f.store.read("card")?.primaryOperations?.op).not.toHaveProperty("processArtifactRoot");
+    expect(f.store.read("card")?.primaryOperations?.op).not.toHaveProperty("accountedExecution");
     expect(f.store.read("card")?.primaryOperations?.op).not.toHaveProperty(
       "lastExecutionClassification",
     );
@@ -492,10 +458,7 @@ describe("runPrimaryOperation", () => {
         ),
       ),
     ).rejects.toBeInstanceOf(PrimaryOperationWaitingError);
-    const restarted = new TaskExecutionStore(
-      path.join(f.root, "state"),
-      f.project,
-    );
+    const restarted = new TaskExecutionStore(path.join(f.root, "state"), f.project);
     const forbiddenDispatch = vi.fn(async () => success);
     await expect(
       runPrimaryOperation(
@@ -524,12 +487,8 @@ describe("runPrimaryOperation", () => {
     const f = fixture();
     for (let execution = 1; execution <= 3; execution += 1) {
       beginPrimaryExecution(f.store, "card", "op", "work", "session");
-      if (execution % 2 === 0)
-        reconcilePendingPrimaryExecution(f.store, "card", "op", "unknown");
-      const restarted = new TaskExecutionStore(
-        path.join(f.root, "state"),
-        f.project,
-      );
+      if (execution % 2 === 0) reconcilePendingPrimaryExecution(f.store, "card", "op", "unknown");
+      const restarted = new TaskExecutionStore(path.join(f.root, "state"), f.project);
       reconcilePendingPrimaryExecution(restarted, "card", "op", "stopped");
       expect(restarted.read("card")?.primaryOperations?.op).toMatchObject({
         executions: execution,
@@ -562,9 +521,7 @@ describe("runPrimaryOperation", () => {
       .mockResolvedValue(success);
     await expect(
       runPrimaryOperation(
-        options(g.store, execute, async (e: PrimaryOperationEntry) =>
-          stopped(e),
-        ),
+        options(g.store, execute, async (e: PrimaryOperationEntry) => stopped(e)),
       ),
     ).resolves.toMatchObject(success);
     expect(execute).toHaveBeenCalledTimes(2);
@@ -576,9 +533,7 @@ describe("runPrimaryOperation", () => {
       completePrimaryExecution(f.store, "card", "op", "failed", failure);
       reconcilePendingPrimaryExecution(f.store, "card", "op", "stopped");
     }
-    const execute = vi
-      .fn()
-      .mockRejectedValue(new OpenCodeTimeoutError(100, "exec", true));
+    const execute = vi.fn().mockRejectedValue(new OpenCodeTimeoutError(100, "exec", true));
     await expect(
       runPrimaryOperation(
         options(f.store, execute, async (entry) => ({
@@ -613,9 +568,7 @@ describe("runPrimaryOperation", () => {
       ),
     ).resolves.toMatchObject({ exitCode: 0 });
     expect(JSON.stringify(f.store.read("card")).length).toBeLessThan(100_000);
-    const replay = await runPrimaryOperation(
-      options(f.store, vi.fn(), vi.fn()),
-    );
+    const replay = await runPrimaryOperation(options(f.store, vi.fn(), vi.fn()));
     expect(replay.output.length).toBe(1_100_000);
   });
   it("redacts cached output against the current secret registry without writing", async () => {
@@ -631,9 +584,7 @@ describe("runPrimaryOperation", () => {
     const record = f.store.read("card")!;
     void record;
     const revision = f.store.read("card")!.revision;
-    const result = await runPrimaryOperation(
-      options(f.store, vi.fn(), vi.fn()),
-    );
+    const result = await runPrimaryOperation(options(f.store, vi.fn(), vi.fn()));
     expect(result.output).not.toContain("new-current-canary");
     expect(f.store.read("card")!.revision).toBe(revision);
   });

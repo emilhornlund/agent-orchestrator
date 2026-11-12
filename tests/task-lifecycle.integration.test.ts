@@ -19,14 +19,8 @@ import { ProjectRunAuthority } from "../src/task-session/project-run-authority.j
 import type { RunRecord } from "../src/task-session/run-record.js";
 import { withGitHubOperationProject } from "../src/github/github-operation-context.js";
 import type { GitHubClient } from "../src/github/github-client.js";
-import {
-  OpenCodeClient,
-  type OpenCodeRunOptions,
-} from "../src/opencode/opencode-client.js";
-import {
-  CommandRunner,
-  type CommandRunOptions,
-} from "../src/process/command-runner.js";
+import { OpenCodeClient, type OpenCodeRunOptions } from "../src/opencode/opencode-client.js";
+import { CommandRunner, type CommandRunOptions } from "../src/process/command-runner.js";
 import { configureProcessRuntime } from "../src/process/process-runtime.js";
 import { pollProject } from "../src/orchestrator/poll-project.js";
 import { beginInitialPublication } from "../src/orchestrator/initial-publication.js";
@@ -65,10 +59,8 @@ interface LifecycleScenario {
   ciQuality?: "validation" | "unavailable";
   ciBudget?: number;
   targetMerge?: boolean;
-  feedbackReviewRecovery?:
-    "reserved" | "completed" | "validation" | "reviewed" | "unknown";
-  ciReviewRecovery?:
-    "reserved" | "completed" | "validation" | "reviewed" | "unknown";
+  feedbackReviewRecovery?: "reserved" | "completed" | "validation" | "reviewed" | "unknown";
+  ciReviewRecovery?: "reserved" | "completed" | "validation" | "reviewed" | "unknown";
 }
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -89,8 +81,7 @@ describe("task lifecycle through pollProject", () => {
     ...(["merged", "closed"] as const).map((terminal) => ({
       draft: false,
       terminal,
-      destination:
-        terminal === "merged" ? ("done" as const) : ("backlog" as const),
+      destination: terminal === "merged" ? ("done" as const) : ("backlog" as const),
       ackLoss: false,
       quality: "both" as const,
       terminalDuringFeedback: "active" as const,
@@ -119,16 +110,14 @@ describe("task lifecycle through pollProject", () => {
       quality: "both",
       terminalDuringFeedback: "push-rejected",
     },
-    ...(["validation", "unavailable", "no-op"] as const).map(
-      (feedbackQuality) => ({
-        draft: false,
-        terminal: "merged" as const,
-        destination: "done" as const,
-        ackLoss: false,
-        quality: "both" as const,
-        feedbackQuality,
-      }),
-    ),
+    ...(["validation", "unavailable", "no-op"] as const).map((feedbackQuality) => ({
+      draft: false,
+      terminal: "merged" as const,
+      destination: "done" as const,
+      ackLoss: false,
+      quality: "both" as const,
+      feedbackQuality,
+    })),
     {
       draft: false,
       terminal: "merged",
@@ -233,27 +222,27 @@ describe("task lifecycle through pollProject", () => {
       ciReviewHandoffs: true,
       ciQuality,
     })),
-    ...(
-      ["reserved", "completed", "validation", "reviewed", "unknown"] as const
-    ).map((feedbackReviewRecovery) => ({
-      draft: false,
-      terminal: "merged" as const,
-      destination: "done" as const,
-      ackLoss: false,
-      quality: "both" as const,
-      feedbackReviewRecovery,
-    })),
-    ...(
-      ["reserved", "completed", "validation", "reviewed", "unknown"] as const
-    ).map((ciReviewRecovery) => ({
-      draft: false,
-      terminal: "merged" as const,
-      destination: "done" as const,
-      ackLoss: false,
-      quality: "both" as const,
-      ciReviewHandoffs: true,
-      ciReviewRecovery,
-    })),
+    ...(["reserved", "completed", "validation", "reviewed", "unknown"] as const).map(
+      (feedbackReviewRecovery) => ({
+        draft: false,
+        terminal: "merged" as const,
+        destination: "done" as const,
+        ackLoss: false,
+        quality: "both" as const,
+        feedbackReviewRecovery,
+      }),
+    ),
+    ...(["reserved", "completed", "validation", "reviewed", "unknown"] as const).map(
+      (ciReviewRecovery) => ({
+        draft: false,
+        terminal: "merged" as const,
+        destination: "done" as const,
+        ackLoss: false,
+        quality: "both" as const,
+        ciReviewHandoffs: true,
+        ciReviewRecovery,
+      }),
+    ),
   ] as const)(
     "preserves the owned lifecycle (quality=$quality, draft=$draft, terminal=$terminal, ackLoss=$ackLoss, correctionFailure=$correctionFailure, feedbackQuality=$feedbackQuality, terminalDuringFeedback=$terminalDuringFeedback, preparedReview=$preparedReview, ciReviewHandoffs=$ciReviewHandoffs, feedbackReviewRecovery=$feedbackReviewRecovery, ciReviewRecovery=$ciReviewRecovery, ciQuality=$ciQuality, targetMerge=$targetMerge, ciBudget=$ciBudget)",
     async ({
@@ -333,21 +322,13 @@ describe("task lifecycle through pollProject", () => {
       let changedPreparedSource = false;
       if (preparedReview !== undefined) {
         const compareAndSwap = TaskExecutionStore.prototype.compareAndSwap;
-        vi.spyOn(
-          TaskExecutionStore.prototype,
-          "compareAndSwap",
-        ).mockImplementation(function (
+        vi.spyOn(TaskExecutionStore.prototype, "compareAndSwap").mockImplementation(function (
           this: TaskExecutionStore,
           cardId,
           revision,
           nextRecord,
         ) {
-          const persisted = compareAndSwap.call(
-            this,
-            cardId,
-            revision,
-            nextRecord,
-          );
+          const persisted = compareAndSwap.call(this, cardId, revision, nextRecord);
           if (
             !changedPreparedSource &&
             cardId === "first" &&
@@ -362,26 +343,16 @@ describe("task lifecycle through pollProject", () => {
           return persisted;
         });
       }
-      const gitRun = async (cwd: string, ...args: string[]) =>
-        runGit(cwd, args);
+      const gitRun = async (cwd: string, ...args: string[]) => runGit(cwd, args);
       await gitRun(root, "init", "--bare", "--initial-branch=main", remote);
       await gitRun(root, "clone", remote, source);
       await gitRun(source, "config", "user.name", "Fixture");
       await gitRun(source, "config", "user.email", "fixture@example.test");
-      fs.writeFileSync(
-        path.join(source, "app.js"),
-        "module.exports = 'base';\n",
-      );
+      fs.writeFileSync(path.join(source, "app.js"), "module.exports = 'base';\n");
       await gitRun(source, "add", ".");
       await gitRun(source, "commit", "-m", "initial");
       await gitRun(source, "push", "-u", "origin", "main");
-      await gitRun(
-        source,
-        "remote",
-        "set-url",
-        "origin",
-        "https://github.com/owner/repo.git",
-      );
+      await gitRun(source, "remote", "set-url", "origin", "https://github.com/owner/repo.git");
 
       const project: ProjectConfig & { contextRoot: string } = {
         id: "lifecycle-project",
@@ -425,17 +396,14 @@ describe("task lifecycle through pollProject", () => {
             model: "repair",
             variant: "high",
             maxPasses: 1,
-            ...(feedbackQuality === "validation"
-              ? { validationMaxPasses: 0 }
-              : {}),
+            ...(feedbackQuality === "validation" ? { validationMaxPasses: 0 } : {}),
           },
           commit: { model: "commit", variant: "low" },
           timeoutMinutes: 1,
         },
       };
       if (ciReviewHandoffs) project.opencode.remediation.maxPasses = 2;
-      if (ciBudget !== undefined)
-        project.opencode.remediation.ciMaxPasses = ciBudget;
+      if (ciBudget !== undefined) project.opencode.remediation.ciMaxPasses = ciBudget;
       const coordinationRoot = path.join(root, "coordination");
       fs.mkdirSync(coordinationRoot);
       provisionCoordinationNamespace(coordinationRoot, "lifecycle-test");
@@ -459,9 +427,7 @@ describe("task lifecycle through pollProject", () => {
         "lifecycle-test",
       );
       leases.push(lease);
-      const hostPin = (
-        await verifyAndPinProjects(orchestrationConfig, [lease])
-      )[0]!;
+      const hostPin = (await verifyAndPinProjects(orchestrationConfig, [lease]))[0]!;
       const pinned: RunRecord["pinned"] = {
         integrationId: hostPin.integrationId,
         projectId: project.id,
@@ -531,9 +497,7 @@ describe("task lifecycle through pollProject", () => {
               actor: "orchestrator",
               id: "first",
             });
-            throw new Error(
-              "simulated terminal Trello destination read outage",
-            );
+            throw new Error("simulated terminal Trello destination read outage");
           }
           return cards
             .filter((card) => lists.get(card.id) === listId)
@@ -594,9 +558,7 @@ describe("task lifecycle through pollProject", () => {
           ledger
             .filter(
               (entry) =>
-                entry.service === "trello" &&
-                entry.action === "comment" &&
-                entry.id === id,
+                entry.service === "trello" && entry.action === "comment" && entry.id === id,
             )
             .map((entry, index) => ({
               id: `comment-${index}`,
@@ -658,21 +620,11 @@ describe("task lifecycle through pollProject", () => {
       let terminalRaceReadAt = 2;
       let maintenanceBase: string | undefined;
       let github = {
-        getPullRequestCommitShas: async ({
-          pullRequestNumber,
-        }: {
-          pullRequestNumber: number;
-        }) => {
-          const pr = [...prs.values()].find(
-            (entry) => entry.number === pullRequestNumber,
-          )!;
+        getPullRequestCommitShas: async ({ pullRequestNumber }: { pullRequestNumber: number }) => {
+          const pr = [...prs.values()].find((entry) => entry.number === pullRequestNumber)!;
           const head =
-            (await git.getRemoteBranchSha(
-              source,
-              "origin",
-              "agent/card",
-              project,
-            )) ?? pr.headRefOid;
+            (await git.getRemoteBranchSha(source, "origin", "agent/card", project)) ??
+            pr.headRefOid;
           return (
             await execFile("git", ["rev-list", "--reverse", head!], {
               cwd: remote,
@@ -683,13 +635,8 @@ describe("task lifecycle through pollProject", () => {
         },
         getBaseBranchHeadSha: async () =>
           (await git.getRemoteBranchSha(source, "origin", "main", project))!,
-        comparePullRequestHeadToBase: async ({
-          headSha,
-        }: {
-          headSha: string;
-        }) =>
-          !maintenanceBase ||
-          (await git.isAncestor(remote, maintenanceBase, headSha))
+        comparePullRequestHeadToBase: async ({ headSha }: { headSha: string }) =>
+          !maintenanceBase || (await git.isAncestor(remote, maintenanceBase, headSha))
             ? ("current" as const)
             : ("diverged" as const),
         findPullRequest: async (input: { headBranch: string }) => {
@@ -700,8 +647,7 @@ describe("task lifecycle through pollProject", () => {
           const pr = prs.get(input.headBranch);
           if (terminalRaceTarget !== null && pr?.state === "OPEN") {
             terminalRaceReads += 1;
-            if (terminalRaceReads === terminalRaceReadAt)
-              pr.state = terminalRaceTarget;
+            if (terminalRaceReads === terminalRaceReadAt) pr.state = terminalRaceTarget;
           }
           ledger.push({
             service: "github",
@@ -728,36 +674,21 @@ describe("task lifecycle through pollProject", () => {
           };
         },
         ensurePullRequestDraft: async (input: { pullRequestUrl: string }) => {
-          const pr = [...prs.values()].find(
-            ({ url }) => url === input.pullRequestUrl,
-          );
+          const pr = [...prs.values()].find(({ url }) => url === input.pullRequestUrl);
           if (pr) pr.isDraft = true;
         },
-        getPullRequestPublicationFields: async (input: {
-          pullRequestUrl: string;
-        }) => {
-          const pr = [...prs.values()].find(
-            (candidate) => candidate.url === input.pullRequestUrl,
-          );
+        getPullRequestPublicationFields: async (input: { pullRequestUrl: string }) => {
+          const pr = [...prs.values()].find((candidate) => candidate.url === input.pullRequestUrl);
           if (!pr) throw new Error("PR not found");
           return { title: pr.title, body: pr.body, isDraft: pr.isDraft };
         },
-        getPullRequestDescription: async (input: {
-          pullRequestUrl: string;
-        }) => {
-          const pr = [...prs.values()].find(
-            (candidate) => candidate.url === input.pullRequestUrl,
-          );
+        getPullRequestDescription: async (input: { pullRequestUrl: string }) => {
+          const pr = [...prs.values()].find((candidate) => candidate.url === input.pullRequestUrl);
           if (!pr) throw new Error("PR not found");
           return pr.body;
         },
-        editPullRequestDescription: async (input: {
-          pullRequestUrl: string;
-          body: string;
-        }) => {
-          const pr = [...prs.values()].find(
-            (candidate) => candidate.url === input.pullRequestUrl,
-          );
+        editPullRequestDescription: async (input: { pullRequestUrl: string; body: string }) => {
+          const pr = [...prs.values()].find((candidate) => candidate.url === input.pullRequestUrl);
           if (!pr) throw new Error("PR not found");
           pr.body = input.body;
         },
@@ -765,15 +696,9 @@ describe("task lifecycle through pollProject", () => {
           pullRequestUrl: string;
           status: ManagedPullRequestStatus | null;
         }) => {
-          const pr = [...prs.values()].find(
-            (candidate) => candidate.url === input.pullRequestUrl,
-          );
+          const pr = [...prs.values()].find((candidate) => candidate.url === input.pullRequestUrl);
           if (!pr) throw new Error("PR not found");
-          const next = reconcileManagedPullRequestStatus(
-            pr.body,
-            input.status,
-            "main",
-          );
+          const next = reconcileManagedPullRequestStatus(pr.body, input.status, "main");
           const changed = next !== pr.body;
           pr.body = next;
           return changed;
@@ -786,11 +711,8 @@ describe("task lifecycle through pollProject", () => {
         }) => {
           if (input.headBranch === "agent/first")
             publicationQualityAtCreate.push(
-              new TaskExecutionStore(
-                contextRoot,
-                project,
-                authorities.get("first"),
-              ).read("first")?.publicationQuality,
+              new TaskExecutionStore(contextRoot, project, authorities.get("first")).read("first")
+                ?.publicationQuality,
             );
           requests.push(input.headBranch);
           ledger.push({
@@ -799,18 +721,9 @@ describe("task lifecycle through pollProject", () => {
             actor: "orchestrator",
             detail: input.headBranch,
           });
-          if (prs.has(input.headBranch))
-            throw new Error("duplicate pull request for branch");
-          const sha = await git.getRemoteBranchSha(
-            source,
-            "origin",
-            input.headBranch,
-            project,
-          );
-          if (!sha)
-            throw new Error(
-              `missing pushed remote head for ${input.headBranch}`,
-            );
+          if (prs.has(input.headBranch)) throw new Error("duplicate pull request for branch");
+          const sha = await git.getRemoteBranchSha(source, "origin", input.headBranch, project);
+          if (!sha) throw new Error(`missing pushed remote head for ${input.headBranch}`);
           const number = prs.size + 41;
           const url = `https://github.com/owner/repo/pull/${number}`;
           const pr: PullRequestFixture = {
@@ -827,13 +740,7 @@ describe("task lifecycle through pollProject", () => {
           prs.set(input.headBranch, pr);
           await execFile(
             "git",
-            [
-              "--git-dir",
-              remote,
-              "update-ref",
-              `refs/pull/${number}/head`,
-              sha,
-            ],
+            ["--git-dir", remote, "update-ref", `refs/pull/${number}/head`, sha],
             { env },
           );
           accepted.push(url);
@@ -846,9 +753,7 @@ describe("task lifecycle through pollProject", () => {
           });
           if (loseCreateAcknowledgement) {
             loseCreateAcknowledgement = false;
-            throw new Error(
-              "simulated lost create-PR acknowledgement after acceptance",
-            );
+            throw new Error("simulated lost create-PR acknowledgement after acceptance");
           }
           return { number, url };
         },
@@ -872,9 +777,7 @@ describe("task lifecycle through pollProject", () => {
                 name: "Build",
                 headSha,
                 status: "completed" as const,
-                conclusion: failed
-                  ? ("failure" as const)
-                  : ("success" as const),
+                conclusion: failed ? ("failure" as const) : ("success" as const),
                 url: null,
               },
             ],
@@ -903,9 +806,7 @@ describe("task lifecycle through pollProject", () => {
             available: true,
             diagnostic: "The fixture CI check failed.",
           })),
-        findChangesRequestedPullRequest: async (input: {
-          headBranch: string;
-        }) => {
+        findChangesRequestedPullRequest: async (input: { headBranch: string }) => {
           if (!correctionFeedback) return null;
           const pr = prs.get(input.headBranch);
           if (!pr) return null;
@@ -988,602 +889,533 @@ describe("task lifecycle through pollProject", () => {
           signal: new AbortController().signal,
         });
       }
-      const openCode = new OpenCodeClient(
-        async (options: OpenCodeRunOptions) => {
-          if (options.sessionLabel === "Human feedback classification") {
-            feedbackClassifications++;
-            return {
-              exitCode: 0,
-              output: actionableFeedbackResponse(options.prompt),
-              errorOutput: "",
-            };
-          }
-          const cardId = path.basename(options.cwd);
-          openCodeCards.push(cardId);
+      const openCode = new OpenCodeClient(async (options: OpenCodeRunOptions) => {
+        if (options.sessionLabel === "Human feedback classification") {
+          feedbackClassifications++;
+          return {
+            exitCode: 0,
+            output: actionableFeedbackResponse(options.prompt),
+            errorOutput: "",
+          };
+        }
+        const cardId = path.basename(options.cwd);
+        openCodeCards.push(cardId);
+        if (
+          ciQuality === "validation" &&
+          options.prompt.startsWith("Repair the failing local quality gate")
+        ) {
+          expect(options.prompt).toContain(
+            `https://context.test/revision-${10 + ciPrimaryCorrections}`,
+          );
+          return {
+            exitCode: 0,
+            ...(options.sessionId === undefined ? {} : { sessionId: options.sessionId }),
+            output: "No useful local correction",
+            errorOutput: "",
+          };
+        }
+        if (
+          targetMerge &&
+          options.prompt.startsWith(
+            "Independently review the prepared implementation after target synchronization",
+          )
+        ) {
+          expect(options.readOnly).toBe(true);
+          expect(prs.get("agent/first")?.body).toMatch(
+            /^<!-- agent-orchestrator-status:start -->/u,
+          );
+          expect(prs.get("agent/first")?.body).toContain("advisory validation");
+          prs.get("agent/first")!.body += "\nHuman note added during maintenance review.\n";
+          return {
+            exitCode: 0,
+            errorOutput: "",
+            output: JSON.stringify({
+              version: 1,
+              projectId: project.id,
+              cardId,
+              reviewedContentIdentity: await getTaskSessionSourceSnapshotIdentity(git, options.cwd),
+              verdict: "pass",
+              blockingFindings: [],
+              requirementAssessments: [
+                {
+                  requirementId: "REQ-1",
+                  status: "satisfied",
+                  details: "Task preserved after target merge",
+                  evidence: ["app.js"],
+                },
+              ],
+            }),
+          };
+        }
+        if (
+          (feedbackReviewRecovery !== undefined ||
+            feedbackQuality !== undefined ||
+            terminalDuringFeedback !== undefined) &&
+          correctionFeedback
+        ) {
           if (
-            ciQuality === "validation" &&
-            options.prompt.startsWith("Repair the failing local quality gate")
-          ) {
-            expect(options.prompt).toContain(
-              `https://context.test/revision-${10 + ciPrimaryCorrections}`,
-            );
-            return {
-              exitCode: 0,
-              ...(options.sessionId === undefined
-                ? {}
-                : { sessionId: options.sessionId }),
-              output: "No useful local correction",
-              errorOutput: "",
-            };
-          }
-          if (
-            targetMerge &&
             options.prompt.startsWith(
-              "Independently review the prepared implementation after target synchronization",
+              "Address the following verified-as-actionable human PR feedback",
             )
           ) {
-            expect(options.readOnly).toBe(true);
-            expect(prs.get("agent/first")?.body).toMatch(
-              /^<!-- agent-orchestrator-status:start -->/u,
+            feedbackPrimaryCorrections += 1;
+            if (terminalDuringFeedback === "active") return realRunner.run(options);
+            if (terminalDuringFeedback === "unknown")
+              throw new Error(
+                "Primary supervisor outcome is unknown and no process identity is available",
+              );
+            expect(lists.get("first")).toBe("working");
+            expect(
+              prs.get("agent/first")?.body.startsWith("<!-- agent-orchestrator-status:start -->"),
+            ).toBe(true);
+            expect(prs.get("agent/first")?.body).toContain("addressing requested review feedback");
+            if (feedbackQuality === "no-op")
+              return { exitCode: 0, output: "No changes", errorOutput: "" };
+            fs.writeFileSync(
+              path.join(options.cwd, "app.js"),
+              "module.exports = 'feedback correction';\n",
             );
-            expect(prs.get("agent/first")?.body).toContain(
-              "advisory validation",
-            );
-            prs.get("agent/first")!.body +=
-              "\nHuman note added during maintenance review.\n";
             return {
               exitCode: 0,
+              output: "Feedback correction applied",
               errorOutput: "",
+            };
+          }
+          if (options.prompt.startsWith("Address the independent implementation review findings")) {
+            const task = new TaskExecutionStore(contextRoot, project, authorities.get(cardId)).read(
+              cardId,
+            );
+            const reservation = task?.reviewRepair?.activePrimaryOperation;
+            if (reservation === undefined)
+              throw new Error("Feedback review writer lacks a reservation");
+            feedbackReviewDispatches.push({
+              operationId: reservation.operationId,
+              prompt: options.prompt,
+              sessionId: options.sessionId,
+            });
+            if (feedbackReviewRecovery === "unknown")
+              throw new Error("Feedback review process outcome is unknown");
+            fs.writeFileSync(
+              path.join(options.cwd, "app.js"),
+              "module.exports = 'reviewed feedback correction';\n",
+            );
+            return {
+              exitCode: 0,
               output: JSON.stringify({
                 version: 1,
-                projectId: project.id,
-                cardId,
-                reviewedContentIdentity:
-                  await getTaskSessionSourceSnapshotIdentity(git, options.cwd),
-                verdict: "pass",
-                blockingFindings: [],
-                requirementAssessments: [
-                  {
-                    requirementId: "REQ-1",
-                    status: "satisfied",
-                    details: "Task preserved after target merge",
-                    evidence: ["app.js"],
-                  },
-                ],
+                findingDispositions: [],
+                requirementDispositions: [],
               }),
+              errorOutput: "",
             };
           }
           if (
-            (feedbackReviewRecovery !== undefined ||
-              feedbackQuality !== undefined ||
-              terminalDuringFeedback !== undefined) &&
-            correctionFeedback
-          ) {
-            if (
-              options.prompt.startsWith(
-                "Address the following verified-as-actionable human PR feedback",
-              )
-            ) {
-              feedbackPrimaryCorrections += 1;
-              if (terminalDuringFeedback === "active")
-                return realRunner.run(options);
-              if (terminalDuringFeedback === "unknown")
-                throw new Error(
-                  "Primary supervisor outcome is unknown and no process identity is available",
-                );
-              expect(lists.get("first")).toBe("working");
-              expect(
-                prs
-                  .get("agent/first")
-                  ?.body.startsWith("<!-- agent-orchestrator-status:start -->"),
-              ).toBe(true);
-              expect(prs.get("agent/first")?.body).toContain(
-                "addressing requested review feedback",
-              );
-              if (feedbackQuality === "no-op")
-                return { exitCode: 0, output: "No changes", errorOutput: "" };
-              fs.writeFileSync(
-                path.join(options.cwd, "app.js"),
-                "module.exports = 'feedback correction';\n",
-              );
-              return {
-                exitCode: 0,
-                output: "Feedback correction applied",
-                errorOutput: "",
-              };
-            }
-            if (
-              options.prompt.startsWith(
-                "Address the independent implementation review findings",
-              )
-            ) {
-              const task = new TaskExecutionStore(
-                contextRoot,
-                project,
-                authorities.get(cardId),
-              ).read(cardId);
-              const reservation = task?.reviewRepair?.activePrimaryOperation;
-              if (reservation === undefined)
-                throw new Error("Feedback review writer lacks a reservation");
-              feedbackReviewDispatches.push({
-                operationId: reservation.operationId,
-                prompt: options.prompt,
-                sessionId: options.sessionId,
-              });
-              if (feedbackReviewRecovery === "unknown")
-                throw new Error("Feedback review process outcome is unknown");
-              fs.writeFileSync(
-                path.join(options.cwd, "app.js"),
-                "module.exports = 'reviewed feedback correction';\n",
-              );
-              return {
-                exitCode: 0,
-                output: JSON.stringify({
-                  version: 1,
-                  findingDispositions: [],
-                  requirementDispositions: [],
-                }),
-                errorOutput: "",
-              };
-            }
-            if (
-              options.readOnly &&
-              options.prompt.includes("Independently review the implementation")
-            ) {
-              if (feedbackQuality === "unavailable")
-                return {
-                  exitCode: 1,
-                  output: "",
-                  errorOutput: "Provider unavailable",
-                  failureClassification: "dependency-outage" as const,
-                };
-              const identity = options.prompt.match(
-                /Reviewed source content identity: (sha256:[0-9a-f]{64})/u,
-              )?.[1];
-              if (identity === undefined)
-                throw new Error("Feedback review omitted source identity");
-              const repaired =
-                feedbackQuality !== undefined ||
-                feedbackReviewDispatches.length > 0;
-              const task = new TaskExecutionStore(
-                contextRoot,
-                project,
-                authorities.get(cardId),
-              ).read(cardId);
-              const prior = task?.reviewRepair?.findings ?? [];
-              return {
-                exitCode: 0,
-                output: JSON.stringify({
-                  version: 1,
-                  projectId: project.id,
-                  cardId,
-                  verdict: repaired ? "pass" : "fail",
-                  requirementAssessments: [
-                    {
-                      requirementId: "REQ-1",
-                      status: repaired ? "satisfied" : "unsatisfied",
-                      details: "Feedback correction review",
-                      evidence: repaired ? ["app.js"] : [],
-                    },
-                  ],
-                  blockingFindings: repaired
-                    ? []
-                    : [
-                        {
-                          kind: "defect",
-                          summary:
-                            "Feedback correction needs review remediation",
-                          detail:
-                            "The empty-result behavior needs the final correction.",
-                        },
-                      ],
-                  previousFindingAssessments: prior.map(({ id }) => ({
-                    findingId: id,
-                    status: "resolved",
-                  })),
-                  reviewedContentIdentity: identity,
-                }),
-                errorOutput: "",
-              };
-            }
-          }
-          if (
-            ciReviewHandoffs &&
             options.readOnly &&
             options.prompt.includes("Independently review the implementation")
           ) {
-            const identity = options.prompt.match(
-              /Reviewed source content identity: (sha256:[0-9a-f]{64})/u,
-            )?.[1];
-            if (identity === undefined)
-              throw new Error("CI review prompt omitted source identity");
-            if (ciQuality === "unavailable")
+            if (feedbackQuality === "unavailable")
               return {
                 exitCode: 1,
                 output: "",
                 errorOutput: "Provider unavailable",
+                failureClassification: "dependency-outage" as const,
               };
-            const record = new TaskExecutionStore(
-              contextRoot,
-              project,
-              authorities.get(cardId),
-            ).read(cardId);
-            const ciPass = record?.ciRepair?.activePrimaryOperation?.pass ?? 0;
-            ciAttachmentVersion = ciPass;
-            const reviewRepairCount = record?.retryCounters.review ?? 0;
-            const verdict =
-              ciPass === 0 || reviewRepairCount >= ciPass ? "pass" : "fail";
-            const includesPriorFindings = !options.prompt.includes(
-              "Previously reported blocking findings in this review cycle (empty on the first review):\n[]",
+            const identity = options.prompt.match(
+              /Reviewed source content identity: (sha256:[0-9a-f]{64})/u,
+            )?.[1];
+            if (identity === undefined) throw new Error("Feedback review omitted source identity");
+            const repaired = feedbackQuality !== undefined || feedbackReviewDispatches.length > 0;
+            const task = new TaskExecutionStore(contextRoot, project, authorities.get(cardId)).read(
+              cardId,
             );
-            const trackedFindings = includesPriorFindings
-              ? (record?.reviewRepair?.findings ?? [])
-              : [];
+            const prior = task?.reviewRepair?.findings ?? [];
             return {
               exitCode: 0,
               output: JSON.stringify({
                 version: 1,
                 projectId: project.id,
                 cardId,
-                verdict,
+                verdict: repaired ? "pass" : "fail",
                 requirementAssessments: [
                   {
                     requirementId: "REQ-1",
-                    status: verdict === "pass" ? "satisfied" : "unsatisfied",
-                    details:
-                      verdict === "pass"
-                        ? "The current CI-corrected source meets the task."
-                        : "CI correction exposed a review finding to remediate.",
-                    evidence: verdict === "pass" ? ["app.js"] : [],
+                    status: repaired ? "satisfied" : "unsatisfied",
+                    details: "Feedback correction review",
+                    evidence: repaired ? ["app.js"] : [],
                   },
                 ],
-                blockingFindings:
-                  verdict === "pass"
-                    ? []
-                    : [
-                        ...trackedFindings
-                          .filter(({ status }) => status === "unresolved")
-                          .map(({ id, kind, summary, detail }) => ({
-                            id,
-                            kind,
-                            summary,
-                            detail,
-                          })),
-                        {
-                          kind: "defect",
-                          summary: `CI correction ${ciPass} requires review remediation`,
-                          detail:
-                            "The correction left a demonstrable behavior gap in app.js.",
-                        },
-                      ],
-                previousFindingAssessments: trackedFindings.map(
-                  ({ id, status }) => ({
-                    findingId: id,
-                    status:
-                      verdict === "pass" || status !== "unresolved"
-                        ? "resolved"
-                        : "unresolved",
-                  }),
-                ),
+                blockingFindings: repaired
+                  ? []
+                  : [
+                      {
+                        kind: "defect",
+                        summary: "Feedback correction needs review remediation",
+                        detail: "The empty-result behavior needs the final correction.",
+                      },
+                    ],
+                previousFindingAssessments: prior.map(({ id }) => ({
+                  findingId: id,
+                  status: "resolved",
+                })),
                 reviewedContentIdentity: identity,
               }),
               errorOutput: "",
             };
           }
-          if (
-            preparedReview !== undefined &&
-            options.readOnly &&
-            options.prompt.includes("Independently review the implementation")
-          ) {
-            reviewerRounds += 1;
-            const identity = options.prompt.match(
-              /Reviewed source content identity: (sha256:[0-9a-f]{64})/u,
-            )?.[1];
-            if (identity === undefined)
-              throw new Error("review prompt omitted source identity");
-            if (reviewerRounds === 1)
-              return {
-                exitCode: 0,
-                output: JSON.stringify({
-                  version: 1,
-                  projectId: project.id,
-                  cardId,
-                  verdict: "pass",
-                  requirementAssessments: [
-                    {
-                      requirementId: "REQ-1",
-                      status: "satisfied",
-                      details: "The initial implementation meets the request.",
-                      evidence: ["app.js"],
-                    },
-                  ],
-                  blockingFindings: [],
-                  previousFindingAssessments: [],
-                  reviewedContentIdentity: identity,
-                }),
-                errorOutput: "",
-              };
-            if (preparedReview === "unavailable")
-              return {
-                exitCode: 1,
-                output: "",
-                errorOutput: "follow-up review service unavailable",
-              };
+        }
+        if (
+          ciReviewHandoffs &&
+          options.readOnly &&
+          options.prompt.includes("Independently review the implementation")
+        ) {
+          const identity = options.prompt.match(
+            /Reviewed source content identity: (sha256:[0-9a-f]{64})/u,
+          )?.[1];
+          if (identity === undefined) throw new Error("CI review prompt omitted source identity");
+          if (ciQuality === "unavailable")
+            return {
+              exitCode: 1,
+              output: "",
+              errorOutput: "Provider unavailable",
+            };
+          const record = new TaskExecutionStore(contextRoot, project, authorities.get(cardId)).read(
+            cardId,
+          );
+          const ciPass = record?.ciRepair?.activePrimaryOperation?.pass ?? 0;
+          ciAttachmentVersion = ciPass;
+          const reviewRepairCount = record?.retryCounters.review ?? 0;
+          const verdict = ciPass === 0 || reviewRepairCount >= ciPass ? "pass" : "fail";
+          const includesPriorFindings = !options.prompt.includes(
+            "Previously reported blocking findings in this review cycle (empty on the first review):\n[]",
+          );
+          const trackedFindings = includesPriorFindings
+            ? (record?.reviewRepair?.findings ?? [])
+            : [];
+          return {
+            exitCode: 0,
+            output: JSON.stringify({
+              version: 1,
+              projectId: project.id,
+              cardId,
+              verdict,
+              requirementAssessments: [
+                {
+                  requirementId: "REQ-1",
+                  status: verdict === "pass" ? "satisfied" : "unsatisfied",
+                  details:
+                    verdict === "pass"
+                      ? "The current CI-corrected source meets the task."
+                      : "CI correction exposed a review finding to remediate.",
+                  evidence: verdict === "pass" ? ["app.js"] : [],
+                },
+              ],
+              blockingFindings:
+                verdict === "pass"
+                  ? []
+                  : [
+                      ...trackedFindings
+                        .filter(({ status }) => status === "unresolved")
+                        .map(({ id, kind, summary, detail }) => ({
+                          id,
+                          kind,
+                          summary,
+                          detail,
+                        })),
+                      {
+                        kind: "defect",
+                        summary: `CI correction ${ciPass} requires review remediation`,
+                        detail: "The correction left a demonstrable behavior gap in app.js.",
+                      },
+                    ],
+              previousFindingAssessments: trackedFindings.map(({ id, status }) => ({
+                findingId: id,
+                status: verdict === "pass" || status !== "unresolved" ? "resolved" : "unresolved",
+              })),
+              reviewedContentIdentity: identity,
+            }),
+            errorOutput: "",
+          };
+        }
+        if (
+          preparedReview !== undefined &&
+          options.readOnly &&
+          options.prompt.includes("Independently review the implementation")
+        ) {
+          reviewerRounds += 1;
+          const identity = options.prompt.match(
+            /Reviewed source content identity: (sha256:[0-9a-f]{64})/u,
+          )?.[1];
+          if (identity === undefined) throw new Error("review prompt omitted source identity");
+          if (reviewerRounds === 1)
             return {
               exitCode: 0,
               output: JSON.stringify({
                 version: 1,
                 projectId: project.id,
                 cardId,
-                verdict: "fail",
+                verdict: "pass",
                 requirementAssessments: [
                   {
                     requirementId: "REQ-1",
-                    status: "unsatisfied",
-                    details:
-                      "The prepared source loses the requested value after reload.",
-                    evidence: [],
+                    status: "satisfied",
+                    details: "The initial implementation meets the request.",
+                    evidence: ["app.js"],
                   },
                 ],
-                blockingFindings: [
-                  {
-                    kind: "defect",
-                    summary: "Prepared source loses state after reload",
-                    detail:
-                      "The changed publication source restores the default value.",
-                    location: { filePath: "app.js", line: 1 },
-                  },
-                ],
+                blockingFindings: [],
                 previousFindingAssessments: [],
                 reviewedContentIdentity: identity,
               }),
               errorOutput: "",
             };
-          }
-          if (
-            correctionFailure &&
-            options.prompt.startsWith(
-              "Address the following verified-as-actionable human PR feedback",
-            )
-          ) {
-            return realRunner.run(options);
-          }
-          if (
-            ciReviewHandoffs &&
-            options.prompt.startsWith("Repair the required GitHub CI failures")
-          ) {
-            expect(prs.get("agent/first")?.body).toMatch(
-              /^<!-- agent-orchestrator-status:start -->/u,
-            );
-            expect(prs.get("agent/first")?.body).toContain(
-              "addressing observed CI failures",
-            );
-            ciPrimaryCorrections += 1;
-            fs.writeFileSync(
-              path.join(options.cwd, "app.js"),
-              `module.exports = 'CI correction ${ciPrimaryCorrections}';\n`,
-            );
+          if (preparedReview === "unavailable")
             return {
-              exitCode: 0,
-              output: "CI correction applied",
-              errorOutput: "",
+              exitCode: 1,
+              output: "",
+              errorOutput: "follow-up review service unavailable",
             };
-          }
-          if (
-            ciReviewHandoffs &&
-            options.prompt.startsWith(
-              "Address the independent implementation review findings",
-            )
-          ) {
-            const taskStore = new TaskExecutionStore(
-              contextRoot,
-              project,
-              authorities.get(cardId),
-            );
-            const task = taskStore.read(cardId);
-            const review = task?.reviewRepair?.finalReview;
-            const pending = task?.reviewRepair?.activePrimaryOperation;
-            if (review === undefined || pending === undefined)
-              throw new Error("CI review repair lacks its durable reservation");
-            ciReviewRepairOperationIds.push(pending.operationId);
-            expect(options.prompt).toContain(
-              `https://context.test/revision-${ciPrimaryCorrections}`,
-            );
-            ciReviewRepairDispatches.push({
-              operationId: pending.operationId,
-              prompt: options.prompt,
-              sessionId: options.sessionId,
-            });
-            if (ciReviewRecovery === "unknown")
-              throw new Error("CI review process outcome is unknown");
-            fs.writeFileSync(
-              path.join(options.cwd, "app.js"),
-              `module.exports = 'CI review repair ${pending.pass}';\n`,
-            );
-            const dispositions = {
+          return {
+            exitCode: 0,
+            output: JSON.stringify({
               version: 1,
-              findingDispositions: review.blockingFindings.flatMap(({ id }) =>
-                id === undefined
-                  ? []
-                  : [
-                      {
-                        findingId: id,
-                        status: "addressed",
-                        rationale:
-                          "The CI-correction defect was corrected in the current source.",
-                      },
-                    ],
-              ),
-              requirementDispositions: review.requirementAssessments
-                .filter(({ status }) => status === "unsatisfied")
-                .map(({ requirementId }) => ({
-                  requirementId,
-                  status: "addressed",
-                  rationale:
-                    "The requested behavior is implemented in the current source.",
-                })),
-            };
-            return {
-              exitCode: 0,
-              output: JSON.stringify({
-                type: "text",
-                part: {
-                  type: "text",
-                  text: JSON.stringify(dispositions),
+              projectId: project.id,
+              cardId,
+              verdict: "fail",
+              requirementAssessments: [
+                {
+                  requirementId: "REQ-1",
+                  status: "unsatisfied",
+                  details: "The prepared source loses the requested value after reload.",
+                  evidence: [],
                 },
-              }),
-              errorOutput: "",
-            };
-          }
-          if (options.captureSessionId)
-            return {
-              exitCode: 0,
-              sessionId,
-              output:
-                JSON.stringify({ type: "step_start", sessionID: sessionId }) +
-                "\n" +
-                JSON.stringify({
-                  type: "text",
-                  sessionID: sessionId,
-                  part: {
-                    type: "text",
-                    text: JSON.stringify({
-                      version: 1,
-                      projectId: project.id,
-                      cardId,
-                      requirements: [
-                        {
-                          id: "REQ-1",
-                          text: "Implement change",
-                          verification: "Run validation",
-                        },
-                      ],
-                      steps: [
-                        {
-                          id: "STEP-1",
-                          description: "Implement change",
-                          requirementIds: ["REQ-1"],
-                          verification: "Run validation",
-                        },
-                      ],
-                      assumptions: [],
-                      blockers: [],
-                    }),
-                  },
-                }),
-              errorOutput: "",
-            };
-          if (options.readOnly) {
-            const identity = options.prompt.match(
-              /(?:Reviewed source content identity|Reviewed source identity): (sha256:[0-9a-f]{64})/u,
-            )?.[1];
-            if (
-              options.prompt.includes(
-                "Independently verify each actionable human PR feedback item",
-              )
-            )
-              return {
-                exitCode: 0,
-                output: JSON.stringify({
-                  version: 1,
-                  projectId: project.id,
-                  cardId,
-                  headSha: prs.get("agent/first")!.headRefOid,
-                  contentIdentity: identity,
-                  dispositions: [
+              ],
+              blockingFindings: [
+                {
+                  kind: "defect",
+                  summary: "Prepared source loses state after reload",
+                  detail: "The changed publication source restores the default value.",
+                  location: { filePath: "app.js", line: 1 },
+                },
+              ],
+              previousFindingAssessments: [],
+              reviewedContentIdentity: identity,
+            }),
+            errorOutput: "",
+          };
+        }
+        if (
+          correctionFailure &&
+          options.prompt.startsWith(
+            "Address the following verified-as-actionable human PR feedback",
+          )
+        ) {
+          return realRunner.run(options);
+        }
+        if (
+          ciReviewHandoffs &&
+          options.prompt.startsWith("Repair the required GitHub CI failures")
+        ) {
+          expect(prs.get("agent/first")?.body).toMatch(
+            /^<!-- agent-orchestrator-status:start -->/u,
+          );
+          expect(prs.get("agent/first")?.body).toContain("addressing observed CI failures");
+          ciPrimaryCorrections += 1;
+          fs.writeFileSync(
+            path.join(options.cwd, "app.js"),
+            `module.exports = 'CI correction ${ciPrimaryCorrections}';\n`,
+          );
+          return {
+            exitCode: 0,
+            output: "CI correction applied",
+            errorOutput: "",
+          };
+        }
+        if (
+          ciReviewHandoffs &&
+          options.prompt.startsWith("Address the independent implementation review findings")
+        ) {
+          const taskStore = new TaskExecutionStore(contextRoot, project, authorities.get(cardId));
+          const task = taskStore.read(cardId);
+          const review = task?.reviewRepair?.finalReview;
+          const pending = task?.reviewRepair?.activePrimaryOperation;
+          if (review === undefined || pending === undefined)
+            throw new Error("CI review repair lacks its durable reservation");
+          ciReviewRepairOperationIds.push(pending.operationId);
+          expect(options.prompt).toContain(`https://context.test/revision-${ciPrimaryCorrections}`);
+          ciReviewRepairDispatches.push({
+            operationId: pending.operationId,
+            prompt: options.prompt,
+            sessionId: options.sessionId,
+          });
+          if (ciReviewRecovery === "unknown")
+            throw new Error("CI review process outcome is unknown");
+          fs.writeFileSync(
+            path.join(options.cwd, "app.js"),
+            `module.exports = 'CI review repair ${pending.pass}';\n`,
+          );
+          const dispositions = {
+            version: 1,
+            findingDispositions: review.blockingFindings.flatMap(({ id }) =>
+              id === undefined
+                ? []
+                : [
                     {
-                      feedbackId: "review:202",
-                      status: "unresolved",
-                      reason:
-                        "The empty-result behavior still needs a correction.",
+                      findingId: id,
+                      status: "addressed",
+                      rationale: "The CI-correction defect was corrected in the current source.",
                     },
                   ],
-                }),
-                errorOutput: "",
-              };
-            if (options.prompt.includes("verify the persisted task plan"))
-              return {
-                exitCode: 0,
-                output: JSON.stringify({
-                  version: 1,
-                  projectId: project.id,
-                  cardId,
-                  planRevision: 1,
-                  verdict: "pass",
-                  findings: [],
-                }),
-                errorOutput: "",
-              };
-            if (!identity)
-              throw new Error(
-                "review prompt did not contain snapshot identity",
-              );
+            ),
+            requirementDispositions: review.requirementAssessments
+              .filter(({ status }) => status === "unsatisfied")
+              .map(({ requirementId }) => ({
+                requirementId,
+                status: "addressed",
+                rationale: "The requested behavior is implemented in the current source.",
+              })),
+          };
+          return {
+            exitCode: 0,
+            output: JSON.stringify({
+              type: "text",
+              part: {
+                type: "text",
+                text: JSON.stringify(dispositions),
+              },
+            }),
+            errorOutput: "",
+          };
+        }
+        if (options.captureSessionId)
+          return {
+            exitCode: 0,
+            sessionId,
+            output:
+              JSON.stringify({ type: "step_start", sessionID: sessionId }) +
+              "\n" +
+              JSON.stringify({
+                type: "text",
+                sessionID: sessionId,
+                part: {
+                  type: "text",
+                  text: JSON.stringify({
+                    version: 1,
+                    projectId: project.id,
+                    cardId,
+                    requirements: [
+                      {
+                        id: "REQ-1",
+                        text: "Implement change",
+                        verification: "Run validation",
+                      },
+                    ],
+                    steps: [
+                      {
+                        id: "STEP-1",
+                        description: "Implement change",
+                        requirementIds: ["REQ-1"],
+                        verification: "Run validation",
+                      },
+                    ],
+                    assumptions: [],
+                    blockers: [],
+                  }),
+                },
+              }),
+            errorOutput: "",
+          };
+        if (options.readOnly) {
+          const identity = options.prompt.match(
+            /(?:Reviewed source content identity|Reviewed source identity): (sha256:[0-9a-f]{64})/u,
+          )?.[1];
+          if (
+            options.prompt.includes("Independently verify each actionable human PR feedback item")
+          )
             return {
               exitCode: 0,
               output: JSON.stringify({
                 version: 1,
                 projectId: project.id,
                 cardId,
-                verdict: "pass",
-                requirementAssessments: [
+                headSha: prs.get("agent/first")!.headRefOid,
+                contentIdentity: identity,
+                dispositions: [
                   {
-                    requirementId: "REQ-1",
-                    status: "satisfied",
-                    details: "Implemented",
-                    evidence: ["app.js"],
+                    feedbackId: "review:202",
+                    status: "unresolved",
+                    reason: "The empty-result behavior still needs a correction.",
                   },
                 ],
-                blockingFindings: [],
-                reviewedContentIdentity: identity,
               }),
               errorOutput: "",
             };
-          }
-          if (
-            options.prompt.includes(
-              "Implement the task plan in this repository",
-            )
-          ) {
-            if (
-              options.sessionId !== sessionId ||
-              options.sessionLabel === undefined
-            )
-              throw new Error(
-                "implementation did not resume named primary session",
-              );
-            const child = await execFile(
-              process.execPath,
-              [
-                "-e",
-                "require('fs').writeFileSync('app.js', \"module.exports = 'implemented';\\n\")",
-              ],
-              { cwd: options.cwd, env, timeout: 10_000 },
-            );
-            void child;
-          }
-          if (options.prompt.includes("Generate the commit message")) {
-            const resultRelativePath = options.prompt.match(
-              /Write exactly one JSON object to ([^\n]+)\./u,
-            )?.[1];
-            if (resultRelativePath === undefined)
-              throw new Error("Commit-message prompt omitted its result path");
-            const resultPath = path.join(options.cwd, resultRelativePath);
-            fs.mkdirSync(path.dirname(resultPath), { recursive: true });
-            fs.writeFileSync(
-              resultPath,
-              JSON.stringify({
-                message:
-                  "fix(task): preserve CI behavior\n\n- Correct the reported CI failure.\n- Preserve the requested implementation.\n\nThe CI correction is complete.",
+          if (options.prompt.includes("verify the persisted task plan"))
+            return {
+              exitCode: 0,
+              output: JSON.stringify({
+                version: 1,
+                projectId: project.id,
+                cardId,
+                planRevision: 1,
+                verdict: "pass",
+                findings: [],
               }),
-            );
-          }
+              errorOutput: "",
+            };
+          if (!identity) throw new Error("review prompt did not contain snapshot identity");
           return {
             exitCode: 0,
-            output: "All configured validation and coverage passed.",
+            output: JSON.stringify({
+              version: 1,
+              projectId: project.id,
+              cardId,
+              verdict: "pass",
+              requirementAssessments: [
+                {
+                  requirementId: "REQ-1",
+                  status: "satisfied",
+                  details: "Implemented",
+                  evidence: ["app.js"],
+                },
+              ],
+              blockingFindings: [],
+              reviewedContentIdentity: identity,
+            }),
             errorOutput: "",
           };
-        },
-      );
+        }
+        if (options.prompt.includes("Implement the task plan in this repository")) {
+          if (options.sessionId !== sessionId || options.sessionLabel === undefined)
+            throw new Error("implementation did not resume named primary session");
+          const child = await execFile(
+            process.execPath,
+            ["-e", "require('fs').writeFileSync('app.js', \"module.exports = 'implemented';\\n\")"],
+            { cwd: options.cwd, env, timeout: 10_000 },
+          );
+          void child;
+        }
+        if (options.prompt.includes("Generate the commit message")) {
+          const resultRelativePath = options.prompt.match(
+            /Write exactly one JSON object to ([^\n]+)\./u,
+          )?.[1];
+          if (resultRelativePath === undefined)
+            throw new Error("Commit-message prompt omitted its result path");
+          const resultPath = path.join(options.cwd, resultRelativePath);
+          fs.mkdirSync(path.dirname(resultPath), { recursive: true });
+          fs.writeFileSync(
+            resultPath,
+            JSON.stringify({
+              message:
+                "fix(task): preserve CI behavior\n\n- Correct the reported CI failure.\n- Preserve the requested implementation.\n\nThe CI correction is complete.",
+            }),
+          );
+        }
+        return {
+          exitCode: 0,
+          output: "All configured validation and coverage passed.",
+          errorOutput: "",
+        };
+      });
       const observedCommands: string[] = [];
       const commandOutcomes: string[] = [];
       const commands = new CommandRunner(async (options: CommandRunOptions) => {
@@ -1592,8 +1424,7 @@ describe("task lifecycle through pollProject", () => {
             (ciQuality === "validation" && ciPrimaryCorrections > 0)) &&
           options.command === project.repository.validationCommand
         ) {
-          if (ciQuality === "validation")
-            ciAttachmentVersion = 10 + ciPrimaryCorrections;
+          if (ciQuality === "validation") ciAttachmentVersion = 10 + ciPrimaryCorrections;
           return {
             exitCode: 1,
             output: "Observed correction test failure",
@@ -1648,9 +1479,7 @@ describe("task lifecycle through pollProject", () => {
         vi.setSystemTime(Date.now() + 15_001);
         if (activeAuthority === undefined) {
           const eligible = await trello.getCards(project.trello.readyListId);
-          const selected = eligible.find((card) =>
-            card.idLabels.includes("feature"),
-          );
+          const selected = eligible.find((card) => card.idLabels.includes("feature"));
           if (selected === undefined) return;
           activeAuthority = await ProjectRunAuthority.createPreparingAttempt({
             projectId: project.id,
@@ -1705,9 +1534,7 @@ describe("task lifecycle through pollProject", () => {
         const completed = authority.store.read();
         if (
           completed &&
-          ["done", "refined", "failed", "cancelled"].includes(
-            completed.lifecycle,
-          ) &&
+          ["done", "refined", "failed", "cancelled"].includes(completed.lifecycle) &&
           completed.terminalSync === "verified"
         ) {
           await authority.releaseVerifiedTerminal();
@@ -1717,15 +1544,12 @@ describe("task lifecycle through pollProject", () => {
       const store = {
         read: (cardId: string) => {
           const authority = authorities.get(cardId);
-          return new TaskExecutionStore(contextRoot, project, authority).read(
-            cardId,
-          );
+          return new TaskExecutionStore(contextRoot, project, authority).read(cardId);
         },
       };
       loseCreateAcknowledgement = ackLoss;
       if (ackLoss) {
-        for (let pass = 0; pass < 8 && accepted.length === 0; pass++)
-          await poll();
+        for (let pass = 0; pass < 8 && accepted.length === 0; pass++) await poll();
         expect(accepted).toHaveLength(1);
         expect(prs.get("agent/first")).toBeDefined();
         // Reconstruct application clients around independently retained service resources.
@@ -1738,25 +1562,16 @@ describe("task lifecycle through pollProject", () => {
         expect(accepted).toHaveLength(1);
         expect(prs.size).toBe(1);
         const acceptedHead = prs.get("agent/first")!.headRefOid;
-        expect(
-          await git.getRemoteBranchSha(
-            source,
-            "origin",
-            "agent/first",
-            project,
-          ),
-        ).toBe(acceptedHead);
+        expect(await git.getRemoteBranchSha(source, "origin", "agent/first", project)).toBe(
+          acceptedHead,
+        );
         expect(await gitRun(source, "show", `${acceptedHead}:app.js`)).toBe(
           preparedReview === undefined
             ? "module.exports = 'implemented';"
             : "module.exports = 'prepared publication source';",
         );
-        expect(await git.getHeadSha(path.join(worktrees, "first"))).toMatch(
-          /^[0-9a-f]{40}$/u,
-        );
-        expect(
-          fs.readFileSync(path.join(worktrees, "first", "app.js"), "utf8"),
-        ).toBe(
+        expect(await git.getHeadSha(path.join(worktrees, "first"))).toMatch(/^[0-9a-f]{40}$/u);
+        expect(fs.readFileSync(path.join(worktrees, "first", "app.js"), "utf8")).toBe(
           preparedReview === undefined
             ? "module.exports = 'implemented';\n"
             : "module.exports = 'prepared publication source';\n",
@@ -1769,22 +1584,18 @@ describe("task lifecycle through pollProject", () => {
         expect(openCodeCards).not.toContain("next");
         expect(store.read("first")?.phase).toBe("publication");
         expect(
-          fs.existsSync(
-            path.join(contextRoot, "task-executions", project.id, "first.json"),
-          ),
+          fs.existsSync(path.join(contextRoot, "task-executions", project.id, "first.json")),
         ).toBe(false);
         expect(
           ledger.some(
-            ({ service, action }) =>
-              service === "github" && action === "accept:create-pr",
+            ({ service, action }) => service === "github" && action === "accept:create-pr",
           ),
         ).toBe(true);
         // Retained dispatch evidence and the correlation marker authorize only
         // readback after restart, never another create.
       }
       if (preparedReview !== undefined) {
-        for (let pass = 0; pass < 8 && !prs.has("agent/first"); pass++)
-          await poll();
+        for (let pass = 0; pass < 8 && !prs.has("agent/first"); pass++) await poll();
         const preparedPr = prs.get("agent/first");
         expect(preparedPr).toBeDefined();
         expect(reviewerRounds).toBe(2);
@@ -1793,9 +1604,7 @@ describe("task lifecycle through pollProject", () => {
           contentIdentity: string;
           review: { verdict: string; blockingFindings: unknown[] } | null;
         };
-        expect(persistedPublicationQuality.contentIdentity).toMatch(
-          /^sha256:[0-9a-f]{64}$/u,
-        );
+        expect(persistedPublicationQuality.contentIdentity).toMatch(/^sha256:[0-9a-f]{64}$/u);
         if (preparedReview === "material") {
           expect(persistedPublicationQuality.review).toMatchObject({
             verdict: "fail",
@@ -1806,9 +1615,7 @@ describe("task lifecycle through pollProject", () => {
             ],
           });
           expect(preparedPr?.isDraft).toBe(true);
-          expect(preparedPr?.body).toContain(
-            "Review: Failed (human review required",
-          );
+          expect(preparedPr?.body).toContain("Review: Failed (human review required");
           expect(preparedPr?.body).toContain(
             "The changed publication source restores the default value.",
           );
@@ -1829,63 +1636,46 @@ describe("task lifecycle through pollProject", () => {
         let ciInterrupted: TaskExecutionRecord | undefined;
         let ciWritesStopped = false;
         const originalCompare = TaskExecutionStore.prototype.compareAndSwap;
-        const ciFault = new Error(
-          "Simulated CI review checkpoint interruption",
-        );
+        const ciFault = new Error("Simulated CI review checkpoint interruption");
         const ciInterception =
           ciReviewRecovery === undefined
             ? undefined
-            : vi
-                .spyOn(TaskExecutionStore.prototype, "compareAndSwap")
-                .mockImplementation(function (
-                  this: TaskExecutionStore,
-                  cardId,
-                  revision,
-                  next,
-                ) {
-                  if (ciWritesStopped) throw ciFault;
-                  const persisted = originalCompare.call(
-                    this,
-                    cardId,
-                    revision,
-                    next,
-                  );
-                  const repair = persisted.reviewRepair;
-                  if (
-                    !repair?.cycleId.includes(":ci-review:") ||
-                    ciInterrupted !== undefined
-                  )
-                    return persisted;
-                  const reservation = repair.activePrimaryOperation;
-                  const entry =
-                    reservation &&
-                    persisted.primaryOperations?.[reservation.operationId];
-                  const matches =
-                    ciReviewRecovery === "reserved"
-                      ? reservation !== undefined && entry === undefined
-                      : ciReviewRecovery === "completed"
+            : vi.spyOn(TaskExecutionStore.prototype, "compareAndSwap").mockImplementation(function (
+                this: TaskExecutionStore,
+                cardId,
+                revision,
+                next,
+              ) {
+                if (ciWritesStopped) throw ciFault;
+                const persisted = originalCompare.call(this, cardId, revision, next);
+                const repair = persisted.reviewRepair;
+                if (!repair?.cycleId.includes(":ci-review:") || ciInterrupted !== undefined)
+                  return persisted;
+                const reservation = repair.activePrimaryOperation;
+                const entry = reservation && persisted.primaryOperations?.[reservation.operationId];
+                const matches =
+                  ciReviewRecovery === "reserved"
+                    ? reservation !== undefined && entry === undefined
+                    : ciReviewRecovery === "completed"
+                      ? reservation !== undefined &&
+                        entry?.status === "completed" &&
+                        persisted.phase === "implementation"
+                      : ciReviewRecovery === "validation"
                         ? reservation !== undefined &&
                           entry?.status === "completed" &&
-                          persisted.phase === "implementation"
-                        : ciReviewRecovery === "validation"
-                          ? reservation !== undefined &&
-                            entry?.status === "completed" &&
-                            persisted.phase === "validation"
-                          : ciReviewRecovery === "reviewed" &&
-                            repair.status === "passed";
-                  if (matches) {
-                    ciInterrupted = persisted;
-                    ciWritesStopped = true;
-                    throw ciFault;
-                  }
-                  return persisted;
-                });
+                          persisted.phase === "validation"
+                        : ciReviewRecovery === "reviewed" && repair.status === "passed";
+                if (matches) {
+                  ciInterrupted = persisted;
+                  ciWritesStopped = true;
+                  throw ciFault;
+                }
+                return persisted;
+              });
         if (ciReviewRecovery !== undefined) {
           for (
             let pass = 0;
-            pass < 8 &&
-            ciInterrupted === undefined &&
-            ciReviewRepairOperationIds.length === 0;
+            pass < 8 && ciInterrupted === undefined && ciReviewRepairOperationIds.length === 0;
             pass += 1
           ) {
             try {
@@ -1907,25 +1697,18 @@ describe("task lifecycle through pollProject", () => {
                   project,
                   activeAuthority,
                 ).readPrimaryResultArtifact({
-                  reference: reservation.promptArtifact
-                    .reference as `sha256:${string}`,
+                  reference: reservation.promptArtifact.reference as `sha256:${string}`,
                   bytes: reservation.promptArtifact.bytes,
                   ...(reservation.promptArtifact.path === undefined
                     ? {}
                     : { path: reservation.promptArtifact.path }),
                 }) as { prompt: string } | undefined);
           const priorHead = checkpoint.pullRequest!.headSha;
-          const sourceBytes = fs.readFileSync(
-            path.join(worktrees, "first", "app.js"),
-          );
+          const sourceBytes = fs.readFileSync(path.join(worktrees, "first", "app.js"));
           expect(ciPrimaryCorrections).toBe(1);
           expect(checkpoint.retryCounters.review).toBe(1);
           git = new GitClient(runGit);
-          for (
-            let pass = 0;
-            pass < (ciReviewRecovery === "unknown" ? 3 : 8);
-            pass += 1
-          ) {
+          for (let pass = 0; pass < (ciReviewRecovery === "unknown" ? 3 : 8); pass += 1) {
             await poll();
             if (
               ciReviewRecovery !== "unknown" &&
@@ -1945,37 +1728,23 @@ describe("task lifecycle through pollProject", () => {
             expect(ciPrimaryCorrections).toBe(1);
             expect(ciReviewRepairOperationIds).toHaveLength(1);
             expect(resumed.pullRequest?.headSha).toBe(priorHead);
-            expect(resumed.reviewRepair?.activePrimaryOperation).toEqual(
-              reservation,
-            );
-            expect(
-              resumed.primaryOperations?.[reservation!.operationId]?.status,
-            ).toBe("ambiguous");
+            expect(resumed.reviewRepair?.activePrimaryOperation).toEqual(reservation);
+            expect(resumed.primaryOperations?.[reservation!.operationId]?.status).toBe("ambiguous");
             expect(resumed.phase).toBe("implementation");
             expect(resumed.retryCounters.review).toBe(1);
-            expect(
-              fs.readFileSync(path.join(worktrees, "first", "app.js")),
-            ).toEqual(sourceBytes);
+            expect(fs.readFileSync(path.join(worktrees, "first", "app.js"))).toEqual(sourceBytes);
             expect(lists.get("next")).toBe("ready");
             expect(requests).toEqual(["agent/first"]);
             return;
           }
         }
-        for (
-          let pass = 0;
-          pass < 20 && ciPrimaryCorrections < (ciBudget ?? 2);
-          pass += 1
-        )
+        for (let pass = 0; pass < 20 && ciPrimaryCorrections < (ciBudget ?? 2); pass += 1)
           await poll();
         const ciTask = store.read("first");
         const ciRun = authorities.get("first")?.store.read();
         expect(ciTask?.phase).toBe("human-feedback");
-        expect(prs.get("agent/first")?.body).not.toContain(
-          "Agent Orchestrator status:",
-        );
-        expect(prs.get("agent/first")?.body).toContain(
-          "Observed CI for this revision",
-        );
+        expect(prs.get("agent/first")?.body).not.toContain("Agent Orchestrator status:");
+        expect(prs.get("agent/first")?.body).toContain("Observed CI for this revision");
         expect(
           ciPrimaryCorrections,
           JSON.stringify({
@@ -1999,14 +1768,9 @@ describe("task lifecycle through pollProject", () => {
           expect(prs.size).toBe(1);
           expect(prs.get("agent/first")?.isDraft).toBe(true);
           expect(lists.get("first")).toBe("review");
-          expect(
-            await git.getRemoteBranchSha(
-              source,
-              "origin",
-              "agent/first",
-              project,
-            ),
-          ).toBe(ciTask?.pullRequest?.headSha);
+          expect(await git.getRemoteBranchSha(source, "origin", "agent/first", project)).toBe(
+            ciTask?.pullRequest?.headSha,
+          );
           expect(ciTask?.ciRepair?.status).toBe("passed");
           expect(
             ciQuality === "validation"
@@ -2052,10 +1816,7 @@ describe("task lifecycle through pollProject", () => {
         await gitRun(root, "clone", remote, upstream);
         await gitRun(upstream, "config", "user.name", "Human");
         await gitRun(upstream, "config", "user.email", "human@example.test");
-        fs.writeFileSync(
-          path.join(upstream, "upstream.txt"),
-          "independent target work\n",
-        );
+        fs.writeFileSync(path.join(upstream, "upstream.txt"), "independent target work\n");
         await gitRun(upstream, "add", ".");
         await gitRun(upstream, "commit", "-m", "advance target");
         await gitRun(upstream, "push", "origin", "main");
@@ -2063,25 +1824,20 @@ describe("task lifecycle through pollProject", () => {
         await poll();
         const maintained = store.read("first")!;
         expect(maintained.pullRequest!.headSha).not.toBe(published);
-        expect(
-          await git.getCommitParentShas(path.join(worktrees, "first")),
-        ).toEqual([published, maintenanceBase]);
-        expect(firstPr!.body).toContain(
-          "Human release instructions: retain this text.",
-        );
+        expect(await git.getCommitParentShas(path.join(worktrees, "first"))).toEqual([
+          published,
+          maintenanceBase,
+        ]);
+        expect(firstPr!.body).toContain("Human release instructions: retain this text.");
         expect(firstPr!.body).toContain("Current automation outcome");
-        expect(firstPr!.body).toContain(
-          "Human note added during maintenance review.",
-        );
+        expect(firstPr!.body).toContain("Human note added during maintenance review.");
         expect(firstPr!.body).not.toContain("Agent Orchestrator status:");
         expect(firstPr!.isDraft).toBe(true);
         expect(lists.get("first")).toBe("review");
         expect(lists.get("next")).toBe("ready");
         expect(prs.size).toBe(1);
         await poll();
-        expect(store.read("first")!.pullRequest!.headSha).toBe(
-          maintained.pullRequest!.headSha,
-        );
+        expect(store.read("first")!.pullRequest!.headSha).toBe(maintained.pullRequest!.headSha);
         return;
       }
       expect(firstPr?.isDraft).toBe(
@@ -2090,30 +1846,21 @@ describe("task lifecycle through pollProject", () => {
       if (preparedReview !== undefined) {
         expect(reviewerRounds).toBe(2);
         if (preparedReview === "material") {
-          expect(firstPr?.body).toContain(
-            "Prepared source loses state after reload",
-          );
+          expect(firstPr?.body).toContain("Prepared source loses state after reload");
           expect(firstPr?.body).toContain(
             "The changed publication source restores the default value.",
           );
           expect(firstPr?.body).toContain("REQ-1");
           expect(firstPr?.body).toContain("unsatisfied");
-          expect(firstPr?.body).toContain(
-            "Review: Failed (human review required",
-          );
+          expect(firstPr?.body).toContain("Review: Failed (human review required");
         } else {
           expect(firstPr?.body).toContain("Review: Unavailable");
-          expect(firstPr?.body).toContain(
-            "Independent implementation review exited with code 1",
-          );
+          expect(firstPr?.body).toContain("Independent implementation review exited with code 1");
           expect(firstPr?.body).not.toContain("Review: Passed");
         }
       }
-      expect(firstPr?.body).not.toContain(
-        "All configured validation and coverage passed.",
-      );
-      if (quality === "none")
-        expect(firstPr?.body).toContain("Not configured; skipped");
+      expect(firstPr?.body).not.toContain("All configured validation and coverage passed.");
+      if (quality === "none") expect(firstPr?.body).toContain("Not configured; skipped");
       expect(
         fs.existsSync(validationMarker),
         JSON.stringify({
@@ -2156,54 +1903,27 @@ describe("task lifecycle through pollProject", () => {
         const owned = activeAuthority!;
         const worktree = path.join(worktrees, "first");
         const originalHead = store.read("first")!.pullRequest!.headSha!;
-        const beforePrimary = new Set(
-          Object.keys(store.read("first")!.primaryOperations ?? {}),
-        );
+        const beforePrimary = new Set(Object.keys(store.read("first")!.primaryOperations ?? {}));
         const push = vi.spyOn(git, "push");
         const humanOutcome = async () => {
           if (terminal === "merged") {
             const main = (
-              await execFile(
-                "git",
-                ["--git-dir", remote, "rev-parse", "refs/heads/main"],
-                { env },
-              )
+              await execFile("git", ["--git-dir", remote, "rev-parse", "refs/heads/main"], { env })
             ).stdout.trim();
             await execFile(
               "git",
-              [
-                "--git-dir",
-                remote,
-                "merge-base",
-                "--is-ancestor",
-                main,
-                originalHead,
-              ],
+              ["--git-dir", remote, "merge-base", "--is-ancestor", main, originalHead],
               { env },
             );
             await execFile(
               "git",
-              [
-                "--git-dir",
-                remote,
-                "update-ref",
-                "refs/heads/main",
-                originalHead,
-                main,
-              ],
+              ["--git-dir", remote, "update-ref", "refs/heads/main", originalHead, main],
               { env },
             );
           }
           await execFile(
             "git",
-            [
-              "--git-dir",
-              remote,
-              "update-ref",
-              "-d",
-              "refs/heads/agent/first",
-              originalHead,
-            ],
+            ["--git-dir", remote, "update-ref", "-d", "refs/heads/agent/first", originalHead],
             { env },
           );
           firstPr!.state = terminal === "merged" ? "MERGED" : "CLOSED";
@@ -2217,8 +1937,7 @@ describe("task lifecycle through pollProject", () => {
         const reconcileOutcome = async () => {
           for (
             let pass = 0;
-            pass < 8 &&
-            !["done", "cancelled"].includes(owned.store.read()!.lifecycle);
+            pass < 8 && !["done", "cancelled"].includes(owned.store.read()!.lifecycle);
             pass++
           )
             await poll();
@@ -2232,27 +1951,13 @@ describe("task lifecycle through pollProject", () => {
           expect(store.read("next")).toBeNull();
           expect(requests).toEqual(["agent/first"]);
           expect(prs.size).toBe(1);
-          expect(push).toHaveBeenCalledTimes(
-            terminalDuringFeedback === "push-rejected" ? 1 : 0,
-          );
-          expect(firstPr?.body).not.toContain(
-            "<!-- agent-orchestrator-status:start -->",
-          );
-          expect(
-            await git.getRemoteBranchSha(
-              source,
-              "origin",
-              "agent/first",
-              project,
-            ),
-          ).toBeNull();
+          expect(push).toHaveBeenCalledTimes(terminalDuringFeedback === "push-rejected" ? 1 : 0);
+          expect(firstPr?.body).not.toContain("<!-- agent-orchestrator-status:start -->");
+          expect(await git.getRemoteBranchSha(source, "origin", "agent/first", project)).toBeNull();
         };
         correctionFeedback = true;
         if (terminalDuringFeedback === "capacity") {
-          const other = await notificationAuthorityFixture(
-            root,
-            "capacity-peer",
-          );
+          const other = await notificationAuthorityFixture(root, "capacity-peer");
           leases.push(other.lease);
           let release!: () => void;
           const hold = new Promise<void>((resolve) => {
@@ -2267,57 +1972,54 @@ describe("task lifecycle through pollProject", () => {
             await hold;
             return { exitCode: 0, output: "done", errorOutput: "" };
           });
-          await new AiExecutionCapacity(
-            1,
-            [owned, other.authority],
-            25,
-          ).runInScope(signal, async () => {
-            const otherWork = other.authority.run(() =>
-              busy.run({
-                cwd: other.project.repository.path,
-                prompt: "hold",
-                readOnly: true,
-                timeoutMilliseconds: 30_000,
-                signal,
-              }),
-            );
-            await entered;
-            const waiting = poll();
-            try {
-              await vi.waitFor(() =>
-                expect(
-                  owned.read("ai-execution-capacity", (value) => value),
-                ).toMatchObject({ state: "queued" }),
+          await new AiExecutionCapacity(1, [owned, other.authority], 25).runInScope(
+            signal,
+            async () => {
+              const otherWork = other.authority.run(() =>
+                busy.run({
+                  cwd: other.project.repository.path,
+                  prompt: "hold",
+                  readOnly: true,
+                  timeoutMilliseconds: 30_000,
+                  signal,
+                }),
               );
-              const boundary = ledger.length;
-              await humanOutcome();
-              await waiting;
-              expect(feedbackClassifications).toBe(0);
-              expect(feedbackPrimaryCorrections).toBe(0);
-              expect(
-                Object.keys(store.read("first")!.primaryOperations ?? {}),
-              ).toEqual([...beforePrimary]);
-              await reconcileOutcome();
-              expect(
-                ledger
-                  .slice(boundary)
-                  .some((entry) => entry.action === "move:review"),
-              ).toBe(false);
-              expect(
-                other.authority.read("ai-execution-capacity", (value) => value),
-              ).toMatchObject({ state: "active" });
-            } finally {
-              lifecycleController.abort();
-              release();
-              await Promise.allSettled([waiting, otherWork]);
-            }
-          });
+              await entered;
+              const waiting = poll();
+              try {
+                await vi.waitFor(() =>
+                  expect(owned.read("ai-execution-capacity", (value) => value)).toMatchObject({
+                    state: "queued",
+                  }),
+                );
+                const boundary = ledger.length;
+                await humanOutcome();
+                await waiting;
+                expect(feedbackClassifications).toBe(0);
+                expect(feedbackPrimaryCorrections).toBe(0);
+                expect(Object.keys(store.read("first")!.primaryOperations ?? {})).toEqual([
+                  ...beforePrimary,
+                ]);
+                await reconcileOutcome();
+                expect(ledger.slice(boundary).some((entry) => entry.action === "move:review")).toBe(
+                  false,
+                );
+                expect(
+                  other.authority.read("ai-execution-capacity", (value) => value),
+                ).toMatchObject({ state: "active" });
+              } finally {
+                lifecycleController.abort();
+                release();
+                await Promise.allSettled([waiting, otherWork]);
+              }
+            },
+          );
         } else if (terminalDuringFeedback === "unknown") {
           await poll();
           expect(feedbackPrimaryCorrections).toBe(1);
-          const operation = Object.values(
-            store.read("first")!.primaryOperations ?? {},
-          ).find((entry) => entry.activity === "feedback-remediation")!;
+          const operation = Object.values(store.read("first")!.primaryOperations ?? {}).find(
+            (entry) => entry.activity === "feedback-remediation",
+          )!;
           expect(operation).toMatchObject({
             status: "ambiguous",
             failureExecutions: 0,
@@ -2333,40 +2035,29 @@ describe("task lifecycle through pollProject", () => {
           expect(feedbackPrimaryCorrections).toBe(1);
           expect(fs.existsSync(worktree)).toBe(true);
           expect(push).not.toHaveBeenCalled();
-          await expect(owned.releaseVerifiedTerminal()).rejects.toThrow(
-            "stopped task writers",
-          );
+          await expect(owned.releaseVerifiedTerminal()).rejects.toThrow("stopped task writers");
         } else if (terminalDuringFeedback === "push-rejected") {
           let boundary = 0;
           push.mockImplementationOnce(async () => {
             boundary = ledger.length;
             await humanOutcome();
-            throw new Error(
-              "Remote rejected the correction push after human closure",
-            );
+            throw new Error("Remote rejected the correction push after human closure");
           });
           await poll();
           await reconcileOutcome();
           expect(feedbackPrimaryCorrections).toBe(1);
           const unshipped = await git.getHeadSha(worktree);
           expect(unshipped).not.toBe(originalHead);
-          expect(await git.isAncestor(worktree, originalHead, unshipped)).toBe(
-            true,
+          expect(await git.isAncestor(worktree, originalHead, unshipped)).toBe(true);
+          expect(ledger.slice(boundary).some((entry) => entry.action === "move:review")).toBe(
+            false,
           );
-          expect(
-            ledger
-              .slice(boundary)
-              .some((entry) => entry.action === "move:review"),
-          ).toBe(false);
           expect(readTerminalPrFence(owned)?.preserveArtifacts).toBe(true);
         } else {
           const running = poll();
           try {
             await vi.waitFor(
-              () =>
-                expect(
-                  fs.existsSync(path.join(worktree, "writer-started")),
-                ).toBe(true),
+              () => expect(fs.existsSync(path.join(worktree, "writer-started"))).toBe(true),
               { timeout: 10_000 },
             );
             const boundary = ledger.length;
@@ -2374,20 +2065,15 @@ describe("task lifecycle through pollProject", () => {
             await running;
             await reconcileOutcome();
             expect(feedbackPrimaryCorrections).toBe(1);
-            expect(
-              fs.readFileSync(
-                path.join(worktree, "unshipped-review.txt"),
-                "utf8",
-              ),
-            ).toContain("not published");
-            expect(
-              ledger
-                .slice(boundary)
-                .some((entry) => entry.action === "move:review"),
-            ).toBe(false);
-            const operation = Object.values(
-              store.read("first")!.primaryOperations ?? {},
-            ).find((entry) => entry.activity === "feedback-remediation")!;
+            expect(fs.readFileSync(path.join(worktree, "unshipped-review.txt"), "utf8")).toContain(
+              "not published",
+            );
+            expect(ledger.slice(boundary).some((entry) => entry.action === "move:review")).toBe(
+              false,
+            );
+            const operation = Object.values(store.read("first")!.primaryOperations ?? {}).find(
+              (entry) => entry.activity === "feedback-remediation",
+            )!;
             expect(operation).toMatchObject({
               status: "cancelled",
               executions: 1,
@@ -2400,12 +2086,7 @@ describe("task lifecycle through pollProject", () => {
             expect(execution.treeStopped).toBe(true);
             expect(() =>
               process.kill(
-                Number(
-                  fs.readFileSync(
-                    path.join(worktree, "writer-child.pid"),
-                    "utf8",
-                  ),
-                ),
+                Number(fs.readFileSync(path.join(worktree, "writer-child.pid"), "utf8")),
                 0,
               ),
             ).toThrow();
@@ -2424,9 +2105,7 @@ describe("task lifecycle through pollProject", () => {
         firstPr!.body += "\n\nHuman-only deployment note.";
         correctionFeedback = true;
         if (feedbackQuality === "validation") {
-          await expect(poll()).rejects.toThrow(
-            "lost feedback Working acknowledgment",
-          );
+          await expect(poll()).rejects.toThrow("lost feedback Working acknowledgment");
           expect(store.read("first")?.feedbackCardMove).toMatchObject({
             fromListId: "review",
             toListId: "working",
@@ -2434,9 +2113,7 @@ describe("task lifecycle through pollProject", () => {
           expect(feedbackPrimaryCorrections).toBe(0);
           const moves = ledger.filter(
             (event) =>
-              event.service === "trello" &&
-              event.id === "first" &&
-              event.action === "move:working",
+              event.service === "trello" && event.id === "first" && event.action === "move:working",
           ).length;
           await poll();
           expect(
@@ -2466,9 +2143,7 @@ describe("task lifecycle through pollProject", () => {
           await poll();
           expect(feedbackPrimaryCorrections).toBe(1);
           expect(feedbackReplyBodies).toHaveLength(1);
-          expect(feedbackReplyBodies[0]).toContain(
-            "This request remains unresolved",
-          );
+          expect(feedbackReplyBodies[0]).toContain("This request remains unresolved");
           expect(store.read("first")?.pullRequest?.headSha).toBe(originalHead);
           return;
         }
@@ -2496,11 +2171,9 @@ describe("task lifecycle through pollProject", () => {
           expect(firstPr?.body).toContain("failed");
         } else {
           expect(corrected.publicationQuality?.review).toBeNull();
-          expect(
-            Object.values(
-              corrected.feedbackRemediation?.reviewSourceAttempts ?? {},
-            ),
-          ).toEqual([3]);
+          expect(Object.values(corrected.feedbackRemediation?.reviewSourceAttempts ?? {})).toEqual([
+            3,
+          ]);
           expect(firstPr?.body).toContain("Unavailable");
         }
         expect(lists.get("next")).toBe("ready");
@@ -2514,12 +2187,7 @@ describe("task lifecycle through pollProject", () => {
         const compare = TaskExecutionStore.prototype.compareAndSwap;
         const interception = vi
           .spyOn(TaskExecutionStore.prototype, "compareAndSwap")
-          .mockImplementation(function (
-            this: TaskExecutionStore,
-            cardId,
-            revision,
-            next,
-          ) {
+          .mockImplementation(function (this: TaskExecutionStore, cardId, revision, next) {
             if (writesStopped) throw fault;
             const persisted = compare.call(this, cardId, revision, next);
             const repair = persisted.reviewRepair;
@@ -2529,9 +2197,7 @@ describe("task lifecycle through pollProject", () => {
             )
               return persisted;
             const reservation = repair.activePrimaryOperation;
-            const primary =
-              reservation &&
-              persisted.primaryOperations?.[reservation.operationId];
+            const primary = reservation && persisted.primaryOperations?.[reservation.operationId];
             const matches =
               feedbackReviewRecovery === "reserved"
                 ? reservation !== undefined && primary === undefined
@@ -2543,8 +2209,7 @@ describe("task lifecycle through pollProject", () => {
                     ? reservation !== undefined &&
                       primary?.status === "completed" &&
                       persisted.phase === "validation"
-                    : feedbackReviewRecovery === "reviewed" &&
-                      repair.status === "passed";
+                    : feedbackReviewRecovery === "reviewed" && repair.status === "passed";
             if (matches) {
               interrupted = persisted;
               writesStopped = true;
@@ -2569,8 +2234,7 @@ describe("task lifecycle through pollProject", () => {
         });
         expect(feedbackPrimaryCorrections).toBe(1);
         const reservation = interrupted?.reviewRepair?.activePrimaryOperation;
-        if (feedbackReviewRecovery !== "reviewed")
-          expect(reservation).toBeDefined();
+        if (feedbackReviewRecovery !== "reviewed") expect(reservation).toBeDefined();
         const originalPrompt =
           reservation?.promptArtifact === undefined
             ? undefined
@@ -2579,18 +2243,14 @@ describe("task lifecycle through pollProject", () => {
                 project,
                 activeAuthority,
               ).readPrimaryResultArtifact({
-                reference: reservation.promptArtifact
-                  .reference as `sha256:${string}`,
+                reference: reservation.promptArtifact.reference as `sha256:${string}`,
                 bytes: reservation.promptArtifact.bytes,
                 ...(reservation.promptArtifact.path === undefined
                   ? {}
                   : { path: reservation.promptArtifact.path }),
               }) as { prompt: string } | undefined);
         const beforeRestart = feedbackReviewDispatches.length;
-        const reviewedSource = fs.readFileSync(
-          path.join(worktrees, "first", "app.js"),
-          "utf8",
-        );
+        const reviewedSource = fs.readFileSync(path.join(worktrees, "first", "app.js"), "utf8");
         // New observations must not replace the round that owns the persisted writer.
         feedbackBody =
           "A different human request arrived while the original correction was paused.";
@@ -2615,16 +2275,12 @@ describe("task lifecycle through pollProject", () => {
         if (feedbackReviewRecovery === "unknown") {
           expect(feedbackReviewDispatches).toHaveLength(beforeRestart);
           expect(resumed.pullRequest?.headSha).toBe(originalHead);
-          expect(resumed.reviewRepair?.activePrimaryOperation).toEqual(
-            reservation,
-          );
-          expect(
-            resumed.primaryOperations?.[reservation!.operationId]?.status,
-          ).toBe("ambiguous");
+          expect(resumed.reviewRepair?.activePrimaryOperation).toEqual(reservation);
+          expect(resumed.primaryOperations?.[reservation!.operationId]?.status).toBe("ambiguous");
           expect(resumed.recoveryWait).toBeDefined();
-          expect(
-            fs.readFileSync(path.join(worktrees, "first", "app.js"), "utf8"),
-          ).toBe(reviewedSource);
+          expect(fs.readFileSync(path.join(worktrees, "first", "app.js"), "utf8")).toBe(
+            reviewedSource,
+          );
         } else {
           expect(feedbackReviewDispatches).toHaveLength(1);
           if (reservation !== undefined)
@@ -2641,9 +2297,7 @@ describe("task lifecycle through pollProject", () => {
           expect(resumed.retryCounters.review).toBe(1);
           expect(resumed.phase).toBe("ci");
           expect(resumed.pullRequest?.headSha).not.toBe(originalHead);
-          expect(
-            authorities.get("first")?.store.read()?.budgets.review,
-          ).toMatchObject({
+          expect(authorities.get("first")?.store.read()?.budgets.review).toMatchObject({
             used: 1,
             episodeId: resumed.reviewRepair?.cycleId,
           });
@@ -2664,17 +2318,16 @@ describe("task lifecycle through pollProject", () => {
           let attempt = 0;
           attempt < 8 &&
           (store.read("first")?.primaryOperations?.[
-            Object.keys(store.read("first")?.primaryOperations ?? {}).at(-1) ??
-              ""
+            Object.keys(store.read("first")?.primaryOperations ?? {}).at(-1) ?? ""
           ]?.failureExecutions ?? 0) < 3;
           attempt += 1
         )
           await poll();
         const exhaustedRecord = store.read("first")!;
         fs.writeFileSync(unshippedPath, "local reviewer follow-up\n");
-        const correctionOperation = Object.values(
-          exhaustedRecord.primaryOperations ?? {},
-        ).find((entry) => entry.activity === "feedback-remediation");
+        const correctionOperation = Object.values(exhaustedRecord.primaryOperations ?? {}).find(
+          (entry) => entry.activity === "feedback-remediation",
+        );
         expect(correctionOperation).toMatchObject({
           status: "exhausted",
           executions: 3,
@@ -2687,17 +2340,12 @@ describe("task lifecycle through pollProject", () => {
           JSON.stringify({
             operation: correctionOperation,
             stderr: fs.readFileSync(
-              path.join(
-                path.dirname(correctionOperation!.processMetadataPath!),
-                "stderr.txt",
-              ),
+              path.join(path.dirname(correctionOperation!.processMetadataPath!), "stderr.txt"),
               "utf8",
             ),
           }),
         ).toBe(true);
-        expect(
-          fs.readFileSync(callsFile, "utf8").trim().split("\n"),
-        ).toHaveLength(3);
+        expect(fs.readFileSync(callsFile, "utf8").trim().split("\n")).toHaveLength(3);
         const metadata = JSON.parse(
           fs.readFileSync(correctionOperation!.processMetadataPath!, "utf8"),
         ) as Record<string, unknown>;
@@ -2714,9 +2362,7 @@ describe("task lifecycle through pollProject", () => {
           pullRequest: { number: 41, url: firstPr!.url },
           recoveryWait: { kind: "dependency", resumePhase: "human-feedback" },
         });
-        expect(fs.readFileSync(unshippedPath, "utf8")).toBe(
-          "local reviewer follow-up\n",
-        );
+        expect(fs.readFileSync(unshippedPath, "utf8")).toBe("local reviewer follow-up\n");
         expect(lists.get("first")).toBe("review");
         expect(lists.get("next")).toBe("ready");
         expect(requests).toEqual(["agent/first"]);
@@ -2727,40 +2373,24 @@ describe("task lifecycle through pollProject", () => {
           terminalSync: "not-applicable",
         });
         expect(openCodeCards).not.toContain("next");
-        const correctionExecutions = openCodeCards.filter(
-          (cardId) => cardId === "first",
-        ).length;
-        const reopenedTaskStore = new TaskExecutionStore(
-          contextRoot,
-          project,
-          activeAuthority!,
-        );
+        const correctionExecutions = openCodeCards.filter((cardId) => cardId === "first").length;
+        const reopenedTaskStore = new TaskExecutionStore(contextRoot, project, activeAuthority!);
         expect(
-          reopenedTaskStore.read("first")?.primaryOperations?.[
-            correctionOperation!.id
-          ],
+          reopenedTaskStore.read("first")?.primaryOperations?.[correctionOperation!.id],
         ).toMatchObject({ status: "exhausted", failureExecutions: 3 });
         await poll();
         await poll();
-        expect(
-          fs.readFileSync(callsFile, "utf8").trim().split("\n"),
-        ).toHaveLength(3);
-        expect(
-          openCodeCards.filter((cardId) => cardId === "first"),
-        ).toHaveLength(correctionExecutions);
+        expect(fs.readFileSync(callsFile, "utf8").trim().split("\n")).toHaveLength(3);
+        expect(openCodeCards.filter((cardId) => cardId === "first")).toHaveLength(
+          correctionExecutions,
+        );
         expect(store.read("next")).toBeNull();
         expect(lists.get("next")).toBe("ready");
         expect(requests).toEqual(["agent/first"]);
-        expect(fs.readFileSync(unshippedPath, "utf8")).toBe(
-          "local reviewer follow-up\n",
-        );
+        expect(fs.readFileSync(unshippedPath, "utf8")).toBe("local reviewer follow-up\n");
       }
       if (!correctionFailure) {
-        const recoveryStore = new TaskExecutionStore(
-          contextRoot,
-          project,
-          activeAuthority!,
-        );
+        const recoveryStore = new TaskExecutionStore(contextRoot, project, activeAuthority!);
         const checkpoint = recoveryStore.read("first")!;
         recoveryStore.compareAndSwap("first", checkpoint.revision, {
           ...checkpoint,
@@ -2801,9 +2431,7 @@ describe("task lifecycle through pollProject", () => {
           updatedAt: new Date().toISOString(),
         });
         const checkpointSession = recoveryStore.read("first")?.primarySessionId;
-        const retainedWorktreeBytes = fs.readFileSync(
-          path.join(worktrees, "first", "app.js"),
-        );
+        const retainedWorktreeBytes = fs.readFileSync(path.join(worktrees, "first", "app.js"));
         await poll();
         expect(recoveryStore.read("first")).toMatchObject({
           phase: "human-feedback",
@@ -2813,23 +2441,15 @@ describe("task lifecycle through pollProject", () => {
           lifecycle: "waiting",
           terminalSync: "not-applicable",
         });
-        expect(recoveryStore.read("first")?.primarySessionId).toBe(
-          checkpointSession,
+        expect(recoveryStore.read("first")?.primarySessionId).toBe(checkpointSession);
+        expect(fs.readFileSync(path.join(worktrees, "first", "app.js"))).toEqual(
+          retainedWorktreeBytes,
         );
-        expect(
-          fs.readFileSync(path.join(worktrees, "first", "app.js")),
-        ).toEqual(retainedWorktreeBytes);
         expect(feedbackReads).toBe(feedbackReadsBeforeWait);
         expect(lists.get("next")).toBe("ready");
         expect(store.read("next")).toBeNull();
-        const reopenedPausedStore = new TaskExecutionStore(
-          contextRoot,
-          project,
-          activeAuthority!,
-        );
-        expect(reopenedPausedStore.read("first")?.recoveryWait?.kind).toBe(
-          "manual-move",
-        );
+        const reopenedPausedStore = new TaskExecutionStore(contextRoot, project, activeAuthority!);
+        expect(reopenedPausedStore.read("first")?.recoveryWait?.kind).toBe("manual-move");
 
         // Run a normal production publication for a distinct project while A
         // remains paused. This is independent fixture state and sequential
@@ -2837,11 +2457,7 @@ describe("task lifecycle through pollProject", () => {
         vi.useFakeTimers({ toFake: ["Date"] });
         const projectBRoot = path.join(root, "project-b");
         fs.mkdirSync(projectBRoot);
-        const projectB = createPublicationFixture(
-          projectBRoot,
-          undefined,
-          "project-b",
-        );
+        const projectB = createPublicationFixture(projectBRoot, undefined, "project-b");
         const projectBPlans = new TaskPlanStore(
           projectB.project.contextRoot,
           projectB.project,
@@ -2853,9 +2469,7 @@ describe("task lifecycle through pollProject", () => {
               version: 1,
               projectId: "project-b",
               cardId: "card",
-              requirements: [
-                { id: "REQ-1", text: "Publish", verification: "Check CI" },
-              ],
+              requirements: [{ id: "REQ-1", text: "Publish", verification: "Check CI" }],
               steps: [
                 {
                   id: "STEP-1",
@@ -2960,9 +2574,9 @@ describe("task lifecycle through pollProject", () => {
           phase: "human-feedback",
           recoveryWait: { kind: "manual-move" },
         });
-        expect(
-          fs.readFileSync(path.join(worktrees, "first", "app.js")),
-        ).toEqual(retainedWorktreeBytes);
+        expect(fs.readFileSync(path.join(worktrees, "first", "app.js"))).toEqual(
+          retainedWorktreeBytes,
+        );
 
         // A terminal-looking Done placement has the same pause semantics:
         // Trello list placement alone cannot assert a merged PR.
@@ -2996,22 +2610,16 @@ describe("task lifecycle through pollProject", () => {
         await poll();
         expect(reopenedPausedStore.read("first")?.recoveryWait).toBeUndefined();
         expect(reopenedPausedStore.read("first")?.phase).toBe("human-feedback");
-        expect(reopenedPausedStore.read("first")?.primarySessionId).toBe(
-          checkpointSession,
-        );
+        expect(reopenedPausedStore.read("first")?.primarySessionId).toBe(checkpointSession);
         await poll();
         expect(lists.get("next")).toBe("ready");
-        expect(
-          ledger.some(
-            (event) => event.id === "next" && event.action === "move:working",
-          ),
-        ).toBe(false);
+        expect(ledger.some((event) => event.id === "next" && event.action === "move:working")).toBe(
+          false,
+        );
         expect(store.read("next")).toBeNull();
         expect(fs.existsSync(path.join(worktrees, "next"))).toBe(false);
         expect(
-          [...prs.values()].filter(
-            ({ headBranch }) => headBranch === "agent/next",
-          ),
+          [...prs.values()].filter(({ headBranch }) => headBranch === "agent/next"),
         ).toHaveLength(0);
         firstPr!.reviewDecision = "APPROVED";
         await poll();
@@ -3031,30 +2639,16 @@ describe("task lifecycle through pollProject", () => {
         );
         expect(
           Number(
-            await gitRun(
-              source,
-              "rev-list",
-              "--count",
-              `${initialHead}..${publishedHeadSha}`,
-            ),
+            await gitRun(source, "rev-list", "--count", `${initialHead}..${publishedHeadSha}`),
           ),
         ).toBe(1);
       }
       const sha = correctionFailure
         ? firstPr!.headRefOid
-        : (await git.getRemoteBranchSha(
-            source,
-            "origin",
-            "agent/first",
-            project,
-          ))!;
+        : (await git.getRemoteBranchSha(source, "origin", "agent/first", project))!;
       // Exercise terminal handling against the canonical authority-backed task
       // projection, including a durable recovery wait (not a standalone store).
-      const terminalTaskStore = new TaskExecutionStore(
-        contextRoot,
-        project,
-        activeAuthority!,
-      );
+      const terminalTaskStore = new TaskExecutionStore(contextRoot, project, activeAuthority!);
       const waitingTask = terminalTaskStore.read("first")!;
       terminalTaskStore.compareAndSwap("first", waitingTask.revision, {
         ...waitingTask,
@@ -3063,9 +2657,7 @@ describe("task lifecycle through pollProject", () => {
           reason: "GitHub temporarily unavailable",
           resumePhase: "human-feedback",
           since: new Date().toISOString(),
-          retryAt: new Date(
-            Date.now() + (terminalReadRaceAt === 3 ? -1 : 60_000),
-          ).toISOString(),
+          retryAt: new Date(Date.now() + (terminalReadRaceAt === 3 ? -1 : 60_000)).toISOString(),
           attempts: 1,
           notificationId: "lifecycle-project/first/terminal-test/dependency",
         },
@@ -3089,11 +2681,7 @@ describe("task lifecycle through pollProject", () => {
       if (correctionFailure) {
         blockTerminalDestinationRead = true;
         let terminalReadFailure: unknown;
-        for (
-          let attempt = 0;
-          attempt < 8 && terminalReadFailure === undefined;
-          attempt += 1
-        ) {
+        for (let attempt = 0; attempt < 8 && terminalReadFailure === undefined; attempt += 1) {
           try {
             await poll();
           } catch (error) {
@@ -3114,17 +2702,11 @@ describe("task lifecycle through pollProject", () => {
         expect(lists.get("next")).toBe("ready");
         expect(store.read("next")).toBeNull();
         expect(openCodeCards).toHaveLength(openCodeCountBeforeRace);
-        const reopenedTaskStore = new TaskExecutionStore(
-          contextRoot,
-          project,
-          activeAuthority!,
-        );
+        const reopenedTaskStore = new TaskExecutionStore(contextRoot, project, activeAuthority!);
         const exhaustedOperationId =
           terminalTaskStore.read("first")!.feedbackRemediation!.operationId;
         expect(
-          reopenedTaskStore.read("first")?.primaryOperations?.[
-            exhaustedOperationId
-          ],
+          reopenedTaskStore.read("first")?.primaryOperations?.[exhaustedOperationId],
         ).toMatchObject({ status: "exhausted", failureExecutions: 3 });
         expect(
           new TaskMutationQueue(contextRoot, project, activeAuthority!)
@@ -3135,9 +2717,7 @@ describe("task lifecycle through pollProject", () => {
           status: "retired",
           retirementReason: "human-pr-terminal",
         });
-        await expect(poll()).rejects.toThrow(
-          "simulated terminal Trello destination read outage",
-        );
+        await expect(poll()).rejects.toThrow("simulated terminal Trello destination read outage");
         expect(authorities.get("first")?.store.read()).toMatchObject({
           lifecycle: "waiting",
           terminalSync: "not-applicable",
@@ -3145,18 +2725,11 @@ describe("task lifecycle through pollProject", () => {
         expect(openCodeCards).toHaveLength(openCodeCountBeforeRace);
         expect(requests).toEqual(["agent/first"]);
         expect(prs.size).toBe(1);
-        expect(
-          fs.readFileSync(
-            path.join(worktrees, "first", "reviewer-followup.ts"),
-            "utf8",
-          ),
-        ).toBe("local reviewer follow-up\n");
+        expect(fs.readFileSync(path.join(worktrees, "first", "reviewer-followup.ts"), "utf8")).toBe(
+          "local reviewer follow-up\n",
+        );
         blockTerminalDestinationRead = false;
-        for (
-          let attempt = 0;
-          attempt < 8 && activeAuthority !== undefined;
-          attempt += 1
-        )
+        for (let attempt = 0; attempt < 8 && activeAuthority !== undefined; attempt += 1)
           await poll();
       } else {
         await poll();
@@ -3177,11 +2750,7 @@ describe("task lifecycle through pollProject", () => {
       }
       expect(["review", "working", destination]).toContain(lists.get("first"));
       expect(openCodeCards).toHaveLength(openCodeCountBeforeRace);
-      for (
-        let attempt = 0;
-        attempt < 12 && activeAuthority !== undefined;
-        attempt += 1
-      )
+      for (let attempt = 0; attempt < 12 && activeAuthority !== undefined; attempt += 1)
         await poll();
       expect(lists.get("first")).toBe(destination);
       expect(terminalRaceReads).toBeGreaterThanOrEqual(2);
@@ -3195,36 +2764,26 @@ describe("task lifecycle through pollProject", () => {
         expect(requests).toEqual(["agent/first"]);
         expect(prs.size).toBe(1);
         expect(fs.existsSync(path.join(worktrees, "first"))).toBe(true);
-        expect(
-          fs.readFileSync(
-            path.join(worktrees, "first", "reviewer-followup.ts"),
-            "utf8",
-          ),
-        ).toBe("local reviewer follow-up\n");
+        expect(fs.readFileSync(path.join(worktrees, "first", "reviewer-followup.ts"), "utf8")).toBe(
+          "local reviewer follow-up\n",
+        );
       }
       expect(terminalTaskStore.read("first")?.recoveryWait).toBeUndefined();
-      if (terminal === "merged")
-        expect(terminalTaskStore.read("first")?.phase).toBe("done");
+      if (terminal === "merged") expect(terminalTaskStore.read("first")?.phase).toBe("done");
       const terminalReadback = await (
         trello as unknown as {
           getCard: (id: string) => Promise<TrelloCard>;
         }
       ).getCard("first");
       expect(terminalReadback.idList).toBe(destination);
-      expect(
-        ledger.some(
-          (event) => event.id === "next" && event.action === "move:working",
-        ),
-      ).toBe(false);
-      expect(
-        (await trello.getCards("ready")).some(({ id }) => id === "next"),
-      ).toBe(true);
+      expect(ledger.some((event) => event.id === "next" && event.action === "move:working")).toBe(
+        false,
+      );
+      expect((await trello.getCards("ready")).some(({ id }) => id === "next")).toBe(true);
       expect(
         ledger.some(
           (event) =>
-            event.id === "41" &&
-            event.actor === "human" &&
-            event.action === `human-${terminal}`,
+            event.id === "41" && event.actor === "human" && event.action === `human-${terminal}`,
         ),
       ).toBe(true);
       const closureComment = [...ledger]
@@ -3238,8 +2797,7 @@ describe("task lifecycle through pollProject", () => {
         expect(closureComment?.detail).toContain("closed without being merged");
       expect(
         ledger.findIndex(
-          ({ actor, action }) =>
-            actor === "human" && action === `human-${terminal}`,
+          ({ actor, action }) => actor === "human" && action === `human-${terminal}`,
         ),
       ).toBeLessThan(ledger.length);
       trapNextClaim = true;
@@ -3249,44 +2807,31 @@ describe("task lifecycle through pollProject", () => {
         lifecycle: "planning",
       });
       expect(
-        fs.existsSync(
-          path.join(contextRoot, "task-executions", project.id, "next.json"),
-        ),
+        fs.existsSync(path.join(contextRoot, "task-executions", project.id, "next.json")),
       ).toBe(false);
-      expect(
-        ledger.some(
-          (event) => event.id === "next" && event.action === "move:working",
-        ),
-      ).toBe(true);
+      expect(ledger.some((event) => event.id === "next" && event.action === "move:working")).toBe(
+        true,
+      );
       const terminalDestinationReadIndex = ledger.reduce(
         (lastIndex, entry, index) =>
-          entry.id === "first" &&
-          entry.action === "read-card" &&
-          entry.detail === destination
+          entry.id === "first" && entry.action === "read-card" && entry.detail === destination
             ? index
             : lastIndex,
         -1,
       );
       expect(
         ledger.findIndex(
-          ({ actor, action }) =>
-            actor === "human" && action === `human-${terminal}`,
+          ({ actor, action }) => actor === "human" && action === `human-${terminal}`,
         ),
       ).toBeLessThan(terminalDestinationReadIndex);
       expect(terminalDestinationReadIndex).toBeLessThan(
-        ledger.findIndex(
-          ({ id, action }) => id === "next" && action === "move:working",
-        ),
+        ledger.findIndex(({ id, action }) => id === "next" && action === "move:working"),
       );
-      expect(
-        gitCalls.some((args) =>
-          args.some((arg) => /(^|:)force|--force/u.test(arg)),
-        ),
-      ).toBe(false);
+      expect(gitCalls.some((args) => args.some((arg) => /(^|:)force|--force/u.test(arg)))).toBe(
+        false,
+      );
       expect(gitCalls.some((args) => args.includes("rebase"))).toBe(false);
-      expect(
-        ledger.some((event) => /auto.?merge|merge-pr/u.test(event.action)),
-      ).toBe(false);
+      expect(ledger.some((event) => /auto.?merge|merge-pr/u.test(event.action))).toBe(false);
       expect(await git.getHeadSha(source)).toBe(
         await git.resolveCommitSha(source, "refs/remotes/origin/main"),
       );
@@ -3308,19 +2853,11 @@ describe("task lifecycle through pollProject", () => {
       expect(firstPr?.number).toBe(41);
       expect(firstPr?.isDraft).toBe(draft || ackLoss || quality !== "both");
       expect(
-        ledger.filter(
-          ({ action }) =>
-            action.startsWith("attempt:") && /merge/u.test(action),
-        ),
+        ledger.filter(({ action }) => action.startsWith("attempt:") && /merge/u.test(action)),
       ).toHaveLength(0);
+      expect(ledger.filter(({ action }) => action === "comment").length).toBeGreaterThan(0);
       expect(
-        ledger.filter(({ action }) => action === "comment").length,
-      ).toBeGreaterThan(0);
-      expect(
-        ledger.some(
-          ({ action, detail }) =>
-            action === "comment" && detail?.includes(firstPr!.url),
-        ),
+        ledger.some(({ action, detail }) => action === "comment" && detail?.includes(firstPr!.url)),
       ).toBe(true);
     },
     60_000,

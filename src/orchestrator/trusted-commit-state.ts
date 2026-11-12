@@ -90,10 +90,7 @@ function getStatePath(project: ProjectConfig, cardId: string): string {
   );
 }
 
-function getPendingCommitStatePath(
-  project: ProjectConfig,
-  cardId: string,
-): string {
+function getPendingCommitStatePath(project: ProjectConfig, cardId: string): string {
   assertSafeStateComponent(project.id, "project ID");
   assertSafeStateComponent(cardId, "card ID");
   return path.join(
@@ -111,9 +108,8 @@ export function readPendingCommitState(
 ): PendingCommitState | null {
   const authority = ProjectRunAuthority.current(project.id);
   if (authority) {
-    const state = authority.read(
-      ProjectRunAuthority.commitKey("pending-commit", cardId),
-      (value) => pendingCommitStateSchema.parse(value),
+    const state = authority.read(ProjectRunAuthority.commitKey("pending-commit", cardId), (value) =>
+      pendingCommitStateSchema.parse(value),
     );
     if (
       state &&
@@ -122,16 +118,12 @@ export function readPendingCommitState(
         state.taskBranch !== taskResources(project, cardId).branch ||
         state.defaultBranch !== project.repository.defaultBranch)
     )
-      throw new Error(
-        "Pending commit projection does not match task ownership",
-      );
+      throw new Error("Pending commit projection does not match task ownership");
     return state;
   }
   const filePath = getPendingCommitStatePath(project, cardId);
   if (!fs.existsSync(filePath)) return null;
-  const state = pendingCommitStateSchema.parse(
-    readPersistedStateJson(filePath),
-  );
+  const state = pendingCommitStateSchema.parse(readPersistedStateJson(filePath));
   if (
     state.projectId !== project.id ||
     state.cardId !== cardId ||
@@ -188,10 +180,7 @@ export async function recoverPendingTaskCommit(options: {
   project: ProjectConfig;
   cardId: string;
   worktreePath: string;
-  git: Pick<
-    GitClient,
-    "getCurrentBranch" | "getHeadSha" | "getCommitParentSha" | "getStatus"
-  >;
+  git: Pick<GitClient, "getCurrentBranch" | "getHeadSha" | "getCommitParentSha" | "getStatus">;
   remoteHeadSha: string | null;
   pullRequestExists: boolean;
 }): Promise<TrustedCommitState | null> {
@@ -214,9 +203,7 @@ export async function recoverPendingTaskCommit(options: {
     head === pending.parentSha ||
     (await git.getCommitParentSha(worktreePath)) !== pending.parentSha
   )
-    throw new Error(
-      "Pending task commit cannot be adopted from ambiguous Git state",
-    );
+    throw new Error("Pending task commit cannot be adopted from ambiguous Git state");
   const adopted: TrustedCommitState = {
     version: 1,
     kind: "trusted-commit",
@@ -231,10 +218,7 @@ export async function recoverPendingTaskCommit(options: {
   return adopted;
 }
 
-export function clearPendingCommitState(
-  project: ProjectConfig,
-  cardId: string,
-): void {
+export function clearPendingCommitState(project: ProjectConfig, cardId: string): void {
   const authority = ProjectRunAuthority.current(project.id);
   if (authority) {
     authority.remove(ProjectRunAuthority.commitKey("pending-commit", cardId));
@@ -260,23 +244,15 @@ export function getTrustedCommitStateDirectory(project: ProjectConfig): string {
   return path.dirname(getStatePath(project, "placeholder"));
 }
 
-export function getRejectedCommitStateDirectory(
-  project: ProjectConfig,
-): string {
+export function getRejectedCommitStateDirectory(project: ProjectConfig): string {
   return path.dirname(getRejectedStatePath(project, "placeholder"));
 }
 
-export function getTrustedCommitStatePath(
-  project: ProjectConfig,
-  cardId: string,
-): string {
+export function getTrustedCommitStatePath(project: ProjectConfig, cardId: string): string {
   return getStatePath(project, cardId);
 }
 
-export function getRejectedCommitStatePath(
-  project: ProjectConfig,
-  cardId: string,
-): string {
+export function getRejectedCommitStatePath(project: ProjectConfig, cardId: string): string {
   return getRejectedStatePath(project, cardId);
 }
 
@@ -286,9 +262,8 @@ export function readTrustedCommitState(
 ): TrustedCommitState | null {
   const authority = ProjectRunAuthority.current(project.id);
   if (authority) {
-    const state = authority.read(
-      ProjectRunAuthority.commitKey("trusted-commit", cardId),
-      (value) => trustedCommitStateSchema.parse(value),
+    const state = authority.read(ProjectRunAuthority.commitKey("trusted-commit", cardId), (value) =>
+      trustedCommitStateSchema.parse(value),
     );
     if (
       state &&
@@ -297,9 +272,7 @@ export function readTrustedCommitState(
         state.taskBranch !== taskResources(project, cardId).branch ||
         state.defaultBranch !== project.repository.defaultBranch)
     )
-      throw new Error(
-        "Trusted commit projection does not match task ownership",
-      );
+      throw new Error("Trusted commit projection does not match task ownership");
     return state;
   }
   const statePath = getStatePath(project, cardId);
@@ -334,9 +307,7 @@ export function readTrustedCommitState(
     result.data.taskBranch !== taskResources(project, cardId).branch ||
     result.data.defaultBranch !== project.repository.defaultBranch
   ) {
-    throw new Error(
-      `Trusted commit state does not match project ${project.id} and card ${cardId}`,
-    );
+    throw new Error(`Trusted commit state does not match project ${project.id} and card ${cardId}`);
   }
 
   return result.data;
@@ -359,9 +330,7 @@ export function readRejectedCommitState(
         state.taskBranch !== taskResources(project, cardId).branch ||
         state.defaultBranch !== project.repository.defaultBranch)
     )
-      throw new Error(
-        "Rejected commit projection does not match task ownership",
-      );
+      throw new Error("Rejected commit projection does not match task ownership");
     return state;
   }
   const statePath = getRejectedStatePath(project, cardId);
@@ -432,14 +401,10 @@ export function writeTrustedCommitState(
   fs.mkdirSync(path.dirname(statePath), { recursive: true });
 
   try {
-    fs.writeFileSync(
-      temporaryPath,
-      `${JSON.stringify(result.data, null, 2)}\n`,
-      {
-        encoding: "utf8",
-        mode: 0o600,
-      },
-    );
+    fs.writeFileSync(temporaryPath, `${JSON.stringify(result.data, null, 2)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
     fs.renameSync(temporaryPath, statePath);
   } catch (error) {
     fs.rmSync(temporaryPath, { force: true });
@@ -477,14 +442,10 @@ export function writeRejectedCommitState(
   fs.mkdirSync(path.dirname(statePath), { recursive: true });
 
   try {
-    fs.writeFileSync(
-      temporaryPath,
-      `${JSON.stringify(result.data, null, 2)}\n`,
-      {
-        encoding: "utf8",
-        mode: 0o600,
-      },
-    );
+    fs.writeFileSync(temporaryPath, `${JSON.stringify(result.data, null, 2)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
     fs.renameSync(temporaryPath, statePath);
   } catch (error) {
     fs.rmSync(temporaryPath, { force: true });

@@ -26,12 +26,7 @@ const feedbackEntrySchema = z.strictObject({
     .regex(/^[0-9a-f]{64}$/u)
     .optional(),
   requestRevision: z.number().int().nonnegative().safe().optional(),
-  actionability: z.enum([
-    "unclassified",
-    "actionable",
-    "discussion",
-    "not-actionable",
-  ]),
+  actionability: z.enum(["unclassified", "actionable", "discussion", "not-actionable"]),
   status: z.enum(["pending", "verified", "escalated", "published", "closed"]),
   unresolvedReason: z.string().min(1).optional(),
   resolution: z.enum(["verified-fixed", "unresolved", "uncertain"]).optional(),
@@ -73,10 +68,7 @@ const feedbackLedgerSchema = z
         });
       }
       keys.add(key);
-      if (
-        entry.status === "verified" &&
-        entry.verificationEvidence.length === 0
-      ) {
+      if (entry.status === "verified" && entry.verificationEvidence.length === 0) {
         ctx.addIssue({
           code: "custom",
           path: ["entries", index, "verificationEvidence"],
@@ -97,10 +89,7 @@ const feedbackLedgerSchema = z
           message: "Published feedback requires a persisted sent reply state",
         });
       }
-      if (
-        entry.status === "escalated" &&
-        entry.unresolvedReason === undefined
-      ) {
+      if (entry.status === "escalated" && entry.unresolvedReason === undefined) {
         ctx.addIssue({
           code: "custom",
           path: ["entries", index, "unresolvedReason"],

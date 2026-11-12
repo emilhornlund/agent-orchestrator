@@ -1,9 +1,6 @@
 import type { ProjectConfig } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
-import type {
-  OpenCodeClient,
-  OpenCodeRunOptions,
-} from "../opencode/opencode-client.js";
+import type { OpenCodeClient, OpenCodeRunOptions } from "../opencode/opencode-client.js";
 import { buildTaskSessionFeedbackVerificationPrompt } from "../opencode/build-task-session-feedback-verification-prompt.js";
 import type { TrelloCard } from "../trello/trello-client.js";
 import { getSessionLogPath } from "../logging/session-log.js";
@@ -65,27 +62,18 @@ export async function runTaskSessionFeedbackVerification(
     );
   }
   assertOwnedTaskWorktreePath(options.project, options.worktreePath);
-  if (
-    (await options.git.getCurrentBranch(options.worktreePath)) !==
-    options.expectedBranch
-  ) {
+  if ((await options.git.getCurrentBranch(options.worktreePath)) !== options.expectedBranch) {
     throw new TaskSessionFeedbackVerificationError(
       "Feedback verification branch does not match the owned task branch",
     );
   }
-  const identity = await getTaskSessionSourceSnapshotIdentity(
-    options.git,
-    options.worktreePath,
-  );
+  const identity = await getTaskSessionSourceSnapshotIdentity(options.git, options.worktreePath);
   if (identity !== options.qualityEvidence.currentContentIdentity) {
     throw new TaskSessionFeedbackVerificationError(
       "Feedback verification source identity does not match current validation evidence",
     );
   }
-  const decision = decideHumanReviewPublication(
-    options.qualityEvidence,
-    undefined,
-  );
+  const decision = decideHumanReviewPublication(options.qualityEvidence, undefined);
   if (!decision.allowed) {
     throw new TaskSessionFeedbackVerificationError(
       `Feedback verification quality gates failed: ${decision.reasons.join("; ")}`,
@@ -104,17 +92,10 @@ export async function runTaskSessionFeedbackVerification(
   const prompt = buildTaskSessionFeedbackVerificationPrompt({
     projectId: options.project.id,
     card: options.card,
-    ...(options.approvedPlan === undefined
-      ? {}
-      : { approvedPlan: options.approvedPlan }),
+    ...(options.approvedPlan === undefined ? {} : { approvedPlan: options.approvedPlan }),
     currentHeadSha: headSha,
     contentIdentity: identity,
-    currentDiff: [
-      "Staged diff:",
-      stagedDiff,
-      "Unstaged diff:",
-      unstagedDiff,
-    ].join("\n"),
+    currentDiff: ["Staged diff:", stagedDiff, "Unstaged diff:", unstagedDiff].join("\n"),
     actionableFeedback: options.actionableFeedback,
     qualityEvidence: options.qualityEvidence,
   });
@@ -123,10 +104,8 @@ export async function runTaskSessionFeedbackVerification(
     response = await options.openCode.run({
       ...options.runOptions,
       sessionLogPath:
-        options.runOptions.sessionLogPath ??
-        getSessionLogPath(options.project.id, options.card.id),
-      sessionLabel:
-        options.runOptions.sessionLabel ?? "Task-session feedback verification",
+        options.runOptions.sessionLogPath ?? getSessionLogPath(options.project.id, options.card.id),
+      sessionLabel: options.runOptions.sessionLabel ?? "Task-session feedback verification",
       cwd: options.worktreePath,
       prompt,
       readOnly: true,
@@ -169,9 +148,7 @@ export async function runTaskSessionFeedbackVerification(
       cardId: options.card.id,
       headSha,
       contentIdentity: identity,
-      actionableFeedbackIds: options.actionableFeedback.map(
-        (item) => `${item.kind}:${item.id}`,
-      ),
+      actionableFeedbackIds: options.actionableFeedback.map((item) => `${item.kind}:${item.id}`),
     });
   } catch (error) {
     throw new TaskSessionFeedbackVerificationError(
@@ -193,9 +170,7 @@ export async function runAdvisoryTaskSessionFeedbackVerification(
       !(
         error.message.startsWith("Independent feedback verifier returned") ||
         error.message.startsWith("Independent feedback verification exited") ||
-        error.message.startsWith(
-          "Independent feedback verification execution unavailable",
-        )
+        error.message.startsWith("Independent feedback verification execution unavailable")
       )
     )
       throw error;
@@ -224,8 +199,7 @@ export async function runAdvisoryTaskSessionFeedbackVerification(
       dispositions: options.actionableFeedback.map((entry) => ({
         feedbackId: `${entry.kind}:${entry.id}`,
         status: "uncertain" as const,
-        reason:
-          "Independent AI feedback verification was inconclusive; human review required",
+        reason: "Independent AI feedback verification was inconclusive; human review required",
       })),
     };
   }

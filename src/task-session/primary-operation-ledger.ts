@@ -1,10 +1,7 @@
 import { TaskExecutionStore } from "./task-execution-store.js";
 import type { TaskExecutionRecord } from "./task-execution-record.js";
 import { OPERATION_RECOVERY_MAX_EXECUTIONS } from "./operation-recovery-policy.js";
-import {
-  redactSecrets,
-  sanitizeControlledText,
-} from "../security/redact-secrets.js";
+import { redactSecrets, sanitizeControlledText } from "../security/redact-secrets.js";
 import type { OpenCodeRunResult } from "../opencode/opencode-client.js";
 
 export class PrimaryOperationBlockedError extends Error {
@@ -23,18 +20,13 @@ export class PrimaryOperationExhaustedError extends PrimaryOperationBlockedError
   }
 }
 
-function validateLedgerIdentifiers(
-  operationId: string,
-  activity: string,
-): void {
+function validateLedgerIdentifiers(operationId: string, activity: string): void {
   for (const [label, value] of [
     ["operation ID", operationId],
     ["activity", activity],
   ] as const) {
     if (Buffer.byteLength(value, "utf8") > 1_024)
-      throw new PrimaryOperationBlockedError(
-        `Primary operation ${label} exceeds 1024 bytes`,
-      );
+      throw new PrimaryOperationBlockedError(`Primary operation ${label} exceeds 1024 bytes`);
   }
 }
 
@@ -90,16 +82,14 @@ export function beginPrimaryExecution(
 ): TaskExecutionRecord {
   validateLedgerIdentifiers(operationId, activity);
   const record = store.read(cardId);
-  if (!record)
-    throw new PrimaryOperationBlockedError("Task execution record is missing");
+  if (!record) throw new PrimaryOperationBlockedError("Task execution record is missing");
   const operations = { ...(record.primaryOperations ?? {}) };
   // A pending dispatch owns the task's primary-operation slot. Caller-generated
   // counters can reset (or change after a restart), so checking only the
   // requested ID would let a different ID bypass an ambiguous prior operation.
   const unresolved = Object.values(operations).find(
     (operation) =>
-      operation !== undefined &&
-      ["intent", "dispatched", "ambiguous"].includes(operation.status),
+      operation !== undefined && ["intent", "dispatched", "ambiguous"].includes(operation.status),
   );
   if (unresolved && unresolved.id !== operationId)
     throw new PrimaryOperationBlockedError(
@@ -110,11 +100,7 @@ export function beginPrimaryExecution(
     throw new PrimaryOperationBlockedError(
       "Primary operation ID is already assigned to another activity",
     );
-  if (
-    prior?.status === "dispatched" ||
-    prior?.status === "ambiguous" ||
-    prior?.status === "intent"
-  )
+  if (prior?.status === "dispatched" || prior?.status === "ambiguous" || prior?.status === "intent")
     throw new PrimaryOperationBlockedError(
       `Primary operation ${operationId} has unresolved dispatch state`,
     );
@@ -131,10 +117,7 @@ export function beginPrimaryExecution(
       `Primary operation ${operationId} lacks proof that its prior process stopped`,
     );
   const executions = (prior?.executions ?? 0) + 1;
-  if (
-    (prior?.failureExecutions ?? prior?.executions ?? 0) >=
-    OPERATION_RECOVERY_MAX_EXECUTIONS
-  ) {
+  if ((prior?.failureExecutions ?? prior?.executions ?? 0) >= OPERATION_RECOVERY_MAX_EXECUTIONS) {
     throw new PrimaryOperationExhaustedError(
       `Primary operation ${operationId} exhausted its execution budget`,
     );
@@ -167,8 +150,7 @@ export function completePrimaryExecution(
   outcome: "completed" | "failed" | "ambiguous" | "exhausted",
   result?: OpenCodeRunResult,
   diagnostic?: string,
-  classification:
-    "failure" | "dependency-outage" = result?.failureClassification ===
+  classification: "failure" | "dependency-outage" = result?.failureClassification ===
   "dependency-outage"
     ? "dependency-outage"
     : "failure",
@@ -179,23 +161,15 @@ export function completePrimaryExecution(
     throw new PrimaryOperationBlockedError(
       `No dispatched primary operation ${operationId} to complete`,
     );
-  if (
-    (outcome === "completed" || outcome === "exhausted") &&
-    result === undefined
-  )
-    throw new PrimaryOperationBlockedError(
-      `${outcome} requires an OpenCode result`,
-    );
+  if ((outcome === "completed" || outcome === "exhausted") && result === undefined)
+    throw new PrimaryOperationBlockedError(`${outcome} requires an OpenCode result`);
   const resultArtifact =
     result === undefined
       ? undefined
       : store.writePrimaryResultArtifact(operationId, sanitizeResult(result));
   if (outcome === "completed" && result?.exitCode !== 0)
-    throw new PrimaryOperationBlockedError(
-      "Completed primary operation requires exit code zero",
-    );
-  const failureExecutions =
-    operation.failureExecutions ?? operation.executions - 1;
+    throw new PrimaryOperationBlockedError("Completed primary operation requires exit code zero");
+  const failureExecutions = operation.failureExecutions ?? operation.executions - 1;
   const dependencyOutages =
     (operation.dependencyOutages ?? 0) +
     (outcome === "failed" && classification === "dependency-outage" ? 1 : 0);
@@ -245,9 +219,7 @@ export function reconcilePendingPrimaryExecution(
 ): TaskExecutionRecord {
   const record = store.read(cardId);
   if (result === "completed" && completedResult === undefined)
-    throw new PrimaryOperationBlockedError(
-      "Completed reconciliation requires replay result",
-    );
+    throw new PrimaryOperationBlockedError("Completed reconciliation requires replay result");
   const operation = record?.primaryOperations?.[operationId];
   if (
     record &&
@@ -262,9 +234,7 @@ export function reconcilePendingPrimaryExecution(
     !operation ||
     !["dispatched", "ambiguous", "intent", "failed"].includes(operation.status)
   )
-    throw new PrimaryOperationBlockedError(
-      `No pending primary operation ${operationId}`,
-    );
+    throw new PrimaryOperationBlockedError(`No pending primary operation ${operationId}`);
   if (
     result === "stopped" &&
     operation.status === "failed" &&
@@ -287,21 +257,17 @@ export function reconcilePendingPrimaryExecution(
             ? "failed"
             : "failed";
   const executions =
-    result === "not-dispatched"
-      ? Math.max(0, operation.executions - 1)
-      : operation.executions;
+    result === "not-dispatched" ? Math.max(0, operation.executions - 1) : operation.executions;
   const legacyFailureBaseline =
     operation.status === "failed" && operation.retrySafe === true
       ? operation.executions
       : Math.max(0, operation.executions - 1);
-  const priorFailureExecutions =
-    operation.failureExecutions ?? legacyFailureBaseline;
+  const priorFailureExecutions = operation.failureExecutions ?? legacyFailureBaseline;
   const verifiedFailure =
     result === "stopped" &&
     operation.status !== "intent" &&
     operation.executions > 0 &&
-    (stoppedClassification ?? operation.lastExecutionClassification) !==
-      "dependency-outage" &&
+    (stoppedClassification ?? operation.lastExecutionClassification) !== "dependency-outage" &&
     operation.accountedExecution !== operation.executions &&
     !(
       operation.failureExecutions === undefined &&
@@ -309,9 +275,7 @@ export function reconcilePendingPrimaryExecution(
       operation.retrySafe === true
     );
   const failureExecutions = priorFailureExecutions + (verifiedFailure ? 1 : 0);
-  const exhausted =
-    result === "stopped" &&
-    failureExecutions >= OPERATION_RECOVERY_MAX_EXECUTIONS;
+  const exhausted = result === "stopped" && failureExecutions >= OPERATION_RECOVERY_MAX_EXECUTIONS;
   const operations: NonNullable<TaskExecutionRecord["primaryOperations"]> = {
     ...record.primaryOperations,
     [operationId]: {
@@ -329,12 +293,8 @@ export function reconcilePendingPrimaryExecution(
             accountedExecution: operation.executions,
           }
         : {}),
-      ...(result === "stopped" || result === "not-dispatched"
-        ? { retrySafe: true }
-        : {}),
-      ...(result === "completed" &&
-      completedResult !== undefined &&
-      completedResult.exitCode === 0
+      ...(result === "stopped" || result === "not-dispatched" ? { retrySafe: true } : {}),
+      ...(result === "completed" && completedResult !== undefined && completedResult.exitCode === 0
         ? {
             resultArtifact: store.writePrimaryResultArtifact(
               operationId,
@@ -397,17 +357,13 @@ export function getCompletedPrimaryExecutionResult(
 
 function sanitizeResult(
   result: OpenCodeRunResult,
-): NonNullable<
-  NonNullable<TaskExecutionRecord["primaryOperations"]>[string]["result"]
-> {
+): NonNullable<NonNullable<TaskExecutionRecord["primaryOperations"]>[string]["result"]> {
   for (const [label, value] of [
     ["process execution ID", result.processExecutionId],
     ["session ID", result.sessionId],
   ] as const)
     if (value !== undefined && Buffer.byteLength(value, "utf8") > 1_024)
-      throw new PrimaryOperationBlockedError(
-        `Primary operation ${label} exceeds 1024 bytes`,
-      );
+      throw new PrimaryOperationBlockedError(`Primary operation ${label} exceeds 1024 bytes`);
   const safe = {
     exitCode: result.exitCode,
     output: sanitizeControlledText(redactSecrets(result.output)),

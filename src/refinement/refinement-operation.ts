@@ -64,15 +64,10 @@ export async function runRefinementOperation(input: {
       input.refreshAttachments,
     ));
 
-  input.cardLog.event(
-    `OpenCode refinement completed with classification: ${result.type}`,
-  );
+  input.cardLog.event(`OpenCode refinement completed with classification: ${result.type}`);
 
   const prepareCompletion = () => {
-    if (
-      input.emailNotifier &&
-      (input.emailNotifier.isEventEnabled?.("refinementComplete") ?? true)
-    )
+    if (input.emailNotifier && (input.emailNotifier.isEventEnabled?.("refinementComplete") ?? true))
       enqueueNotification(
         input.emailNotifier,
         input.project.id,

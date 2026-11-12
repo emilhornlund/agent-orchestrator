@@ -35,20 +35,13 @@ import {
 } from "../coordination/project-registry.js";
 import { validateGitAndOpenCode } from "./validate-toolchain.js";
 import { ProjectResourceError } from "./project-resource-error.js";
-import {
-  RunRegistry,
-  RunStore,
-  type RunStoreLease,
-} from "../task-session/run-store.js";
+import { RunRegistry, RunStore, type RunStoreLease } from "../task-session/run-store.js";
 import {
   inventoryLegacyProject,
   legacyAttemptId,
   migrateLegacyProject,
 } from "../task-session/legacy-state-import.js";
-import {
-  isConclusiveOperationResolution,
-  type RunRecord,
-} from "../task-session/run-record.js";
+import { isConclusiveOperationResolution, type RunRecord } from "../task-session/run-record.js";
 import {
   ProjectRunAuthority,
   type ProjectRunWorkerContext,
@@ -70,14 +63,8 @@ export interface StartupDependencies {
 }
 
 export interface StartupOperations {
-  validateToolchain?: (
-    commands: CommandRunner,
-    timeoutMilliseconds?: number,
-  ) => Promise<void>;
-  validateGitHubCli: (
-    github: GitHubClient,
-    projects: Config["projects"],
-  ) => Promise<void>;
+  validateToolchain?: (commands: CommandRunner, timeoutMilliseconds?: number) => Promise<void>;
+  validateGitHubCli: (github: GitHubClient, projects: Config["projects"]) => Promise<void>;
   validateProjectTrello: typeof validateProjectTrello;
   validateProjectGitHub?: (
     github: GitHubClient,
@@ -88,18 +75,13 @@ export interface StartupOperations {
 
 const defaultStartupOperations: StartupOperations = {
   validateToolchain: validateGitAndOpenCode,
-  validateGitHubCli: (github, projects) =>
-    github.validateCliCompatibility(projects),
+  validateGitHubCli: (github, projects) => github.validateCliCompatibility(projects),
   validateProjectTrello,
-  validateProjectGitHub: (github, project) =>
-    github.validateRepositoryAccess(project),
+  validateProjectGitHub: (github, project) => github.validateRepositoryAccess(project),
   runOrchestrator,
 };
 
-function runBestEffortStartupCleanup(
-  operation: string,
-  cleanup: () => void,
-): void {
+function runBestEffortStartupCleanup(operation: string, cleanup: () => void): void {
   try {
     cleanup();
   } catch (error) {
@@ -113,9 +95,7 @@ function runBestEffortStartupCleanup(
   }
 }
 
-export function pinnedIdentityFromHostPin(
-  pin: HostProjectPin,
-): RunRecord["pinned"] {
+export function pinnedIdentityFromHostPin(pin: HostProjectPin): RunRecord["pinned"] {
   return {
     integrationId: pin.integrationId,
     projectId: pin.projectId,
@@ -163,17 +143,13 @@ function projectMatchesHostPin(
     pin.integrationId ===
       JSON.stringify({
         trelloBoardId: project.trello.boardId.trim(),
-        githubRepository: canonicalizeGitHubRepository(
-          project.repository.github,
-        ),
+        githubRepository: canonicalizeGitHubRepository(project.repository.github),
       }) &&
     JSON.stringify(pin.trello) === JSON.stringify(project.trello) &&
-    pin.repository.github ===
-      canonicalizeGitHubRepository(project.repository.github) &&
+    pin.repository.github === canonicalizeGitHubRepository(project.repository.github) &&
     pin.repository.path === path.resolve(project.repository.path) &&
     pin.repository.defaultBranch === project.repository.defaultBranch &&
-    pin.repository.worktreeRoot ===
-      path.resolve(project.repository.worktreeRoot) &&
+    pin.repository.worktreeRoot === path.resolve(project.repository.worktreeRoot) &&
     pin.storageRoot === path.resolve(storageRoot)
   );
 }
@@ -187,18 +163,13 @@ function isVerifiedTerminal(record: RunRecord): boolean {
   );
 }
 
-function runLeaseForPin(
-  pin: HostProjectPin,
-  lease: ProjectOwnershipLease,
-): RunStoreLease {
+function runLeaseForPin(pin: HostProjectPin, lease: ProjectOwnershipLease): RunStoreLease {
   const integrationId = JSON.stringify({
     trelloBoardId: lease.identity.trelloBoardId,
     githubRepository: lease.identity.githubRepository,
   });
   if (integrationId !== pin.integrationId)
-    throw new Error(
-      `Lease identity does not match pinned project ${pin.projectId}`,
-    );
+    throw new Error(`Lease identity does not match pinned project ${pin.projectId}`);
   return {
     integrationId,
     instanceId: lease.instanceId,
@@ -217,23 +188,14 @@ export async function reconcilePinnedProjectAttempt(options: {
   const { config, project, pin, lease } = options;
   const skipLegacyImport =
     options.skipLegacyImport === true ||
-    (
-      await readHistoricalProjectPins(
-        config.workflow.coordinationRoot!,
-        project.id,
-      )
-    ).some(
+    (await readHistoricalProjectPins(config.workflow.coordinationRoot!, project.id)).some(
       (historical) =>
         historical.storageRoot === pin.storageRoot &&
         historical.integrationId !== pin.integrationId,
     );
   const pinned = pinnedIdentityFromHostPin(pin);
   const runLease = runLeaseForPin(pin, lease);
-  const registry = new RunRegistry(
-    pin.storageRoot,
-    pin.integrationId,
-    runLease,
-  );
+  const registry = new RunRegistry(pin.storageRoot, pin.integrationId, runLease);
 
   if (pin.pendingAttempt) {
     const candidateStore = new RunStore(
@@ -250,29 +212,16 @@ export async function reconcilePinnedProjectAttempt(options: {
       // retain their conservative recovery behavior.
       const pointer = registry.reconcile();
       const prior = pointer
-        ? RunStore.openWithPersistedIdentity(
-            pin.storageRoot,
-            pointer.attemptId,
-            runLease,
-          )?.read()
+        ? RunStore.openWithPersistedIdentity(pin.storageRoot, pointer.attemptId, runLease)?.read()
         : null;
       if (
         prior &&
-        (!["done", "refined", "failed", "cancelled"].includes(
-          prior.lifecycle,
-        ) ||
+        (!["done", "refined", "failed", "cancelled"].includes(prior.lifecycle) ||
           prior.terminalSync !== "verified" ||
           !prior.pendingOperations.every(isConclusiveOperationResolution))
       )
-        throw new Error(
-          "Interrupted creation has a still-active prior attempt",
-        );
-      await updateProjectActiveAttempt(
-        config.workflow.coordinationRoot!,
-        project.id,
-        lease,
-        null,
-      );
+        throw new Error("Interrupted creation has a still-active prior attempt");
+      await updateProjectActiveAttempt(config.workflow.coordinationRoot!, project.id, lease, null);
       return prior ?? null;
     }
     // A durable canonical candidate is authoritative provenance. In particular,
@@ -302,8 +251,7 @@ export async function reconcilePinnedProjectAttempt(options: {
           throw new Error("Pending legacy migration has multiple task sources");
         if (
           taskSources.length === 1 &&
-          legacyAttemptId(taskSources[0]!.parsed) !==
-            pin.pendingAttempt.attemptId
+          legacyAttemptId(taskSources[0]!.parsed) !== pin.pendingAttempt.attemptId
         )
           throw new Error(
             "Pending attempt identity does not match deterministic legacy migration candidate",
@@ -314,12 +262,7 @@ export async function reconcilePinnedProjectAttempt(options: {
             project: projectUsingHostPin(project, pin),
             pinned,
             lease: runLease,
-            store: new RunStore(
-              pin.storageRoot,
-              pin.pendingAttempt.attemptId,
-              pinned,
-              runLease,
-            ),
+            store: new RunStore(pin.storageRoot, pin.pendingAttempt.attemptId, pinned, runLease),
             storeForAttempt: (attemptId) =>
               new RunStore(pin.storageRoot, attemptId, pinned, runLease),
             registry,
@@ -356,9 +299,7 @@ export async function reconcilePinnedProjectAttempt(options: {
         const priorRecord = priorStore?.read();
         if (
           !priorRecord ||
-          !["done", "refined", "failed", "cancelled"].includes(
-            priorRecord.lifecycle,
-          ) ||
+          !["done", "refined", "failed", "cancelled"].includes(priorRecord.lifecycle) ||
           priorRecord.terminalSync !== "verified"
         )
           throw new Error(
@@ -369,12 +310,10 @@ export async function reconcilePinnedProjectAttempt(options: {
         registry.handoff(candidateStore, null, 1);
       }
     }
-    await updateProjectActiveAttempt(
-      config.workflow.coordinationRoot!,
-      project.id,
-      lease,
-      { attemptId: candidate.attemptId, storageRoot: pin.storageRoot },
-    );
+    await updateProjectActiveAttempt(config.workflow.coordinationRoot!, project.id, lease, {
+      attemptId: candidate.attemptId,
+      storageRoot: pin.storageRoot,
+    });
   } else {
     const existingPointer = registry.read();
     let priorIsTerminal = existingPointer === null;
@@ -387,16 +326,11 @@ export async function reconcilePinnedProjectAttempt(options: {
       const priorRecord = priorStore?.read();
       priorIsTerminal = Boolean(
         priorRecord &&
-        ["done", "refined", "failed", "cancelled"].includes(
-          priorRecord.lifecycle,
-        ) &&
+        ["done", "refined", "failed", "cancelled"].includes(priorRecord.lifecycle) &&
         priorRecord.terminalSync === "verified" &&
         priorRecord.pendingOperations.every(isConclusiveOperationResolution),
       );
-      if (!priorRecord)
-        throw new Error(
-          `Prior attempt ${existingPointer.attemptId} is missing`,
-        );
+      if (!priorRecord) throw new Error(`Prior attempt ${existingPointer.attemptId} is missing`);
       if (priorIsTerminal && pin.activeAttempt !== null)
         await updateProjectActiveAttempt(
           config.workflow.coordinationRoot!,
@@ -419,20 +353,16 @@ export async function reconcilePinnedProjectAttempt(options: {
           project: projectUsingHostPin(project, pin),
         });
         if (inventory.blockers.length)
-          throw new Error(
-            `Legacy project migration blocked: ${inventory.blockers.join("; ")}`,
-          );
+          throw new Error(`Legacy project migration blocked: ${inventory.blockers.join("; ")}`);
         const taskSources = inventory.records.filter(
           (source) => source.family === "task-executions",
         );
         if (taskSources.length === 1) {
           const attemptId = legacyAttemptId(taskSources[0]!.parsed);
-          await prepareProjectAttempt(
-            config.workflow.coordinationRoot!,
-            project.id,
-            lease,
-            { attemptId, storageRoot: pin.storageRoot },
-          );
+          await prepareProjectAttempt(config.workflow.coordinationRoot!, project.id, lease, {
+            attemptId,
+            storageRoot: pin.storageRoot,
+          });
         }
       }
       migrateLegacyProject({
@@ -440,14 +370,8 @@ export async function reconcilePinnedProjectAttempt(options: {
         project: projectUsingHostPin(project, pin),
         pinned,
         lease: runLease,
-        store: new RunStore(
-          pin.storageRoot,
-          `migration-${project.id}`,
-          pinned,
-          runLease,
-        ),
-        storeForAttempt: (attemptId) =>
-          new RunStore(pin.storageRoot, attemptId, pinned, runLease),
+        store: new RunStore(pin.storageRoot, `migration-${project.id}`, pinned, runLease),
+        storeForAttempt: (attemptId) => new RunStore(pin.storageRoot, attemptId, pinned, runLease),
         registry,
       });
     }
@@ -498,11 +422,7 @@ async function assertHistoricalPinsTerminal(
         token: lease.token,
         assertHeld: () => lease.assertHeld(),
       };
-      const registry = new RunRegistry(
-        pin.storageRoot,
-        pin.integrationId,
-        runLease,
-      );
+      const registry = new RunRegistry(pin.storageRoot, pin.integrationId, runLease);
       const pointer = registry.reconcile();
       if (!pointer) continue;
       const pointedStore = RunStore.openWithPersistedIdentity(
@@ -513,9 +433,7 @@ async function assertHistoricalPinsTerminal(
       const attempt = pointedStore?.read();
       if (
         !attempt ||
-        !["done", "refined", "failed", "cancelled"].includes(
-          attempt.lifecycle,
-        ) ||
+        !["done", "refined", "failed", "cancelled"].includes(attempt.lifecycle) ||
         attempt.terminalSync !== "verified" ||
         !attempt.pendingOperations.every(isConclusiveOperationResolution)
       )
@@ -540,16 +458,11 @@ export async function runStartup(
   const coordinationRoot = config.workflow.coordinationRoot;
   const namespaceId = config.workflow.coordinationNamespaceId;
   if (!coordinationRoot || !namespaceId) {
-    throw new Error(
-      "A provisioned coordinationRoot and coordinationNamespaceId are required",
-    );
+    throw new Error("A provisioned coordinationRoot and coordinationNamespaceId are required");
   }
   const previousPins = new Map<string, HostProjectPin>();
   for (const project of config.projects) {
-    const candidates = await readProjectPinCandidates(
-      coordinationRoot,
-      project.id,
-    );
+    const candidates = await readProjectPinCandidates(coordinationRoot, project.id);
     const currentPin = candidates[0];
     if (currentPin) previousPins.set(project.id, currentPin);
   }
@@ -566,12 +479,9 @@ export async function runStartup(
             trelloBoardId: project.trello.boardId,
             githubRepository: project.repository.github,
           };
-      leases.push(
-        await acquireProjectOwnership(coordinationRoot, identity, namespaceId),
-      );
+      leases.push(await acquireProjectOwnership(coordinationRoot, identity, namespaceId));
     }
-    const assertOwnership = (): void =>
-      leases.forEach((lease) => lease.assertHeld());
+    const assertOwnership = (): void => leases.forEach((lease) => lease.assertHeld());
     assertOwnership();
     const validateToolchain = () =>
       (operations.validateToolchain ?? validateGitAndOpenCode)(
@@ -591,8 +501,7 @@ export async function runStartup(
       config.projects.map((project, index) => ({
         projectId: project.id,
         assertHeld: () => leases[index]!.assertHeld(),
-        markTerminationAmbiguous: (pid) =>
-          leases[index]!.markProcessGroupAmbiguous(pid),
+        markTerminationAmbiguous: (pid) => leases[index]!.markProcessGroupAmbiguous(pid),
       })),
       () => operations.validateGitHubCli(dependencies.github, config.projects),
     );
@@ -620,16 +529,10 @@ export async function runStartup(
         let pin = priorPin;
         if (priorPin) runtimeProject = projectUsingHostPin(project, priorPin);
         else {
-          pin = (
-            await verifyAndPinProjects({ ...config, projects: [project] }, [
-              lease,
-            ])
-          )[0];
+          pin = (await verifyAndPinProjects({ ...config, projects: [project] }, [lease]))[0];
         }
         if (!pin) throw new Error(`Missing host project pin for ${project.id}`);
-        skipLegacyImport = (
-          await readHistoricalProjectPins(coordinationRoot, project.id)
-        ).some(
+        skipLegacyImport = (await readHistoricalProjectPins(coordinationRoot, project.id)).some(
           (historical) =>
             historical.storageRoot === pin!.storageRoot &&
             historical.integrationId !== pin!.integrationId,
@@ -643,12 +546,10 @@ export async function runStartup(
           skipLegacyImport,
         });
         if (current && !isVerifiedTerminal(current)) {
-          await updateProjectActiveAttempt(
-            coordinationRoot,
-            project.id,
-            lease,
-            { attemptId: current.attemptId, storageRoot: pin.storageRoot },
-          );
+          await updateProjectActiveAttempt(coordinationRoot, project.id, lease, {
+            attemptId: current.attemptId,
+            storageRoot: pin.storageRoot,
+          });
           projectRunContexts.set(
             project.id,
             !configurationMatches && priorPin
@@ -676,12 +577,7 @@ export async function runStartup(
         }
 
         if (pin.activeAttempt !== null)
-          await updateProjectActiveAttempt(
-            coordinationRoot,
-            project.id,
-            lease,
-            null,
-          );
+          await updateProjectActiveAttempt(coordinationRoot, project.id, lease, null);
 
         if (priorPin && !configurationMatches) {
           await lease.release();
@@ -700,15 +596,8 @@ export async function runStartup(
           );
           leases[index] = lease;
           runtimeProject = project;
-          pin = (
-            await verifyAndPinProjects({ ...config, projects: [project] }, [
-              lease,
-            ])
-          )[0];
-          if (!pin)
-            throw new Error(
-              `Updated host project pin is missing for ${project.id}`,
-            );
+          pin = (await verifyAndPinProjects({ ...config, projects: [project] }, [lease]))[0];
+          if (!pin) throw new Error(`Updated host project pin is missing for ${project.id}`);
           current = await reconcilePinnedProjectAttempt({
             config,
             project: runtimeProject,
@@ -720,12 +609,10 @@ export async function runStartup(
                 priorPin.integrationId !== pin.integrationId),
           });
           if (current && !isVerifiedTerminal(current)) {
-            await updateProjectActiveAttempt(
-              coordinationRoot,
-              project.id,
-              lease,
-              { attemptId: current.attemptId, storageRoot: pin.storageRoot },
-            );
+            await updateProjectActiveAttempt(coordinationRoot, project.id, lease, {
+              attemptId: current.attemptId,
+              storageRoot: pin.storageRoot,
+            });
             projectRunContexts.set(project.id, {
               projectLease: lease,
               pinned: current.pinned,
@@ -785,9 +672,7 @@ export async function runStartup(
         ],
         [...projectRunContexts.values()]
           .flatMap((context) =>
-            context.pinned
-              ? [context.authority?.store.read()?.attemptId ?? ""]
-              : [],
+            context.pinned ? [context.authority?.store.read()?.attemptId ?? ""] : [],
           )
           .filter(Boolean),
       ),
@@ -801,14 +686,10 @@ export async function runStartup(
       ),
     );
     runBestEffortStartupCleanup("persisted-state temporary files", () =>
-      cleanupPersistedStateTemporaryFiles(
-        config.projects,
-        config.workflow.contextRoot,
-      ),
+      cleanupPersistedStateTemporaryFiles(config.projects, config.workflow.contextRoot),
     );
 
-    const githubCredentials =
-      dependencies.githubCredentials ?? new GitHubCredentialProvider();
+    const githubCredentials = dependencies.githubCredentials ?? new GitHubCredentialProvider();
 
     const leaseByProjectId = new Map(
       config.projects.map((project, index) => [project.id, leases[index]!]),
@@ -836,8 +717,7 @@ export async function runStartup(
                 githubCredentials,
               );
               await (
-                operations.validateProjectGitHub ??
-                defaultStartupOperations.validateProjectGitHub!
+                operations.validateProjectGitHub ?? defaultStartupOperations.validateProjectGitHub!
               )(dependencies.github, project);
             },
           ),
@@ -849,15 +729,8 @@ export async function runStartup(
           () => operations.validateProjectTrello(dependencies.trello, project),
         );
       } catch (error) {
-        if (
-          error instanceof ProjectResourceError &&
-          error.disposition === "invalid"
-        )
-          throw error;
-        if (
-          !(error instanceof ProjectResourceError) &&
-          !isRetryableTrelloError(error)
-        ) {
+        if (error instanceof ProjectResourceError && error.disposition === "invalid") throw error;
+        if (!(error instanceof ProjectResourceError) && !isRetryableTrelloError(error)) {
           throw error;
         }
 
@@ -889,8 +762,7 @@ export async function runStartup(
             }
 
             const lease = leaseByProjectId.get(project.id);
-            if (!lease)
-              throw new Error(`No project lease exists for ${project.id}`);
+            if (!lease) throw new Error(`No project lease exists for ${project.id}`);
             await withGitHubOperationProject(project, () =>
               ProjectRunAuthority.withProjectLease(
                 project.id,
@@ -917,9 +789,7 @@ export async function runStartup(
               () => operations.validateProjectTrello(trello, project),
             );
             pendingProjectValidations.delete(project.id);
-            logger
-              .child({ projectId: project.id })
-              .event("Trello configuration: OK");
+            logger.child({ projectId: project.id }).event("Trello configuration: OK");
           };
 
     const runtimeConfig = { ...config, projects: effectiveProjects };

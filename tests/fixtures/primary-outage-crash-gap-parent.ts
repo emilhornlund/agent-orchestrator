@@ -47,13 +47,7 @@ if (!store.read(cardId)) {
     updatedAt: now,
   });
   for (let count = 0; count < 2; count += 1) {
-    beginPrimaryExecution(
-      store,
-      cardId,
-      operationId,
-      "implementation",
-      "ses_primary",
-    );
+    beginPrimaryExecution(store, cardId, operationId, "implementation", "ses_primary");
     completePrimaryExecution(store, cardId, operationId, "failed", {
       exitCode: 1,
       output: "ordinary implementation failure",
@@ -97,8 +91,7 @@ try {
             store,
             cardId,
             operationId,
-            store.read(cardId)?.primaryOperations?.[operationId]?.executions ??
-              -1,
+            store.read(cardId)?.primaryOperations?.[operationId]?.executions ?? -1,
             evidence,
           );
         },
@@ -116,23 +109,17 @@ try {
   );
 } catch (error) {
   if (phase === "recover") {
-    const proof = await inspectPrimaryOperationEvidence(
-      store,
-      cardId,
-      operationId,
-      {
-        trustedRoot: process.env.PRIMARY_RUNTIME_ROOT!,
-        cwd,
-      },
-    );
+    const proof = await inspectPrimaryOperationEvidence(store, cardId, operationId, {
+      trustedRoot: process.env.PRIMARY_RUNTIME_ROOT!,
+      cwd,
+    });
     if (
       proof.status !== "stopped-after-dispatch" ||
       proof.failureClassification !== "dependency-outage"
     )
-      throw new Error(
-        "Fresh parent did not recover verified dependency-outage evidence",
-        { cause: error },
-      );
+      throw new Error("Fresh parent did not recover verified dependency-outage evidence", {
+        cause: error,
+      });
     const before = store.read(cardId)?.primaryOperations?.[operationId];
     reconcilePendingPrimaryExecution(
       store,
@@ -152,10 +139,9 @@ try {
     );
     const after = store.read(cardId)?.primaryOperations?.[operationId];
     if (JSON.stringify(before) !== JSON.stringify(after))
-      throw new Error(
-        "Repeated stopped-proof reconciliation changed ledger accounting",
-        { cause: error },
-      );
+      throw new Error("Repeated stopped-proof reconciliation changed ledger accounting", {
+        cause: error,
+      });
   }
   process.stdout.write(
     `${JSON.stringify({ status: "waiting", error: String(error), entry: store.read(cardId)?.primaryOperations?.[operationId] })}\n`,

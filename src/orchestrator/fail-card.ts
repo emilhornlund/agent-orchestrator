@@ -72,8 +72,7 @@ export async function failCard(
   if (isRetryableTrelloError(originalError)) {
     annotateFailure(originalError, {
       ...failureContext,
-      handlingOutcome:
-        "retryable Trello failure; card state left unchanged for reconciliation",
+      handlingOutcome: "retryable Trello failure; card state left unchanged for reconciliation",
     });
     cardLog.warn(
       `Retryable Trello failure; leaving card in its last known state and deferring failure handling: ${originalError.message}`,
@@ -100,13 +99,8 @@ export async function failCard(
       : {}),
   });
 
-  if (originalError instanceof NotificationPreparationError)
-    throw originalError;
-  if (
-    card &&
-    emailNotifier &&
-    (emailNotifier.isEventEnabled?.("failed") ?? true)
-  )
+  if (originalError instanceof NotificationPreparationError) throw originalError;
+  if (card && emailNotifier && (emailNotifier.isEventEnabled?.("failed") ?? true))
     enqueueNotification(
       emailNotifier,
       project.id,
@@ -170,9 +164,7 @@ export async function failCard(
     cardFailureHandled: true,
     handlingOutcome: "card moved to Failed",
   });
-  cardLog.event(
-    "Failure handling: card moved to Failed; adding failure comment",
-  );
+  cardLog.event("Failure handling: card moved to Failed; adding failure comment");
 
   if (card !== undefined) {
     await notifyFailed(
@@ -214,8 +206,7 @@ export async function failCard(
     });
     cardLog.event("Failure handling: failure comment added to Trello card");
   } catch (commentError) {
-    if (commentError instanceof WorkflowMutationWaitingError)
-      throw commentError;
+    if (commentError instanceof WorkflowMutationWaitingError) throw commentError;
     const commentFailure = toFailureError(commentError);
 
     annotateFailure(originalError, {

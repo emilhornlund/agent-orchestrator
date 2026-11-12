@@ -15,11 +15,7 @@ import type { TaskSessionValidationResult } from "./run-task-session-validation.
 
 type Identity = Pick<
   PrMaintenanceOperation,
-  | "projectId"
-  | "cardId"
-  | "pullRequest"
-  | "expectedRemoteHead"
-  | "targetBaseHead"
+  "projectId" | "cardId" | "pullRequest" | "expectedRemoteHead" | "targetBaseHead"
 >;
 
 export interface VerifyPreparedPrMaintenanceOptions {
@@ -29,10 +25,7 @@ export interface VerifyPreparedPrMaintenanceOptions {
   maintenanceStore: PrMaintenanceStore;
   git: Pick<
     GitClient,
-    | "getHeadSha"
-    | "getHeadTrackedFiles"
-    | "getIndexEntries"
-    | "getUntrackedFiles"
+    "getHeadSha" | "getHeadTrackedFiles" | "getIndexEntries" | "getUntrackedFiles"
   >;
   commands: CommandRunner;
   signal: AbortSignal;
@@ -84,37 +77,24 @@ export async function verifyPreparedPrMaintenance(
   }
   maintenanceStore.requireOwnedActive(operation.operationId, identity);
   if ((await options.git.getHeadSha(worktreePath)) !== preparedHead)
-    throw new Error(
-      "Prepared maintenance worktree head changed before verification",
-    );
+    throw new Error("Prepared maintenance worktree head changed before verification");
   if (
     options.requirementIds.length === 0 ||
     new Set(options.requirementIds).size !== options.requirementIds.length
   )
-    throw new Error(
-      "Approved maintenance requirements must be unique and nonempty",
-    );
-  if (
-    !Number.isSafeInteger(options.timeoutMilliseconds) ||
-    options.timeoutMilliseconds < 1
-  )
+    throw new Error("Approved maintenance requirements must be unique and nonempty");
+  if (!Number.isSafeInteger(options.timeoutMilliseconds) || options.timeoutMilliseconds < 1)
     throw new Error("Verification timeout must be positive");
 
   const startedAt = new Date().toISOString();
-  let contentIdentity = await getTaskSessionSourceSnapshotIdentity(
-    options.git,
-    worktreePath,
-  );
+  let contentIdentity = await getTaskSessionSourceSnapshotIdentity(options.git, worktreePath);
   maintenanceStore.recordQualityVerification(operation.operationId, identity, {
     status: "running",
     preparedHead,
     contentIdentity,
     startedAt,
   });
-  const runGate = async (
-    command: string,
-    label: string,
-  ): Promise<TaskSessionValidationResult> => {
+  const runGate = async (command: string, label: string): Promise<TaskSessionValidationResult> => {
     const gateStartedAt = new Date().toISOString();
     const result = await options.commands.run({
       cwd: worktreePath,
@@ -122,13 +102,9 @@ export async function verifyPreparedPrMaintenance(
       signal: options.signal,
       timeoutMilliseconds: options.timeoutMilliseconds,
       captureOutput: true,
-      ...(options.secretValues === undefined
-        ? {}
-        : { secretValues: options.secretValues }),
+      ...(options.secretValues === undefined ? {} : { secretValues: options.secretValues }),
       sessionLabel: label,
-      sessionLogPath:
-        options.sessionLogPath ??
-        getSessionLogPath(project.id, operation.cardId),
+      sessionLogPath: options.sessionLogPath ?? getSessionLogPath(project.id, operation.cardId),
     });
     return {
       command,
@@ -152,22 +128,14 @@ export async function verifyPreparedPrMaintenance(
       project.repository.validationCommand === undefined ||
       project.repository.validationCommand.trim() === ""
     )
-      throw new Error(
-        "Prepared maintenance requires a configured validation command",
-      );
-    validation = await runGate(
-      project.repository.validationCommand,
-      "PR maintenance validation",
-    );
+      throw new Error("Prepared maintenance requires a configured validation command");
+    validation = await runGate(project.repository.validationCommand, "PR maintenance validation");
     if (validation.status !== "passed")
       throw new Error(
         `Validation failed (exit code ${validation.exitCode}); diagnostics are available in session log ${options.sessionLogPath ?? getSessionLogPath(project.id, operation.cardId)}`,
       );
     if (project.repository.coverageCommand !== undefined) {
-      coverage = await runGate(
-        project.repository.coverageCommand,
-        "PR maintenance coverage",
-      );
+      coverage = await runGate(project.repository.coverageCommand, "PR maintenance coverage");
       if (coverage.status !== "passed")
         throw new Error(
           `Coverage failed (exit code ${coverage.exitCode}); diagnostics are available in session log ${options.sessionLogPath ?? getSessionLogPath(project.id, operation.cardId)}`,
@@ -188,9 +156,7 @@ export async function verifyPreparedPrMaintenance(
     if (
       review.verdict !== "pass" ||
       review.reviewedContentIdentity !== contentIdentity ||
-      options.requirementIds.some(
-        (id) => assessed.get(id)?.status !== "satisfied",
-      ) ||
+      options.requirementIds.some((id) => assessed.get(id)?.status !== "satisfied") ||
       assessed.size !== options.requirementIds.length ||
       review.blockingFindings.length > 0
     )
@@ -198,15 +164,10 @@ export async function verifyPreparedPrMaintenance(
         "Independent implementation review failed or did not verify every approved requirement",
       );
     if (
-      (await getTaskSessionSourceSnapshotIdentity(
-        options.git,
-        worktreePath,
-      )) !== contentIdentity ||
+      (await getTaskSessionSourceSnapshotIdentity(options.git, worktreePath)) !== contentIdentity ||
       (await options.git.getHeadSha(worktreePath)) !== preparedHead
     )
-      throw new Error(
-        "Prepared source identity changed during quality verification",
-      );
+      throw new Error("Prepared source identity changed during quality verification");
     const evidence = {
       preparedHead,
       contentIdentity,
@@ -216,20 +177,16 @@ export async function verifyPreparedPrMaintenance(
       startedAt,
       completedAt: new Date().toISOString(),
     };
-    maintenanceStore.recordQualityVerification(
-      operation.operationId,
-      identity,
-      {
-        status: "passed",
-        preparedHead,
-        contentIdentity,
-        startedAt,
-        completedAt: evidence.completedAt,
-        validation,
-        coverage,
-        review,
-      },
-    );
+    maintenanceStore.recordQualityVerification(operation.operationId, identity, {
+      status: "passed",
+      preparedHead,
+      contentIdentity,
+      startedAt,
+      completedAt: evidence.completedAt,
+      validation,
+      coverage,
+      review,
+    });
     return evidence;
   } catch (error) {
     const diagnostic = presentExternalDiagnostic(
@@ -243,29 +200,22 @@ export async function verifyPreparedPrMaintenance(
         ? "uncertain"
         : "failed";
     try {
-      const currentIdentity = await getTaskSessionSourceSnapshotIdentity(
-        options.git,
-        worktreePath,
-      );
+      const currentIdentity = await getTaskSessionSourceSnapshotIdentity(options.git, worktreePath);
       if (currentIdentity !== contentIdentity) status = "uncertain";
       contentIdentity = currentIdentity;
     } catch {
       status = "uncertain";
     }
-    maintenanceStore.recordQualityVerification(
-      operation.operationId,
-      identity,
-      {
-        status,
-        preparedHead,
-        contentIdentity,
-        startedAt,
-        completedAt: new Date().toISOString(),
-        ...(validation === undefined ? {} : { validation }),
-        coverage,
-        diagnostic,
-      },
-    );
+    maintenanceStore.recordQualityVerification(operation.operationId, identity, {
+      status,
+      preparedHead,
+      contentIdentity,
+      startedAt,
+      completedAt: new Date().toISOString(),
+      ...(validation === undefined ? {} : { validation }),
+      coverage,
+      diagnostic,
+    });
     throw error;
   }
 }

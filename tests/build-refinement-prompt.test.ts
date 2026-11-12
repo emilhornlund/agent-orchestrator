@@ -24,9 +24,7 @@ describe("buildRefinementPrompt", () => {
     const prompt = buildRefinementPrompt(createCard());
 
     expect(prompt).toContain("Original title: Inventory thing");
-    expect(prompt).toContain(
-      "Original description:\nPlayers need some kind of inventory support.",
-    );
+    expect(prompt).toContain("Original description:\nPlayers need some kind of inventory support.");
   });
 
   it("handles cards without a description", () => {
@@ -52,21 +50,15 @@ describe("buildRefinementPrompt", () => {
     const prompt = buildRefinementPrompt(createCard());
 
     expect(prompt).toContain(refinementResultRelativePath);
-    expect(prompt).toContain(
-      `"type": "${refinementResultContract.type.values.join(" | ")}"`,
-    );
+    expect(prompt).toContain(`"type": "${refinementResultContract.type.values.join(" | ")}"`);
     expect(prompt).toContain(
       "Validate the result object against this complete contract before writing it:",
     );
     expect(prompt).toContain(
       'The object must contain exactly these fields: "title", "description", "type".',
     );
-    expect(prompt).toContain(
-      "The file must contain valid JSON, not a Markdown code fence.",
-    );
-    expect(prompt).toContain(
-      "Do not use the agent response text as the refinement result.",
-    );
+    expect(prompt).toContain("The file must contain valid JSON, not a Markdown code fence.");
+    expect(prompt).toContain("Do not use the agent response text as the refinement result.");
   });
 
   it("forbids implementation and repository mutations", () => {

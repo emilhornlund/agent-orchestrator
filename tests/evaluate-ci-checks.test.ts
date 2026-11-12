@@ -37,7 +37,7 @@ function commitStatus(
   state: string,
   observedHeadSha = headSha,
   id = 1,
-): CiCheckObservation {
+): Extract<CiCheckObservation, { source: "commit-status" }> {
   return {
     source: "commit-status",
     id,
@@ -86,33 +86,88 @@ describe("evaluateCiChecks", () => {
     },
   );
 
-  it.each(["success", "pending", "failure"])(
-    "uses the newest same-head commit status (%s), not stale success/failure history",
-    (state) => {
-      const result = evaluate(
-        ["Tests"],
-        [
+  describe("commit status ordering", () => {
+    it.each([
+      { state: "success", expected: "passed" },
+      { state: "pending", expected: "waiting" },
+      { state: "failure", expected: "failed" },
+    ])(
+      "uses the newest same-head $state status in either observation order",
+      ({ state, expected }) => {
+        const checks = [
           commitStatus("Tests", "failure", headSha, 1),
           commitStatus("Tests", state, headSha, 2),
-        ],
-      );
-      expect(result.status).toBe(
-        state === "success"
-          ? "passed"
-          : state === "pending"
-            ? "waiting"
-            : "failed",
-      );
-    },
-  );
+        ];
+        expect(evaluate(["Tests"], checks).status).toBe(expected);
+        expect(evaluate(["Tests"], [...checks].reverse()).status).toBe(expected);
+      },
+    );
+
+    it("orders by creation time before using the ID as a tie-breaker", () => {
+      const checks = [
+        commitStatus("Tests", "failure", headSha, 10),
+        {
+          ...commitStatus("Tests", "success", headSha, 2),
+          createdAt: "2026-10-24T10:01:00Z",
+        },
+      ];
+      expect(evaluate(["Tests"], checks)).toMatchObject({ status: "passed" });
+      expect(evaluate(["Tests"], [...checks].reverse())).toMatchObject({
+        status: "passed",
+      });
+    });
+
+    it("retains the latest result independently for each context", () => {
+      const failed = commitStatus("Build", "error", headSha, 3);
+      expect(
+        evaluate(
+          ["Build", "Tests"],
+          [
+            commitStatus("Tests", "failure", headSha, 1),
+            commitStatus("Build", "success", headSha, 2),
+            failed,
+            commitStatus("Tests", "success", headSha, 4),
+          ],
+        ),
+      ).toMatchObject({ status: "failed", failures: [failed] });
+    });
+
+    it.each([
+      { createdAt: "not-a-timestamp" },
+      { id: 0 },
+      { id: 1.5 },
+      { id: Number.MAX_SAFE_INTEGER + 1 },
+    ])("fails closed on malformed ordering metadata %j", (metadata) => {
+      expect(
+        evaluate(
+          ["Tests"],
+          [
+            {
+              ...commitStatus("Tests", "success"),
+              ...metadata,
+            },
+          ],
+        ),
+      ).toMatchObject({
+        status: "uncertain",
+        diagnostic: "Commit status ordering is malformed",
+      });
+    });
+
+    it("fails closed on conflicting observations of the same status identity", () => {
+      expect(
+        evaluate(["Tests"], [commitStatus("Tests", "success"), commitStatus("Tests", "failure")]),
+      ).toMatchObject({
+        status: "uncertain",
+        diagnostic: "Commit status identity has conflicting observations",
+      });
+    });
+  });
   it("passes only when every expected check succeeds on the current head", () => {
     expect(
       evaluate(
         ["Build", "Tests"],
-        [
-          checkRun("Build", "completed", "success"),
-          commitStatus("Tests", "success"),
-        ],
+        [checkRun("Build", "completed", "success"), commitStatus("Tests", "success")],
       ),
     ).toMatchObject({ status: "passed", expectedHeadSha: headSha });
   });
@@ -130,21 +185,22 @@ describe("evaluateCiChecks", () => {
   });
 
   it("waits for delayed check registration even when visible checks pass", () => {
-    expect(
-      evaluate(["Build", "Tests"], [checkRun("Build", "completed", "success")]),
-    ).toMatchObject({
-      status: "waiting",
-      missingChecks: ["Tests"],
-    });
+    expect(evaluate(["Build", "Tests"], [checkRun("Build", "completed", "success")])).toMatchObject(
+      {
+        status: "waiting",
+        missingChecks: ["Tests"],
+      },
+    );
   });
 
   it.each([
     ["queued", null],
     ["in_progress", null],
   ])("waits for a %s expected check", (status, conclusion) => {
-    expect(
-      evaluate(["Build"], [checkRun("Build", status, conclusion)]),
-    ).toMatchObject({ status: "waiting", pendingChecks: ["Build"] });
+    expect(evaluate(["Build"], [checkRun("Build", status, conclusion)])).toMatchObject({
+      status: "waiting",
+      pendingChecks: ["Build"],
+    });
   });
 
   it("waits instead of repairing when failures coexist with pending expected checks", () => {
@@ -180,25 +236,18 @@ describe("evaluateCiChecks", () => {
   it.each(["cancelled", "skipped", "neutral"])(
     "marks a %s conclusion uncertain rather than successful or repairable",
     (conclusion) => {
-      expect(
-        evaluate(["Build"], [checkRun("Build", "completed", conclusion)]),
-      ).toMatchObject({ status: "uncertain" });
+      expect(evaluate(["Build"], [checkRun("Build", "completed", conclusion)])).toMatchObject({
+        status: "uncertain",
+      });
     },
   );
 
-  it.each(["failure", "error"])(
-    "treats commit status %s as a terminal failure",
-    (state) => {
-      expect(evaluate(["Tests"], [commitStatus("Tests", state)])).toMatchObject(
-        {
-          status: "failed",
-          failures: [
-            expect.objectContaining({ source: "commit-status", state }),
-          ],
-        },
-      );
-    },
-  );
+  it.each(["failure", "error"])("treats commit status %s as a terminal failure", (state) => {
+    expect(evaluate(["Tests"], [commitStatus("Tests", state)])).toMatchObject({
+      status: "failed",
+      failures: [expect.objectContaining({ source: "commit-status", state })],
+    });
+  });
 
   it("does not pass empty or incomplete expectations", () => {
     expect(evaluate([], [])).toMatchObject({ status: "uncertain" });
@@ -224,10 +273,7 @@ describe("evaluateCiChecks", () => {
       ),
     ).toMatchObject({ status: "uncertain" });
     expect(
-      evaluate(
-        ["Build"],
-        [checkRun("Build", "completed", "success", "b".repeat(40))],
-      ),
+      evaluate(["Build"], [checkRun("Build", "completed", "success", "b".repeat(40))]),
     ).toMatchObject({ status: "uncertain" });
   });
 });

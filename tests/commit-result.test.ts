@@ -14,9 +14,7 @@ import {
 import type { GitClient } from "../src/git/git-client.js";
 
 function temporaryWorktree(): string {
-  return fs.mkdtempSync(
-    path.join(os.tmpdir(), "agent-orchestrator-commit-result-"),
-  );
+  return fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-commit-result-"));
 }
 
 function writeResult(worktreePath: string, value: unknown): void {
@@ -54,10 +52,7 @@ describe("commit result", () => {
         const resultPath = getCommitResultPath(worktreePath);
 
         fs.mkdirSync(path.dirname(resultPath), { recursive: true });
-        fs.writeFileSync(
-          resultPath,
-          typeof value === "string" ? value : JSON.stringify(value),
-        );
+        fs.writeFileSync(resultPath, typeof value === "string" ? value : JSON.stringify(value));
       }
 
       expect(() => readCommitResult(worktreePath)).toThrow();
@@ -95,9 +90,7 @@ describe("commit result", () => {
         getUntrackedFiles: vi.fn().mockResolvedValue(["untracked.txt"]),
       } as unknown as GitClient;
 
-      await expect(
-        captureRepositorySnapshot(git, worktreePath),
-      ).resolves.toEqual({
+      await expect(captureRepositorySnapshot(git, worktreePath)).resolves.toEqual({
         status: "?? untracked.txt",
         unstagedDiff: "unstaged diff",
         stagedDiff: "staged diff",
@@ -118,10 +111,7 @@ describe("commit result", () => {
   it("captures status, repository diffs, and untracked files", async () => {
     const git = {
       getStatus: vi.fn().mockResolvedValue(" M tracked.txt"),
-      getDiff: vi
-        .fn()
-        .mockResolvedValueOnce("unstaged diff")
-        .mockResolvedValueOnce("staged diff"),
+      getDiff: vi.fn().mockResolvedValueOnce("unstaged diff").mockResolvedValueOnce("staged diff"),
       getUntrackedFiles: vi.fn().mockResolvedValue([]),
     } as unknown as GitClient;
 
@@ -137,9 +127,7 @@ describe("commit result", () => {
   });
 
   it("excludes only the positively owned commit-result path from a repository snapshot", async () => {
-    const worktreePath = fs.mkdtempSync(
-      path.join(os.tmpdir(), "commit-result-ownership-"),
-    );
+    const worktreePath = fs.mkdtempSync(path.join(os.tmpdir(), "commit-result-ownership-"));
     const ownedPath = `.agent-orchestrator/commit-result-${"a".repeat(64)}.json`;
     const otherPath = `.agent-orchestrator/commit-result-${"b".repeat(64)}.json`;
     try {
@@ -149,16 +137,12 @@ describe("commit result", () => {
       fs.writeFileSync(path.join(worktreePath, ownedPath), "owned result");
       fs.writeFileSync(path.join(worktreePath, otherPath), "unowned result");
       const git = {
-        getStatus: vi
-          .fn()
-          .mockResolvedValue(`?? ${ownedPath}\n?? ${otherPath}`),
+        getStatus: vi.fn().mockResolvedValue(`?? ${ownedPath}\n?? ${otherPath}`),
         getDiff: vi.fn().mockResolvedValue(""),
         getUntrackedFiles: vi.fn().mockResolvedValue([ownedPath, otherPath]),
       } as unknown as GitClient;
 
-      const ownedSnapshot = await captureRepositorySnapshot(git, worktreePath, [
-        ownedPath,
-      ]);
+      const ownedSnapshot = await captureRepositorySnapshot(git, worktreePath, [ownedPath]);
       expect(ownedSnapshot.status).toBe(`?? ${otherPath}`);
       expect(JSON.parse(ownedSnapshot.untrackedFiles)).toMatchObject([
         { path: otherPath, type: "file" },

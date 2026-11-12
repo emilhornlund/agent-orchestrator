@@ -1,10 +1,12 @@
 # Workflow
 
-[README](../README.md) | [Configuration](configuration.md) | [Recovery](recovery.md) | [Operations](operations.md)
+[README](../README.md) | [Configuration](configuration.md) | [Recovery](recovery.md) |
+[Operations](operations.md)
 
-This page is the canonical reference for the Trello and GitHub workflow. Each project has six configured Trello lists and
-four configured workflow labels. The configured names are for people; the orchestrator uses the configured Trello IDs. See
-the [configuration reference](configuration.md) for the corresponding keys.
+This page is the canonical reference for the Trello and GitHub workflow. Each project has six
+configured Trello lists and four configured workflow labels. The configured names are for people;
+the orchestrator uses the configured Trello IDs. See the [configuration reference](configuration.md)
+for the corresponding keys.
 
 ## Lifecycle at a glance
 
@@ -26,8 +28,9 @@ Ready for Agent
         +-> closed without merge ----> Backlog
 ```
 
-Automatic merging is not supported. Configuration with `projects[].autoMerge: true` is rejected; omit the legacy setting or
-set it to `false`. Only an observed human merge or unmerged closure ends the active PR workflow.
+Automatic merging is not supported. Configuration with `projects[].autoMerge: true` is rejected;
+omit the legacy setting or set it to `false`. Only an observed human merge or unmerged closure ends
+the active PR workflow.
 
 Refinement uses the same initial claim but returns the card to `Backlog`:
 
@@ -35,13 +38,13 @@ Refinement uses the same initial claim but returns the card to `Backlog`:
 Ready for Agent + Refinement -> Working -> Backlog
 ```
 
-A refined card must be explicitly moved back to `Ready for Agent` before implementation. `Backlog`, `Failed`, and `Done`
-cards are not automatically processed.
+A refined card must be explicitly moved back to `Ready for Agent` before implementation. `Backlog`,
+`Failed`, and `Done` cards are not automatically processed.
 
 ## Unified task lifecycle
 
-Every project uses one durable task-session lifecycle. A Ready card is claimed only after ordered eligibility and label
-classification, then serialized behind the project's single mutation owner:
+Every project uses one durable task-session lifecycle. A Ready card is claimed only after ordered
+eligibility and label classification, then serialized behind the project's single mutation owner:
 
 ```text
 Ready for Agent -> Working -> advisory plan + independent plan feedback
@@ -56,54 +59,53 @@ Ready for Agent -> Working -> advisory plan + independent plan feedback
   -> manually merged PR -> Done; deliberately closed PR -> Backlog
 ```
 
-One primary OpenCode session ID is persisted per task and resumed for implementation, CI repair, and human-feedback remediation.
-Independent plan and implementation reviewers use separate sessions. Planning,
-plan review, local checks and implementation review are advisory, not publication
-approval gates. The orchestrator executes configured checks and records their actual
-results; meaningful safe implementation output is published even when those checks
-fail or advisory steps are unavailable. Both normal and draft PRs move to Human
-Review only after publication is verified. Failed, skipped or uncertain local
-checks and material unresolved issues produce a draft with accurate disclosure.
-AI reviewer approval is not required; the primary agent supplies substantive
-dispositions for review concerns. None of these signals authorizes a merge.
-Unsafe Git state, unknown writers and genuinely unrecoverable primary execution
-remain distinct operational failures with preserved state. No manual check-name configuration is required. Local
-mock tests cover the lifecycle; no live Trello/GitHub/OpenCode pilot has been performed. See
-[Configuration](configuration.md#ci-expectation-discovery) and [Recovery](recovery.md#restart-and-task-ownership).
+One primary OpenCode session ID is persisted per task and resumed for implementation, CI repair, and
+human-feedback remediation. Independent plan and implementation reviewers use separate sessions.
+Planning, plan review, local checks and implementation review are advisory, not publication approval
+gates. The orchestrator executes configured checks and records their actual results; meaningful safe
+implementation output is published even when those checks fail or advisory steps are unavailable.
+Both normal and draft PRs move to Human Review only after publication is verified. Failed, skipped
+or uncertain local checks and material unresolved issues produce a draft with accurate disclosure.
+AI reviewer approval is not required; the primary agent supplies substantive dispositions for review
+concerns. None of these signals authorizes a merge. Unsafe Git state, unknown writers and genuinely
+unrecoverable primary execution remain distinct operational failures with preserved state. No manual
+check-name configuration is required. Local mock tests cover the lifecycle; no live
+Trello/GitHub/OpenCode pilot has been performed. See
+[Configuration](configuration.md#ci-expectation-discovery) and
+[Recovery](recovery.md#restart-and-task-ownership).
 
 Local validation and coverage repair has a separate maximum, configured by
-`opencode.remediation.validationMaxPasses` (default `2`). Its limit is persisted
-before dispatch, the primary session may finish early, and an attempt that leaves
-exact source content unchanged ends the cycle without rerunning unchanged checks.
-Exhaustion proceeds toward publication with observed quality results; it does not
-fail the task by itself.
+`opencode.remediation.validationMaxPasses` (default `2`). Its limit is persisted before dispatch,
+the primary session may finish early, and an attempt that leaves exact source content unchanged ends
+the cycle without rerunning unchanged checks. Exhaustion proceeds toward publication with observed
+quality results; it does not fail the task by itself.
 
-Implementation-review improvement uses its own persisted `opencode.remediation.maxPasses`
-maximum (default `1`), with the same early-finish and exact-content no-op rules.
-Restart preserves both budgets and the original pending operation rather than
-starting another cycle. Initial output is recorded in one descriptive commit;
-unrelated setup changes remain preserved but excluded. Essential clarification
-after examining the task/repository/attachments, or no meaningful task output,
-produces an actionable verified `Failed` outcome without an artificial commit or
-PR. A human can clarify and deliberately requeue the task later.
+Implementation-review improvement uses its own persisted `opencode.remediation.maxPasses` maximum
+(default `1`), with the same early-finish and exact-content no-op rules. Restart preserves both
+budgets and the original pending operation rather than starting another cycle. Initial output is
+recorded in one descriptive commit; unrelated setup changes remain preserved but excluded. Essential
+clarification after examining the task/repository/attachments, or no meaningful task output,
+produces an actionable verified `Failed` outcome without an artificial commit or PR. A human can
+clarify and deliberately requeue the task later.
 
-Descriptions include purpose, significant changes, orchestrator-observed checks,
-outstanding issues and the Trello link, even when AI description generation fails.
-Updates replace only the managed description region and preserve human text.
-The same draft PR can become ready when current source-bound passing evidence and
-recorded issue dispositions support it, no unresolved human requests remain, and
-the open PR's exact published head and refreshed description are verified. Stale
-or uncertain evidence cannot promote it.
+Descriptions include purpose, significant changes, orchestrator-observed checks, outstanding issues
+and the Trello link, even when AI description generation fails. Updates replace only the managed
+description region and preserve human text. The same draft PR can become ready when current
+source-bound passing evidence and recorded issue dispositions support it, no unresolved human
+requests remain, and the open PR's exact published head and refreshed description are verified.
+Stale or uncertain evidence cannot promote it.
 
-Automatic CI expectations come from available branch-protection policies and static repository-owned pull-request workflow
-contracts. Conditional jobs, dynamic matrices, unsupported workflow constructs, inaccessible policies, empty contracts, and
-checks that have not appeared keep the result uncertain or waiting. A visible subset of passing checks is not evidence that the
-expected set is complete. All failures in a complete set are supplied together to the bounded repair cycle; pending or uncertain
-results do not consume repair attempts.
+Automatic CI expectations come from available branch-protection policies and static repository-owned
+pull-request workflow contracts. Conditional jobs, dynamic matrices, unsupported workflow
+constructs, inaccessible policies, empty contracts, and checks that have not appeared keep the
+result uncertain or waiting. A visible subset of passing checks is not evidence that the expected
+set is complete. All failures in a complete set are supplied together to the bounded repair cycle;
+pending or uncertain results do not consume repair attempts.
 
-When polling resumes an owned `Working` card, the coordinator reconciles persisted phase, queue ownership, worktree/branch,
-setup status, and primary-session identity before continuing. Validation/review uses persisted content-bound evidence, and
-publication reuses only an exactly trusted commit. Missing or contradictory evidence is escalated without starting a second
+When polling resumes an owned `Working` card, the coordinator reconciles persisted phase, queue
+ownership, worktree/branch, setup status, and primary-session identity before continuing.
+Validation/review uses persisted content-bound evidence, and publication reuses only an exactly
+trusted commit. Missing or contradictory evidence is escalated without starting a second
 implementation, commit, push, or PR.
 
 ## Trello lists
@@ -117,8 +119,8 @@ implementation, commit, push, or PR.
 | `Failed`          | Tasks that could not complete the automated workflow             |
 | `Done`            | Tasks whose pull requests have been merged                       |
 
-The list names themselves are not significant. At startup, every configured list must exist, be open, and belong to the
-configured board.
+The list names themselves are not significant. At startup, every configured list must exist, be
+open, and belong to the configured board.
 
 ## Workflow labels
 
@@ -129,200 +131,205 @@ configured board.
 | `Improvement` | Classifies improvement implementation work                 |
 | `Bug`         | Classifies bug-fix implementation work                     |
 
-All four labels must exist on the configured board. Eligible cards in `Ready for Agent` are considered in the order returned
-by Trello, from top to bottom, and the first eligible card is claimed regardless of workflow. A card is eligible for normal
-implementation only when it has at least one of the configured `Feature`, `Improvement`, or `Bug` labels and has no future
-start date. A card with no start date, or whose start instant has been reached, remains eligible. Future-dated cards are
-skipped without being claimed and do not block a later eligible card; they become eligible automatically on a later normal
-poll. Unlabelled cards are ignored without changing the relative priority of later eligible cards.
+All four labels must exist on the configured board. Eligible cards in `Ready for Agent` are
+considered in the order returned by Trello, from top to bottom, and the first eligible card is
+claimed regardless of workflow. A card is eligible for normal implementation only when it has at
+least one of the configured `Feature`, `Improvement`, or `Bug` labels and has no future start date.
+A card with no start date, or whose start instant has been reached, remains eligible. Future-dated
+cards are skipped without being claimed and do not block a later eligible card; they become eligible
+automatically on a later normal poll. Unlabelled cards are ignored without changing the relative
+priority of later eligible cards.
 
-After the first eligible card is selected, `Refinement` takes precedence over implementation labels for classifying that
-individual card. A card carrying `Refinement` is refined even when it also carries `Feature`, `Improvement`, or `Bug`.
+After the first eligible card is selected, `Refinement` takes precedence over implementation labels
+for classifying that individual card. A card carrying `Refinement` is refined even when it also
+carries `Feature`, `Improvement`, or `Bug`.
 
-Start dates are compared as absolute instants using `Date.parse`, including timezone offsets. This start-date rule applies
-only while claiming cards from `Ready for Agent`; it does not reorder cards or affect cards already in another workflow list.
+Start dates are compared as absolute instants using `Date.parse`, including timezone offsets. This
+start-date rule applies only while claiming cards from `Ready for Agent`; it does not reorder cards
+or affect cards already in another workflow list.
 
 ## Refinement
 
-Invalid structured refinement results receive at most three complete analyses.
-The allowance and validated output survive restart; an unknown child execution is
-reconciled before another analysis. Corrections refresh attachments and cannot
-mutate card content until the entire title, description and classification validate.
+Invalid structured refinement results receive at most three complete analyses. The allowance and
+validated output survive restart; an unknown child execution is reconciled before another analysis.
+Corrections refresh attachments and cannot mutate card content until the entire title, description
+and classification validate.
 
-Before card writes, refinement saves original and intended complete fields and a
-supported Trello Free change-history baseline. Each content/label write compares
-the current fields with verified own writes, then checks readback and history,
-including edits racing with the write. Partial accepted updates resume without
-replaying accepted effects. Missing history, unknown acceptance or conflicting
-human edits retain project ownership for reconciliation; recoverable human history
-is preserved. Restoration must never overwrite detected human edits. Read/write
-checks are conservative conflict detection, not an atomic Trello transaction.
+Before card writes, refinement saves original and intended complete fields and a supported Trello
+Free change-history baseline. Each content/label write compares the current fields with verified own
+writes, then checks readback and history, including edits racing with the write. Partial accepted
+updates resume without replaying accepted effects. Missing history, unknown acceptance or
+conflicting human edits retain project ownership for reconciliation; recoverable human history is
+preserved. Restoration must never overwrite detected human edits. Read/write checks are conservative
+conflict detection, not an atomic Trello transaction.
 
-Three conclusively rejected field sends end that update's automatic retries. When
-current fields and history still establish the accepted own changes, refinement
-restores the original title, description and classification through the same guards,
-then verifies them before Failed. It never restores based on negative readback of
-an uncertain write. Conflicts or rejected restoration require explicit reconciliation
-with ownership and evidence retained.
+Three conclusively rejected field sends end that update's automatic retries. When current fields and
+history still establish the accepted own changes, refinement restores the original title,
+description and classification through the same guards, then verifies them before Failed. It never
+restores based on negative readback of an uncertain write. Conflicts or rejected restoration require
+explicit reconciliation with ownership and evidence retained.
 
-After bounded analysis failure, original fields must still be verified before and
-after the Failed transition and explanatory comment. Human field differences or
-unknown execution/acceptance retain ownership instead of claiming a completed
-failure. Recognized temporary dependency outages preserve context for rechecks.
-Configured failure email uses the durable notification outbox and reports the
-sanitized failure reason only after the refinement failure is verified. Delivery
-failure or uncertain SMTP acceptance does not undo that workflow outcome.
+After bounded analysis failure, original fields must still be verified before and after the Failed
+transition and explanatory comment. Human field differences or unknown execution/acceptance retain
+ownership instead of claiming a completed failure. Recognized temporary dependency outages preserve
+context for rechecks. Configured failure email uses the durable notification outbox and reports the
+sanitized failure reason only after the refinement failure is verified. Delivery failure or
+uncertain SMTP acceptance does not undo that workflow outcome.
 
 When a refinement card is claimed:
 
-1. The orchestrator prepares the attempt's isolated worktree and branch before moving
-   the card to `Working`. The first attempt may use `<trello-card-id>`; later attempts
-   use `<trello-card-id>--<attempt-id>`. Existing attempts retain their persisted names.
-2. The orchestrator reconciles the current Trello attachments into the card context immediately before the refinement
-   session. OpenCode may inspect repository code, tests, documentation, and architecture. It must not modify
-   repository files. The child and its descendants receive a read-only worktree
-   and Git metadata, including the index and refs. Its result artifact is outside
-   the repository in the owned attempt's runtime storage. Setup effects are
-   attributed separately and preserved. Interrupted output is preserved rather
-   than silently deleted or accepted as a fresh result; missing baseline
-   provenance blocks redispatch for reconciliation.
-   Legacy repository-local results are not exempt from content comparison, and
-   unknown result-directory symlinks are never followed for artifact rotation.
-   The artifact must be a strict JSON object containing only non-blank `title` and `description` strings and a `type` set to
-   exactly `feature`, `improvement`, or `bug`.
+1. The orchestrator prepares the attempt's isolated worktree and branch before moving the card to
+   `Working`. The first attempt may use `<trello-card-id>`; later attempts use
+   `<trello-card-id>--<attempt-id>`. Existing attempts retain their persisted names.
+2. The orchestrator reconciles the current Trello attachments into the card context immediately
+   before the refinement session. OpenCode may inspect repository code, tests, documentation, and
+   architecture. It must not modify repository files. The child and its descendants receive a
+   read-only worktree and Git metadata, including the index and refs. Its result artifact is outside
+   the repository in the owned attempt's runtime storage. Setup effects are attributed separately
+   and preserved. Interrupted output is preserved rather than silently deleted or accepted as a
+   fresh result; missing baseline provenance blocks redispatch for reconciliation. Legacy
+   repository-local results are not exempt from content comparison, and unknown result-directory
+   symlinks are never followed for artifact rotation. The artifact must be a strict JSON object
+   containing only non-blank `title` and `description` strings and a `type` set to exactly
+   `feature`, `improvement`, or `bug`.
 3. The orchestrator validates the structured result and rejects unauthorized repository changes.
-4. It updates the Trello title and description, removes conflicting implementation labels, applies exactly one of
-   `Feature`, `Improvement`, or `Bug`, removes `Refinement`, and moves the card to the top of `Backlog`.
-5. After the move succeeds, it attempts the optional refinement-completion email and adds one concise Trello comment containing
-   the classification, refined title, and, when reliable transition history is available, elapsed workflow time. The comment
-   does not repeat the refined task description.
-6. Successful result artifacts are preserved outside the repository, and the refinement worktree is cleaned up on a best-effort basis. A
-   failure identifies the project, card, operation, and artifact in a warning and preserves the artifact when it cannot be
-   removed; it does not change the confirmed `Backlog` result.
+4. It updates the Trello title and description, removes conflicting implementation labels, applies
+   exactly one of `Feature`, `Improvement`, or `Bug`, removes `Refinement`, and moves the card to
+   the top of `Backlog`.
+5. After the move succeeds, it attempts the optional refinement-completion email and adds one
+   concise Trello comment containing the classification, refined title, and, when reliable
+   transition history is available, elapsed workflow time. The comment does not repeat the refined
+   task description.
+6. Successful result artifacts are preserved outside the repository, and the refinement worktree is
+   cleaned up on a best-effort basis. A failure identifies the project, card, operation, and
+   artifact in a warning and preserves the artifact when it cannot be removed; it does not change
+   the confirmed `Backlog` result.
 
-Email failures are nonblocking. The completion comment has a persisted identity and
-text (including any available duration); uncertain acceptance is reconciled rather
-than resent. Before release, full intended fields, the orchestrator's Backlog move
-and completion comment must all be verified. An interrupted Backlog completion
-resumes without setup, analysis or even a worktree that has already been cleaned up.
-Unexpected manual moves never count as successful refinement. Bounded analysis
-failure uses the verified Failed protocol above; unsafe/unknown repository or card
-state stays preserved for reconciliation. A deliberate retry starts by moving a
-confirmed Failed card to `Ready for Agent`; see [Recovery](recovery.md).
+Email failures are nonblocking. The completion comment has a persisted identity and text (including
+any available duration); uncertain acceptance is reconciled rather than resent. Before release, full
+intended fields, the orchestrator's Backlog move and completion comment must all be verified. An
+interrupted Backlog completion resumes without setup, analysis or even a worktree that has already
+been cleaned up. Unexpected manual moves never count as successful refinement. Bounded analysis
+failure uses the verified Failed protocol above; unsafe/unknown repository or card state stays
+preserved for reconciliation. A deliberate retry starts by moving a confirmed Failed card to
+`Ready for Agent`; see [Recovery](recovery.md).
 
 ## Implementation and advisory quality
 
-An implementation card is claimed only from `Ready for Agent`. The project mutation queue serializes implementation, refinement,
-CI repair, and feedback remediation; an owned worktree and a persisted primary session are tied to the task record. The coordinator
-runs optional `setupCommand`, reconciles current Trello attachment context, and attempts structured planning and independent
-plan review as bounded advice before implementation.
+An implementation card is claimed only from `Ready for Agent`. The project mutation queue serializes
+implementation, refinement, CI repair, and feedback remediation; an owned worktree and a persisted
+primary session are tied to the task record. The coordinator runs optional `setupCommand`,
+reconciles current Trello attachment context, and attempts structured planning and independent plan
+review as bounded advice before implementation.
 
-The primary session implements the task using the available plan and advisory feedback. The orchestrator—not the agent—runs any
-configured `validationCommand` and `coverageCommand`, binding each result to the exact
-source content. These commands are independently optional: an absent command is recorded
-as skipped, never passed. An independent reviewer uses a separate session to assess the
-plan's requirements. Validation, coverage, and review repairs are bounded; after the last
+The primary session implements the task using the available plan and advisory feedback. The
+orchestrator—not the agent—runs any configured `validationCommand` and `coverageCommand`, binding
+each result to the exact source content. These commands are independently optional: an absent
+command is recorded as skipped, never passed. An independent reviewer uses a separate session to
+assess the plan's requirements. Validation, coverage, and review repairs are bounded; after the last
 correction the relevant configured checks run again.
 
-Current passing checks and no known material unresolved issues permit normal
-publication; failed, skipped or uncertain checks and material outstanding findings
-are disclosed on a draft PR. Bounded advisory validation and review can improve the
-result but cannot veto safe publication of meaningful work. Exhausted quality advice
-is not a primary-process crash. Missing safety evidence, stale source snapshots or
-ambiguous external acceptance still require reconciliation, not an assumed success.
+Current passing checks and no known material unresolved issues permit normal publication; failed,
+skipped or uncertain checks and material outstanding findings are disclosed on a draft PR. Bounded
+advisory validation and review can improve the result but cannot veto safe publication of meaningful
+work. Exhausted quality advice is not a primary-process crash. Missing safety evidence, stale source
+snapshots or ambiguous external acceptance still require reconciliation, not an assumed success.
 Neither review nor CI evidence authorizes automatic merging.
 
-The orchestrator then creates one trusted commit with the configured Git identity and publishes or reuses the same task PR through
-fetch and ordinary fast-forward-safe push. This release disables automatic rebasing and prepared-conflict continuation,
-including unpublished publication rebases. If publication would require rewriting history, the worktree and PR state are preserved
-for safe recovery. The optional post-commit PR-description session is presentation-only: if structured
-output or rendering fails, a deterministic task/quality/issues/Trello-link body is used without weakening publication safety. Failures
-preserve the owned worktree and durable task state for recovery; they do not create a success transition.
+The orchestrator then creates one trusted commit with the configured Git identity and publishes or
+reuses the same task PR through fetch and ordinary fast-forward-safe push. This release disables
+automatic rebasing and prepared-conflict continuation, including unpublished publication rebases. If
+publication would require rewriting history, the worktree and PR state are preserved for safe
+recovery. The optional post-commit PR-description session is presentation-only: if structured output
+or rendering fails, a deterministic task/quality/issues/Trello-link body is used without weakening
+publication safety. Failures preserve the owned worktree and durable task state for recovery; they
+do not create a success transition.
 
-The description result contract is strict: `summary` is a non-blank string of at most 1,000 characters, while `changes` and
-`validation` are arrays of at most 20 non-blank strings each, with every entry limited to 500 characters. Empty arrays are
-allowed, including an empty `validation` array when no validation or test result is known. JSON wrapped in Markdown, missing
-fields, wrong types, extra fields, and values beyond these fixed bounds are rejected. The result is generated after publication
-preparation. The standalone application renderer for this contract uses the fixed `Summary`, `Changes`, `Validation`,
-and `Task` sections, places the application-provided Trello card link in `Task`, adds the same attribution footer using
-`projects[].repository.gitIdentity.name`, and reserves exactly one `<!-- agent-orchestrator-status:start -->` /
-`<!-- agent-orchestrator-status:end -->` region. Empty
-`changes` render as `No changes were provided.` and empty `validation` renders as `No validation or test results were provided.`;
-neither claims success. Generated values are rendered as single-line content so they cannot add headings, footer text, or status
-markers. The rendered result is passed to pull-request creation. Existing PR updates
-refresh managed description/outcome sections without replacing human text outside them.
+The description result contract is strict: `summary` is a non-blank string of at most 1,000
+characters, while `changes` and `validation` are arrays of at most 20 non-blank strings each, with
+every entry limited to 500 characters. Empty arrays are allowed, including an empty `validation`
+array when no validation or test result is known. JSON wrapped in Markdown, missing fields, wrong
+types, extra fields, and values beyond these fixed bounds are rejected. The result is generated
+after publication preparation. The standalone application renderer for this contract uses the fixed
+`Summary`, `Changes`, `Validation`, and `Task` sections, places the application-provided Trello card
+link in `Task`, adds the same attribution footer using `projects[].repository.gitIdentity.name`, and
+reserves exactly one `<!-- agent-orchestrator-status:start -->` /
+`<!-- agent-orchestrator-status:end -->` region. Empty `changes` render as
+`No changes were provided.` and empty `validation` renders as
+`No validation or test results were provided.`; neither claims success. Generated values are
+rendered as single-line content so they cannot add headings, footer text, or status markers. The
+rendered result is passed to pull-request creation. Existing PR updates refresh managed
+description/outcome sections without replacing human text outside them.
 
-Implementation and later primary corrections retain the task's primary OpenCode session.
-Independent planning and implementation reviews use separate sessions. Sessions are
-traceable in retained task logs; operation budgets and recovery identities are durable
-runtime state, not counters inferred from or written into Trello card content.
+Implementation and later primary corrections retain the task's primary OpenCode session. Independent
+planning and implementation reviews use separate sessions. Sessions are traceable in retained task
+logs; operation budgets and recovery identities are durable runtime state, not counters inferred
+from or written into Trello card content.
 
 ## Publication
 
-New initial publications use a durable publication journal:
-intent precedes commit/push/PR dispatch, independently verified actual PR identity
-is persisted before Trello effects, and the Human Review destination is read back.
-Polling resumes the same checkpoint after service recovery without recreating the
-PR or initial commit. A negative lookup does not authorize resending an ambiguous
-creation. Existing uncertain legacy publications without dispatch provenance stay
-preserved and blocked rather than being treated as fresh creation attempts.
-Existing-PR mutations and refinement/terminal operations use the same durable
-mutation mechanisms. Under production attempt
-authority, pending workflow comments, field updates, Git effects and cleanup
-dispatches retain ownership until independently reconciled; negative reads do not
-authorize resending. Email delivery remains separate,
-nonblocking work and cannot undo successful publication.
+New initial publications use a durable publication journal: intent precedes commit/push/PR dispatch,
+independently verified actual PR identity is persisted before Trello effects, and the Human Review
+destination is read back. Polling resumes the same checkpoint after service recovery without
+recreating the PR or initial commit. A negative lookup does not authorize resending an ambiguous
+creation. Existing uncertain legacy publications without dispatch provenance stay preserved and
+blocked rather than being treated as fresh creation attempts. Existing-PR mutations and
+refinement/terminal operations use the same durable mutation mechanisms. Under production attempt
+authority, pending workflow comments, field updates, Git effects and cleanup dispatches retain
+ownership until independently reconciled; negative reads do not authorize resending. Email delivery
+remains separate, nonblocking work and cannot undo successful publication.
 
-Before publication, the task worktree fetches `origin/<defaultBranch>` but does not rebase. A missing task branch or fast-forward
-update is published with an ordinary push. A branch requiring a rewrite or conflict continuation is refused and preserved. The
-configured source checkout is not used for these operations.
+Before publication, the task worktree fetches `origin/<defaultBranch>` but does not rebase. A
+missing task branch or fast-forward update is published with an ordinary push. A branch requiring a
+rewrite or conflict continuation is refused and preserved. The configured source checkout is not
+used for these operations.
 
-An existing open pull request is reused; a new one is created only when none exists. After publication, every exact-head CI check
-run and commit status is collected and evaluated against the complete expectation set. The card remains in `Human Review` while
-checks are pending or the expected set is uncertain. Observation has a persisted
-30-minute bound per revision, starting at its first observation; restart does not
-restart the clock. Expiration ends the CI phase with uncertainty disclosed on the
-draft PR, without claiming success or failing the task. Polling still observes
-later results. A complete failure set starts a repair episode with its own
-`ciMaxPasses` maximum (default two) in the existing primary session. Own commits,
-reruns, polling, restart and routine target merges do not renew that budget. A
-verified substantive human request, including an explicit retry on the same head,
-can establish a distinct episode. Each correction offers advisory local validation/coverage and independent review, publishes available safe changes to the same PR, and invalidates
-all prior-head CI evidence. A successful complete CI result leaves the open PR in Human Review; approval and passing checks do not
-merge or complete it. Only an independently observed human merge permits the card to move to `Done` with `dueComplete: true`; a
-human unmerged closure routes it to `Backlog`. A publication or card-transition failure does not produce a successful completion.
+An existing open pull request is reused; a new one is created only when none exists. After
+publication, every exact-head CI check run and commit status is collected and evaluated against the
+complete expectation set. The card remains in `Human Review` while checks are pending or the
+expected set is uncertain. Observation has a persisted 30-minute bound per revision, starting at its
+first observation; restart does not restart the clock. Expiration ends the CI phase with uncertainty
+disclosed on the draft PR, without claiming success or failing the task. Polling still observes
+later results. A complete failure set starts a repair episode with its own `ciMaxPasses` maximum
+(default two) in the existing primary session. Own commits, reruns, polling, restart and routine
+target merges do not renew that budget. A verified substantive human request, including an explicit
+retry on the same head, can establish a distinct episode. Each correction offers advisory local
+validation/coverage and independent review, publishes available safe changes to the same PR, and
+invalidates all prior-head CI evidence. A successful complete CI result leaves the open PR in Human
+Review; approval and passing checks do not merge or complete it. Only an independently observed
+human merge permits the card to move to `Done` with `dueComplete: true`; a human unmerged closure
+routes it to `Backlog`. A publication or card-transition failure does not produce a successful
+completion.
 
-Expected checks combine supported target-branch rules with workflow documents read
-through GitHub at the exact PR head, never the source checkout's potentially stale
-files. A dynamic/conditional workflow is resolved only by terminal jobs from a
-verified PR-associated run for that workflow path and revision; one discovered
-workflow cannot stand in for another that never registered. Missing, inaccessible,
-malformed or incomplete discovery remains uncertain. Newly observed non-skipped
-checks are also evaluated, and commit-status history uses the latest context
-result rather than stale same-head success or failure.
+Expected checks combine supported target-branch rules with workflow documents read through GitHub at
+the exact PR head, never the source checkout's potentially stale files. A dynamic/conditional
+workflow is resolved only by terminal jobs from a verified PR-associated run for that workflow path
+and revision; one discovered workflow cannot stand in for another that never registered. Missing,
+inaccessible, malformed or incomplete discovery remains uncertain. Newly observed non-skipped checks
+are also evaluated, and commit-status history uses the latest context result rather than stale
+same-head success or failure.
 
 ## Human review
 
-Human review takes place on GitHub. The orchestrator never merges a pull request. Approval is an observation, not a terminal event;
-every open normal or draft PR remains active and blocks the project's next task.
+Human review takes place on GitHub. The orchestrator never merges a pull request. Approval is an
+observation, not a terminal event; every open normal or draft PR remains active and blocks the
+project's next task.
 
-Human merge or closure takes precedence over active or queued corrections, CI repair
-and maintenance. PR observation continues during execution, capacity waits and future
-dependency rechecks. A verified terminal observation durably fences new automated
-mutations and cancels the active writer's process tree where possible. Publication
-checks the original PR before pushing and before returning the card to Human Review;
-a rejected push triggers authoritative outcome reconciliation, not branch recreation.
-Even a newly created PR closed before its local publication binding is reconciled as
-the original PR rather than replaced.
+Human merge or closure takes precedence over active or queued corrections, CI repair and
+maintenance. PR observation continues during execution, capacity waits and future dependency
+rechecks. A verified terminal observation durably fences new automated mutations and cancels the
+active writer's process tree where possible. Publication checks the original PR before pushing and
+before returning the card to Human Review; a rejected push triggers authoritative outcome
+reconciliation, not branch recreation. Even a newly created PR closed before its local publication
+binding is reconciled as the original PR rather than replaced.
 
-Already-dispatched effects must be reconciled before terminal release: an uncertain
-Review move or reply is never blindly resent or assumed cancelled. Unknown execution
-retains project ownership; missing PID/process group is not stopped proof. Once writers
-are verified stopped, superseded queued work is retired, the temporary owned activity
-block is removed without replacing human content, and terminal Trello state is verified.
-Unshipped commits, dirty worktrees and ambiguous artifact ownership are preserved rather
-than cleaned up. Interrupted primary work is recorded as cancelled, not as a fabricated
-implementation crash or a successfully published correction.
+Already-dispatched effects must be reconciled before terminal release: an uncertain Review move or
+reply is never blindly resent or assumed cancelled. Unknown execution retains project ownership;
+missing PID/process group is not stopped proof. Once writers are verified stopped, superseded queued
+work is retired, the temporary owned activity block is removed without replacing human content, and
+terminal Trello state is verified. Unshipped commits, dirty worktrees and ambiguous artifact
+ownership are preserved rather than cleaned up. Interrupted primary work is recorded as cancelled,
+not as a fabricated implementation crash or a successfully published correction.
 
 | GitHub state                                             | Trello result                                                      |
 | -------------------------------------------------------- | ------------------------------------------------------------------ |
@@ -332,139 +339,161 @@ implementation crash or a successfully published correction.
 | Open pull request without actionable requested changes   | Leave the card in `Human Review` and observe complete CI evidence  |
 | Expected pull request unavailable or identity uncertain  | Preserve ownership and reconcile; do not assume a terminal outcome |
 
-After an owned pull request reaches either terminal state, reconciliation attempts to remove only the dedicated
-attempt's worktree and local branch. The first attempt may use `<worktreeRoot>/<trello-card-id>` and `agent/<trello-card-id>`;
-later attempts use `<trello-card-id>--<attempt-id>` in both names. Existing attempts retain their persisted names. For a merged pull request this
-attempt happens after remote branch cleanup, the successful `Done` transition, and completion notification handling. For a
-closed pull request it happens after the successful `Backlog` transition and verified explanatory comment. Removal requires
-canonical/common Git repository identity and attempt-owned resources. Closed-PR commit history must remain accessible;
-failed history reads are not proof that removal is safe. Cleanup failure never reverses a terminal Trello transition;
-unresolved obligations remain available for reconciliation.
-Safely stopped writers and conclusively reconciled mutations are required before release. Known owned artifacts that cannot
-be removed safely may remain preserved without blocking the next attempt, since later attempts use different resources.
-Unknown ownership, repository identity or execution still blocks the project; preservation is not permission to bypass those checks.
+After an owned pull request reaches either terminal state, reconciliation attempts to remove only
+the dedicated attempt's worktree and local branch. The first attempt may use
+`<worktreeRoot>/<trello-card-id>` and `agent/<trello-card-id>`; later attempts use
+`<trello-card-id>--<attempt-id>` in both names. Existing attempts retain their persisted names. For
+a merged pull request this attempt happens after remote branch cleanup, the successful `Done`
+transition, and completion notification handling. For a closed pull request it happens after the
+successful `Backlog` transition and verified explanatory comment. Removal requires canonical/common
+Git repository identity and attempt-owned resources. Closed-PR commit history must remain
+accessible; failed history reads are not proof that removal is safe. Cleanup failure never reverses
+a terminal Trello transition; unresolved obligations remain available for reconciliation. Safely
+stopped writers and conclusively reconciled mutations are required before release. Known owned
+artifacts that cannot be removed safely may remain preserved without blocking the next attempt,
+since later attempts use different resources. Unknown ownership, repository identity or execution
+still blocks the project; preservation is not permission to bypass those checks.
 
-The local cleanup is skipped when the path is outside the configured root, is symbolic or unexpected, is associated with a
-different branch, has unmerged paths or an active rebase, is dirty (including ignored setup output), has local-only commits,
-or has a prepared-conflict handoff requiring recovery.
-Already-absent worktrees and branches are successful idempotent outcomes. Shutdown cancellation stops before destructive
-cleanup, and preserved worktrees, branches, and prepared-conflict handoffs remain available for diagnosis.
+The local cleanup is skipped when the path is outside the configured root, is symbolic or
+unexpected, is associated with a different branch, has unmerged paths or an active rebase, is dirty
+(including ignored setup output), has local-only commits, or has a prepared-conflict handoff
+requiring recovery. Already-absent worktrees and branches are successful idempotent outcomes.
+Shutdown cancellation stops before destructive cleanup, and preserved worktrees, branches, and
+prepared-conflict handoffs remain available for diagnosis.
 
-When requested changes are detected, the orchestrator uses the owned worktree and existing task branch, supplies the GitHub
-review feedback to the implementation session after refreshing the current Trello attachment context, runs the same initial-review and
-bounded remediation loop, and republishes the updated branch and pull request. The open PR remains in Human Review after publication.
-The existing owned worktree/branch and primary session are reused. The card moves to Working before correction and returns to
-Human Review after publication or a no-op, with both list outcomes verified. Pending transitions and the verified expected list
-are persisted independently of internal execution phase, including across acknowledgment loss or restart. Older published
-correction records retain their previous Human Review expectation until a verified explicit transition occurs.
-Validation, coverage and independent review are advisory during correction: failed checks or bounded review unavailability
-cannot veto additive publication to the same PR. Current failures, skipped/uncertain results and unresolved requests keep the PR
-as a draft and are disclosed. Review dispatch recovery is bounded per source and retained across interruption; human-requested
-rounds have no lifetime cap. A genuinely unrecoverable primary correction preserves the PR, unshipped changes and ownership in
-an explicit recoverable wait, rather than failing the task or publishing interrupted work as a correction.
-A requested-changes pass captures the authoritative PR head
-SHA used to select the feedback and re-reads the expected open PR head after review bodies and inline comments have been collected.
-Only a stable, commit-exact snapshot can move the card to Working or reach OpenCode. If the head changes, the complete snapshot is
-discarded, the card remains in Human Review with its existing PR and branch, and reconciliation logs the project, card, PR, and both
-SHAs before retrying on the next poll. A retry that reuses already committed work skips all OpenCode stages, including
-attachment-dependent prompts, and proceeds directly to publication.
+When requested changes are detected, the orchestrator uses the owned worktree and existing task
+branch, supplies the GitHub review feedback to the implementation session after refreshing the
+current Trello attachment context, runs the same initial-review and bounded remediation loop, and
+republishes the updated branch and pull request. The open PR remains in Human Review after
+publication. The existing owned worktree/branch and primary session are reused. The card moves to
+Working before correction and returns to Human Review after publication or a no-op, with both list
+outcomes verified. Pending transitions and the verified expected list are persisted independently of
+internal execution phase, including across acknowledgment loss or restart. Older published
+correction records retain their previous Human Review expectation until a verified explicit
+transition occurs. Validation, coverage and independent review are advisory during correction:
+failed checks or bounded review unavailability cannot veto additive publication to the same PR.
+Current failures, skipped/uncertain results and unresolved requests keep the PR as a draft and are
+disclosed. Review dispatch recovery is bounded per source and retained across interruption;
+human-requested rounds have no lifetime cap. A genuinely unrecoverable primary correction preserves
+the PR, unshipped changes and ownership in an explicit recoverable wait, rather than failing the
+task or publishing interrupted work as a correction. A requested-changes pass captures the
+authoritative PR head SHA used to select the feedback and re-reads the expected open PR head after
+review bodies and inline comments have been collected. Only a stable, commit-exact snapshot can move
+the card to Working or reach OpenCode. If the head changes, the complete snapshot is discarded, the
+card remains in Human Review with its existing PR and branch, and reconciliation logs the project,
+card, PR, and both SHAs before retrying on the next poll. A retry that reuses already committed work
+skips all OpenCode stages, including attachment-dependent prompts, and proceeds directly to
+publication.
 
-Human feedback includes review summaries, standalone PR comments and inline discussions, including discussion submitted without
-a changes-requested verdict. It does not require a new review on the current head. A later decisive review by the same author
-supersedes that author's earlier review summary; independent inline discussions remain eligible until resolved or outdated.
-Each item preserves its source identity, reviewer, available timestamp and inline context. GitHub Bot actors, the authenticated
-automation actor and managed automation replies/status markers do not trigger corrections.
-Review bodies are treated as general pull-request-level feedback and have no file, line, or diff location. Inline comments retain
-each location field GitHub supplies, including a path, current line, original line, or diff hunk. Resolved, outdated, and
-incompletely described threads are excluded or fail reconciliation rather than being inferred. This applies to review-body-only,
-inline-only, and mixed feedback.
+Human feedback includes review summaries, standalone PR comments and inline discussions, including
+discussion submitted without a changes-requested verdict. It does not require a new review on the
+current head. A later decisive review by the same author supersedes that author's earlier review
+summary; independent inline discussions remain eligible until resolved or outdated. Each item
+preserves its source identity, reviewer, available timestamp and inline context. GitHub Bot actors,
+the authenticated automation actor and managed automation replies/status markers do not trigger
+corrections. Review bodies are treated as general pull-request-level feedback and have no file,
+line, or diff location. Inline comments retain each location field GitHub supplies, including a
+path, current line, original line, or diff hunk. Resolved, outdated, and incompletely described
+threads are excluded or fail reconciliation rather than being inferred. This applies to
+review-body-only, inline-only, and mixed feedback.
 
-OpenCode classifies semantic actionability and whether an edited requested action substantively changed, using a read-only
-operation. The orchestrator validates complete source-revision/identity coverage before updating the ledger. Latest bodies are
-separate from append-only prior handling snapshots; deleted or superseded items are no longer active. Timestamp changes, new
-commits and incidental edits do not renew an attempted request. A substantive changed request can start another cycle.
+OpenCode classifies semantic actionability and whether an edited requested action substantively
+changed, using a read-only operation. The orchestrator validates complete source-revision/identity
+coverage before updating the ledger. Latest bodies are separate from append-only prior handling
+snapshots; deleted or superseded items are no longer active. Timestamp changes, new commits and
+incidental edits do not renew an attempted request. A substantive changed request can start another
+cycle.
 
-If a feedback remediation produces no repository changes, it is not treated as resolved: the ledger retains the unresolved
-attempted item and the workflow does not publish a correction or claim success. Unchanged feedback does not restart that attempt,
-even after a new PR head. The task remains available for new or substantively changed human input, or human merge/closure.
-An initial implementation still requires repository changes; validation/review repair remains scoped to its approved task.
+If a feedback remediation produces no repository changes, it is not treated as resolved: the ledger
+retains the unresolved attempted item and the workflow does not publish a correction or claim
+success. Unchanged feedback does not restart that attempt, even after a new PR head. The task
+remains available for new or substantively changed human input, or human merge/closure. An initial
+implementation still requires repository changes; validation/review repair remains scoped to its
+approved task.
 
-For each owned open PR, the coordinator verifies repository, branch, URL, persisted head, and current GitHub head before acting.
-Observation continues during an active writer, retaining deduplicated arrivals outside the repository. Unclassified feedback
-cannot dispatch a writer. Current human requests take priority over queued CI repair, followed by routine maintenance; an
-already-running operation is not preempted by new feedback. Explicit required prerequisites may run first. Pending descriptors
-and their order survive restart, and only never-started work superseded by authoritative current observations is retired.
-It normalizes submitted review bodies, unresolved inline threads, and conversation comments into a durable task-scoped ledger.
-Actionable feedback is remediated in the original primary session, then independently verified; earlier still-applicable items remain
-tracked when new feedback arrives. Replies refer to the observed published head, using the originating thread when available
-or an attributed PR comment linking a review summary or inline source. Replies distinguish independently
-verified fixes, established unresolved requests and uncertain fulfillment. Pending or failed CI does not prevent a truthful reply;
-its observed current-head status is reported rather than called a pass. A published reply does not mean a request was fulfilled.
-Unknown reply acceptance is reconciled by the original marker, including after an edit/deletion; a negative lookup never
-authorizes a blind resend. The service never approves a PR, dismisses a review, or resolves a reviewer thread.
+For each owned open PR, the coordinator verifies repository, branch, URL, persisted head, and
+current GitHub head before acting. Observation continues during an active writer, retaining
+deduplicated arrivals outside the repository. Unclassified feedback cannot dispatch a writer.
+Current human requests take priority over queued CI repair, followed by routine maintenance; an
+already-running operation is not preempted by new feedback. Explicit required prerequisites may run
+first. Pending descriptors and their order survive restart, and only never-started work superseded
+by authoritative current observations is retired. It normalizes submitted review bodies, unresolved
+inline threads, and conversation comments into a durable task-scoped ledger. Actionable feedback is
+remediated in the original primary session, then independently verified; earlier still-applicable
+items remain tracked when new feedback arrives. Replies refer to the observed published head, using
+the originating thread when available or an attributed PR comment linking a review summary or inline
+source. Replies distinguish independently verified fixes, established unresolved requests and
+uncertain fulfillment. Pending or failed CI does not prevent a truthful reply; its observed
+current-head status is reported rather than called a pass. A published reply does not mean a request
+was fulfilled. Unknown reply acceptance is reconciled by the original marker, including after an
+edit/deletion; a negative lookup never authorizes a blind resend. The service never approves a PR,
+dismisses a review, or resolves a reviewer thread.
 
-During correction, a managed activity block appears at the top of the PR description and changes as work proceeds through
-editing, validation and publication. It is cleared on verified completion; unknown execution is reported as requiring attention
-rather than silently declared stopped. Managed body edits preserve human content outside owned markers. A detected intervening
-human edit cancels only an intent that never dispatched, then refreshes the intended body. Already-dispatched uncertainty is
-reconciled first. These read/compare checks are not atomic provider-side compare-and-write and cannot prevent every late race.
-A no-op correction retains an unresolved outcome, refreshes the managed description without claiming a new commit/check, and
-can resume interrupted reporting without rerunning the primary correction.
+During correction, a managed activity block appears at the top of the PR description and changes as
+work proceeds through editing, validation and publication. It is cleared on verified completion;
+unknown execution is reported as requiring attention rather than silently declared stopped. Managed
+body edits preserve human content outside owned markers. A detected intervening human edit cancels
+only an intent that never dispatched, then refreshes the intended body. Already-dispatched
+uncertainty is reconciled first. These read/compare checks are not atomic provider-side
+compare-and-write and cannot prevent every late race. A no-op correction retains an unresolved
+outcome, refreshes the managed description without claiming a new commit/check, and can resume
+interrupted reporting without rerunning the primary correction.
 
-Pending or uncertain CI retains the PR in `Human Review` without consuming a repair attempt. Complete failures start one bounded
-CI repair operation containing all failed checks; a published new head invalidates every previous check observation. Automatic
-merging is prohibited. An unknown expected-check set, missing check, stale head,
-or incomplete GitHub response never counts as green.
+Pending or uncertain CI retains the PR in `Human Review` without consuming a repair attempt.
+Complete failures start one bounded CI repair operation containing all failed checks; a published
+new head invalidates every previous check observation. Automatic merging is prohibited. An unknown
+expected-check set, missing check, stale head, or incomplete GitHub response never counts as green.
 
-CI repair and target synchronization display their current activity at the top of
-the existing description, progressing through editing/conflict resolution,
-advisory validation and publication. Verified completion, no-op and exhausted
-assistance clear the temporary status, retaining current outcomes and diagnostics
-in a separate managed section. Human introduction, task description and notes
-outside owned sections are preserved. A detected concurrent edit leaves reporting
-pending for reconciliation rather than overwriting human content. An unknown
-writer retains its attention state and ownership; it is never declared stopped.
+CI repair and target synchronization display their current activity at the top of the existing
+description, progressing through editing/conflict resolution, advisory validation and publication.
+Verified completion, no-op and exhausted assistance clear the temporary status, retaining current
+outcomes and diagnostics in a separate managed section. Human introduction, task description and
+notes outside owned sections are preserved. A detected concurrent edit leaves reporting pending for
+reconciliation rather than overwriting human content. An unknown writer retains its attention state
+and ownership; it is never declared stopped.
 
-Open PRs, including approved PRs, automatically receive queued additive target
-merges when needed. Published commits are never rewritten. Conflict assistance
-uses the original primary session and current attachments; its operation identity
-and maximum survive restart. Validation and independent review are advisory, and
-safe available changes publish to the same draft PR with current diagnostics and
-pending CI disclosed. Dirty excluded output and unshipped commits are preserved;
+Open PRs, including approved PRs, automatically receive queued additive target merges when needed.
+Published commits are never rewritten. Conflict assistance uses the original primary session and
+current attachments; its operation identity and maximum survive restart. Validation and independent
+review are advisory, and safe available changes publish to the same draft PR with current
+diagnostics and pending CI disclosed. Dirty excluded output and unshipped commits are preserved;
 unrelated staged output or unknown local-only commits are not automatically shipped.
 
-Rebase and legacy prepared-conflict continuation remain disabled.
-Existing legacy handoffs and maintenance records remain diagnostic artifacts; their presence or apparent local completion does not
-authorize continuation. The task branch, PR, local commits, remote refs/objects, dirty or unshipped work, intent, and handoff are
-preserved. The worker may continue read-only PR observation and verified terminal reconciliation, but it does not run branch
-writers or start a new task for an affected card. Operator guidance is in [Recovery](recovery.md).
-There is no automatic replay of legacy intents, rebase, force-push, reset, abort, or silent success.
+Rebase and legacy prepared-conflict continuation remain disabled. Existing legacy handoffs and
+maintenance records remain diagnostic artifacts; their presence or apparent local completion does
+not authorize continuation. The task branch, PR, local commits, remote refs/objects, dirty or
+unshipped work, intent, and handoff are preserved. The worker may continue read-only PR observation
+and verified terminal reconciliation, but it does not run branch writers or start a new task for an
+affected card. Operator guidance is in [Recovery](recovery.md). There is no automatic replay of
+legacy intents, rebase, force-push, reset, abort, or silent success.
 
-Transient service failures retain the last verified state. Bounded immediate
-attempts give way to persisted paced dependency rechecks for owned active work;
-recovery verifies outcomes before continuing. Exhausted advisory dependencies are
-reported and skipped when safe, whereas essential execution/publication dependencies
-remain waiting. An unavailable read is not proof of deletion or non-acceptance.
-Legacy reconciliation blocks use the separate explicit recovery conditions in
-[Recovery](recovery.md); a Ready move is not a general way to bypass active work.
-Shutdown preserves interrupted state, and cards already in `Failed` never retry
-automatically.
+Transient service failures retain the last verified state. Bounded immediate attempts give way to
+persisted paced dependency rechecks for owned active work; recovery verifies outcomes before
+continuing. Exhausted advisory dependencies are reported and skipped when safe, whereas essential
+execution/publication dependencies remain waiting. An unavailable read is not proof of deletion or
+non-acceptance. Legacy reconciliation blocks use the separate explicit recovery conditions in
+[Recovery](recovery.md); a Ready move is not a general way to bypass active work. Shutdown preserves
+interrupted state, and cards already in `Failed` never retry automatically.
 
 ## Failures and transitions
 
-Automated failures move the card to `Failed` rather than silently advancing it. A failure comment contains the category,
-reason, and the instruction to move the card to `Ready for Agent` for a deliberate retry. If moving the card to `Failed`
-fails, the orchestrator preserves the primary failure and does not pretend that failure handling completed. If adding the
-failure comment fails after the move, the card remains in `Failed` but release waits
-for the original comment's verified outcome; an uncertain send is never blindly repeated.
+Automated failures move the card to `Failed` rather than silently advancing it. A failure comment
+contains the category, reason, and the instruction to move the card to `Ready for Agent` for a
+deliberate retry. If moving the card to `Failed` fails, the orchestrator preserves the primary
+failure and does not pretend that failure handling completed. If adding the failure comment fails
+after the move, the card remains in `Failed` but release waits for the original comment's verified
+outcome; an uncertain send is never blindly repeated.
 
-A pull request that a human closes without merging is a deliberate rejection or cancellation, not an automated failure. The
-card is moved to `Backlog` and receives a comment stating that the pull request was closed without being merged, with its URL;
-this outcome does not send the `failed` notification. If the `Backlog` move fails, the reconciliation fails with diagnostic
-context and no cancellation comment is added. If the move succeeds but the comment fails, the card remains in `Backlog` and
-release remains pending until the explanatory comment is verified. Recovery preserves
+A pull request that a human closes without merging is a deliberate rejection or cancellation, not an
+automated failure. The card is moved to `Backlog` and receives a comment stating that the pull
+request was closed without being merged, with its URL; this outcome does not send the `failed`
+notification. If the `Backlog` move fails, the reconciliation fails with diagnostic context and no
+cancellation comment is added. If the move succeeds but the comment fails, the card remains in
+`Backlog` and release remains pending until the explanatory comment is verified. Recovery preserves
 the original operation identity rather than sending a duplicate comment.
 
-An external operation must be verified before its related workflow transition is treated as complete. If a human merge succeeds but moving
-the card to `Done` fails, persisted terminal PR reconciliation retries the Trello transition without attempting another merge. A
-closed PR transition is similarly idempotent and returns to `Backlog`. See [Recovery](recovery.md) for these states.
+An external operation must be verified before its related workflow transition is treated as
+complete. If a human merge succeeds but moving the card to `Done` fails, persisted terminal PR
+reconciliation retries the Trello transition without attempting another merge. A closed PR
+transition is similarly idempotent and returns to `Backlog`. See [Recovery](recovery.md) for these
+states.

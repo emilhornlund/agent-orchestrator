@@ -111,9 +111,7 @@ describe("persisted state size protection", () => {
   it("loads valid reconciliation and prepared-conflict state", () => {
     const fixture = createFixture();
 
-    expect(
-      loadReconciliationBlock(fixture.contextRoot, fixture.project.id).status,
-    ).toBe("loaded");
+    expect(loadReconciliationBlock(fixture.contextRoot, fixture.project.id).status).toBe("loaded");
     expect(readPreparedConflict(fixture.project, "card-two")).toMatchObject({
       cardId: "card-two",
     });
@@ -126,12 +124,10 @@ describe("persisted state size protection", () => {
       fs.writeFileSync(filePath, "{", "utf8");
     }
 
-    expect(
-      loadReconciliationBlock(fixture.contextRoot, fixture.project.id),
-    ).toMatchObject({ status: "malformed" });
-    expect(() => readPreparedConflict(fixture.project, "card-two")).toThrow(
-      "not valid JSON",
-    );
+    expect(loadReconciliationBlock(fixture.contextRoot, fixture.project.id)).toMatchObject({
+      status: "malformed",
+    });
+    expect(() => readPreparedConflict(fixture.project, "card-two")).toThrow("not valid JSON");
   });
 
   it("rejects oversized state before reading content and preserves each file", () => {
@@ -145,10 +141,7 @@ describe("persisted state size protection", () => {
     const readFile = vi.spyOn(fs, "readFileSync");
 
     try {
-      const reconciliationResult = loadReconciliationBlock(
-        fixture.contextRoot,
-        fixture.project.id,
-      );
+      const reconciliationResult = loadReconciliationBlock(fixture.contextRoot, fixture.project.id);
       expect(reconciliationResult).toMatchObject({ status: "malformed" });
       if (reconciliationResult.status === "malformed") {
         expect(reconciliationResult.error.message).toContain(

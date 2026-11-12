@@ -2,10 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import type { TaskExecutionStore } from "./task-execution-store.js";
-import type {
-  PendingPrimaryInspection,
-  PrimaryOperationEntry,
-} from "./run-primary-operation.js";
+import type { PendingPrimaryInspection, PrimaryOperationEntry } from "./run-primary-operation.js";
 
 const unknown: PendingPrimaryInspection = { status: "unknown" };
 /** Inspect only durable process evidence rooted in the trusted task artifact tree. */
@@ -19,15 +16,9 @@ export async function inspectPrimaryOperationEvidence(
     const entry = store.read(cardID)?.primaryOperations?.[operationID] as
       PrimaryOperationEntry | undefined;
     if (!entry || entry.id !== operationID) return unknown;
-    if (entry.status === "intent" && entry.executions === 0)
-      return { status: "never-dispatched" };
+    if (entry.status === "intent" && entry.executions === 0) return { status: "never-dispatched" };
     const metadataPath = entry.processMetadataPath;
-    if (
-      !metadataPath ||
-      !entry.processArtifactRoot ||
-      !entry.processExecutionId
-    )
-      return unknown;
+    if (!metadataPath || !entry.processArtifactRoot || !entry.processExecutionId) return unknown;
     const trusted = fs.realpathSync(identity.trustedRoot);
     const cwd = fs.realpathSync(identity.cwd);
     const root = fs.realpathSync(entry.processArtifactRoot);
@@ -44,14 +35,9 @@ export async function inspectPrimaryOperationEvidence(
     const stat = fs.lstatSync(file);
     if (!stat.isFile() || stat.size > 64 * 1024) return unknown;
     const data: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
-    if (!data || typeof data !== "object" || Array.isArray(data))
-      return unknown;
+    if (!data || typeof data !== "object" || Array.isArray(data)) return unknown;
     const metadata = data as Record<string, unknown>;
-    if (
-      metadata.executionId !== entry.processExecutionId ||
-      metadata.cwd !== cwd
-    )
-      return unknown;
+    if (metadata.executionId !== entry.processExecutionId || metadata.cwd !== cwd) return unknown;
     if (
       metadata.status === "not-dispatched" ||
       (metadata.status === "spawn-failure" &&
@@ -63,12 +49,9 @@ export async function inspectPrimaryOperationEvidence(
       metadata.status === "success" &&
       typeof metadata.exitCode === "number" &&
       metadata.exitCode === 0 &&
-      ["completed", "dispatched", "ambiguous", "failed"].includes(
-        entry.status,
-      ) &&
+      ["completed", "dispatched", "ambiguous", "failed"].includes(entry.status) &&
       typeof metadata.sessionId === "string" &&
-      (entry.lastSessionId === undefined ||
-        metadata.sessionId === entry.lastSessionId) &&
+      (entry.lastSessionId === undefined || metadata.sessionId === entry.lastSessionId) &&
       typeof metadata.resultArtifact === "object" &&
       metadata.resultArtifact !== null
     ) {
@@ -84,11 +67,9 @@ export async function inspectPrimaryOperationEvidence(
       const resultStat = fs.lstatSync(resultFile);
       if (!resultStat.isFile() || resultStat.size > 700 * 1024) return unknown;
       const bytes = fs.readFileSync(resultFile);
-      if (createHash("sha256").update(bytes).digest("hex") !== ref.sha256)
-        return unknown;
+      if (createHash("sha256").update(bytes).digest("hex") !== ref.sha256) return unknown;
       const value: unknown = JSON.parse(bytes.toString("utf8"));
-      if (!value || typeof value !== "object" || Array.isArray(value))
-        return unknown;
+      if (!value || typeof value !== "object" || Array.isArray(value)) return unknown;
       const payload = value as Record<string, unknown>;
       if (
         payload.exitCode !== 0 ||
@@ -117,14 +98,10 @@ export async function inspectPrimaryOperationEvidence(
       ["failed", "dispatched", "ambiguous"].includes(entry.status)
     ) {
       let failureClassification: "dependency-outage" | undefined;
-      const metadataHasClassification =
-        metadata.failureClassification !== undefined;
+      const metadataHasClassification = metadata.failureClassification !== undefined;
       let payload: Record<string, unknown> | undefined;
       if (metadata.resultArtifact !== undefined) {
-        if (
-          typeof metadata.resultArtifact !== "object" ||
-          metadata.resultArtifact === null
-        )
+        if (typeof metadata.resultArtifact !== "object" || metadata.resultArtifact === null)
           return unknown;
         const ref = metadata.resultArtifact as Record<string, unknown>;
         if (
@@ -136,14 +113,11 @@ export async function inspectPrimaryOperationEvidence(
         const resultFile = path.join(path.dirname(file), "result.json");
         assertNoSymlinks(trusted, resultFile);
         const resultStat = fs.lstatSync(resultFile);
-        if (!resultStat.isFile() || resultStat.size > 700 * 1024)
-          return unknown;
+        if (!resultStat.isFile() || resultStat.size > 700 * 1024) return unknown;
         const bytes = fs.readFileSync(resultFile);
-        if (createHash("sha256").update(bytes).digest("hex") !== ref.sha256)
-          return unknown;
+        if (createHash("sha256").update(bytes).digest("hex") !== ref.sha256) return unknown;
         const value: unknown = JSON.parse(bytes.toString("utf8"));
-        if (!value || typeof value !== "object" || Array.isArray(value))
-          return unknown;
+        if (!value || typeof value !== "object" || Array.isArray(value)) return unknown;
         payload = value as Record<string, unknown>;
         if (
           !Number.isSafeInteger(payload.exitCode) ||
@@ -156,8 +130,7 @@ export async function inspectPrimaryOperationEvidence(
         )
           return unknown;
       }
-      const payloadHasClassification =
-        payload?.failureClassification !== undefined;
+      const payloadHasClassification = payload?.failureClassification !== undefined;
       if (metadataHasClassification || payloadHasClassification) {
         if (
           metadata.failureClassification !== "dependency-outage" ||
@@ -174,12 +147,8 @@ export async function inspectPrimaryOperationEvidence(
         status: "stopped-after-dispatch",
         operationId: operationID,
         execution: entry.executions,
-        ...(failureClassification === undefined
-          ? {}
-          : { failureClassification }),
-        ...(entry.lastSessionId === undefined
-          ? {}
-          : { sessionId: entry.lastSessionId }),
+        ...(failureClassification === undefined ? {} : { failureClassification }),
+        ...(entry.lastSessionId === undefined ? {} : { sessionId: entry.lastSessionId }),
       };
     }
     return unknown;
@@ -189,17 +158,13 @@ export async function inspectPrimaryOperationEvidence(
 }
 function within(root: string, value: string): boolean {
   const rel = path.relative(root, value);
-  return (
-    rel === "" ||
-    (!rel.startsWith(`..${path.sep}`) && rel !== ".." && !path.isAbsolute(rel))
-  );
+  return rel === "" || (!rel.startsWith(`..${path.sep}`) && rel !== ".." && !path.isAbsolute(rel));
 }
 function assertNoSymlinks(root: string, file: string): void {
   const rel = path.relative(root, file);
   let current = root;
   for (const part of rel.split(path.sep)) {
     current = path.join(current, part);
-    if (fs.lstatSync(current).isSymbolicLink())
-      throw new Error("symlink component");
+    if (fs.lstatSync(current).isSymbolicLink()) throw new Error("symlink component");
   }
 }

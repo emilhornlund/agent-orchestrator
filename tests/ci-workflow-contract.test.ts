@@ -52,13 +52,7 @@ describe("collectCiWorkflowExpectationSources", () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "ci-workflow-contract-"));
     addWorkflow(
       "release.yaml",
-      [
-        "name: Release",
-        "on: workflow_dispatch",
-        "jobs:",
-        "  release:",
-        "    steps: []",
-      ].join("\n"),
+      ["name: Release", "on: workflow_dispatch", "jobs:", "  release:", "    steps: []"].join("\n"),
     );
     expect(collectCiWorkflowExpectationSources(root)).toEqual([]);
   });
@@ -68,33 +62,30 @@ describe("collectCiWorkflowExpectationSources", () => {
     ["klurigo", "main", "['**']", true],
     ["rpg-sdl", "feature", "[main]", false],
     ["agent-orchestrator", "release/1", "['**', '!release/**']", false],
-  ])(
-    "evaluates %s pull-request branch filters",
-    (_project, base, filter, applicable) => {
-      root = fs.mkdtempSync(path.join(os.tmpdir(), "ci-workflow-branches-"));
-      addWorkflow(
-        "ci.yml",
-        [
-          "name: CI",
-          "on:",
-          "  pull_request:",
-          `    branches: ${filter}`,
-          "jobs:",
-          "  test:",
-          "    runs-on: ubuntu-latest",
-          "    steps: []",
-        ].join("\n"),
-      );
+  ])("evaluates %s pull-request branch filters", (_project, base, filter, applicable) => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "ci-workflow-branches-"));
+    addWorkflow(
+      "ci.yml",
+      [
+        "name: CI",
+        "on:",
+        "  pull_request:",
+        `    branches: ${filter}`,
+        "jobs:",
+        "  test:",
+        "    runs-on: ubuntu-latest",
+        "    steps: []",
+      ].join("\n"),
+    );
 
-      const sources = collectCiWorkflowExpectationSources(root, base);
-      expect(sources).toHaveLength(applicable ? 1 : 0);
-      if (applicable)
-        expect(sources[0]).toMatchObject({
-          complete: true,
-          checkNames: ["test"],
-        });
-    },
-  );
+    const sources = collectCiWorkflowExpectationSources(root, base);
+    expect(sources).toHaveLength(applicable ? 1 : 0);
+    if (applicable)
+      expect(sources[0]).toMatchObject({
+        complete: true,
+        checkNames: ["test"],
+      });
+  });
 
   it("excludes branches-ignore matches and leaves unavailable branch context uncertain", () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "ci-workflow-ignore-"));
@@ -119,40 +110,29 @@ describe("collectCiWorkflowExpectationSources", () => {
   });
 
   it.each([
-    [
-      "conditional job",
-      [],
-      ["    if: github.event.pull_request.draft == false"],
-    ],
-    [
-      "matrix job",
-      [],
-      ["    strategy:", "      matrix:", "        node: [20, 22]"],
-    ],
+    ["conditional job", [], ["    if: github.event.pull_request.draft == false"]],
+    ["matrix job", [], ["    strategy:", "      matrix:", "        node: [20, 22]"]],
     ["filtered workflow", ["    paths: [src/**]"], []],
-  ])(
-    "marks a %s workflow contract incomplete",
-    (label, triggerExtras, jobExtras) => {
-      root = fs.mkdtempSync(path.join(os.tmpdir(), `ci-workflow-${label}-`));
-      addWorkflow(
-        "ci.yml",
-        [
-          "name: CI",
-          "on:",
-          "  pull_request:",
-          ...triggerExtras,
-          "jobs:",
-          "  test:",
-          ...jobExtras,
-          "    runs-on: ubuntu-latest",
-          "    steps: []",
-        ].join("\n"),
-      );
-      expect(collectCiWorkflowExpectationSources(root)).toMatchObject([
-        { complete: false, kind: "workflow-contract" },
-      ]);
-    },
-  );
+  ])("marks a %s workflow contract incomplete", (label, triggerExtras, jobExtras) => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), `ci-workflow-${label}-`));
+    addWorkflow(
+      "ci.yml",
+      [
+        "name: CI",
+        "on:",
+        "  pull_request:",
+        ...triggerExtras,
+        "jobs:",
+        "  test:",
+        ...jobExtras,
+        "    runs-on: ubuntu-latest",
+        "    steps: []",
+      ].join("\n"),
+    );
+    expect(collectCiWorkflowExpectationSources(root)).toMatchObject([
+      { complete: false, kind: "workflow-contract" },
+    ]);
+  });
 
   it("returns no contracts when the repository has no workflow directory", () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "ci-workflow-contract-"));

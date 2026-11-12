@@ -12,11 +12,7 @@ import { readPreparedConflict } from "../orchestrator/prepared-conflict-state.js
 import { parseTaskMutationBlock } from "../orchestrator/task-mutation-block-store.js";
 import { loadReconciliationBlock } from "../orchestrator/reconciliation-block-storage.js";
 import { parseTaskExecutionRecord } from "./task-execution-record.js";
-import {
-  parseRunRecord,
-  type RunRecord,
-  type RunLifecycleState,
-} from "./run-record.js";
+import { parseRunRecord, type RunRecord, type RunLifecycleState } from "./run-record.js";
 import { RunRegistry, RunStore, type RunStoreLease } from "./run-store.js";
 import { ProjectRunAuthority } from "./project-run-authority.js";
 
@@ -108,9 +104,7 @@ function buildLegacyCompatibilityProjection(
     compatibility[key] = value;
   }
   if (!Object.hasOwn(compatibility, `task-execution-${cardId}`))
-    throw new Error(
-      "Legacy compatibility snapshot is missing task execution state",
-    );
+    throw new Error("Legacy compatibility snapshot is missing task execution state");
   return compatibility;
 }
 
@@ -118,10 +112,7 @@ function readSafeDirectory(directory: string): fs.Dirent[] | null {
   const absolute = path.resolve(directory);
   const parsed = path.parse(absolute);
   let current = parsed.root;
-  for (const component of path
-    .relative(parsed.root, absolute)
-    .split(path.sep)
-    .filter(Boolean)) {
+  for (const component of path.relative(parsed.root, absolute).split(path.sep).filter(Boolean)) {
     current = path.join(current, component);
     const stat = fs.lstatSync(current, { throwIfNoEntry: false });
     if (!stat) return null;
@@ -137,8 +128,7 @@ export function inventoryLegacyProject(options: {
   readonly runtimeRoot: string;
   readonly project: ProjectConfig;
 }): { records: LegacySourceRecord[]; blockers: string[] } {
-  if (!path.isAbsolute(options.runtimeRoot))
-    throw new Error("Runtime root must be absolute");
+  if (!path.isAbsolute(options.runtimeRoot)) throw new Error("Runtime root must be absolute");
   const { runtimeRoot, project } = options;
   const roots: { family: string; directory: string }[] = [
     {
@@ -211,11 +201,7 @@ export function inventoryLegacyProject(options: {
   const add = (family: string, file: string): void => {
     try {
       const stat = fs.lstatSync(file);
-      if (
-        !stat.isFile() ||
-        stat.isSymbolicLink() ||
-        stat.size > 8 * 1024 * 1024
-      )
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 8 * 1024 * 1024)
         throw new Error("unsafe, non-file, symlink, or oversized source");
       const bytes = fs.readFileSync(file);
       const parsed: unknown = JSON.parse(bytes.toString("utf8"));
@@ -257,21 +243,16 @@ export function inventoryLegacyProject(options: {
           data.defaultBranch !== project.repository.defaultBranch ||
           path.basename(file, ".json") !== data.cardId
         )
-          throw new Error(
-            "commit state path/branch does not match configured project and card",
-          );
+          throw new Error("commit state path/branch does not match configured project and card");
       } else if (family === "prepared-conflicts") {
         cardId = path.basename(file, ".json");
         const data = readPreparedConflict(project, cardId);
-        if (!data)
-          throw new Error("prepared conflict disappeared during inventory");
+        if (!data) throw new Error("prepared conflict disappeared during inventory");
         projectId = data.projectId;
       } else if (family === "reconciliation-block") {
         const loaded = loadReconciliationBlock(runtimeRoot, project.id);
         if (loaded.status !== "loaded")
-          throw new Error(
-            `reconciliation blocker could not be validated: ${loaded.status}`,
-          );
+          throw new Error(`reconciliation blocker could not be validated: ${loaded.status}`);
         projectId = loaded.block.projectId;
         cardId = loaded.block.cardId ?? null;
       } else {
@@ -280,13 +261,10 @@ export function inventoryLegacyProject(options: {
           .passthrough()
           .parse(parsed);
         projectId = data.projectId;
-        if ("cardId" in data && typeof data.cardId === "string")
-          cardId = data.cardId;
+        if ("cardId" in data && typeof data.cardId === "string") cardId = data.cardId;
       }
       if (projectId !== project.id) {
-        throw new Error(
-          `project association ${projectId} conflicts with configured ${project.id}`,
-        );
+        throw new Error(`project association ${projectId} conflicts with configured ${project.id}`);
       }
       if (
         cardId &&
@@ -312,9 +290,7 @@ export function inventoryLegacyProject(options: {
         parsed,
       });
     } catch (error) {
-      blockers.push(
-        `${file}: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      blockers.push(`${file}: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
   for (const { family, directory } of roots) {
@@ -371,21 +347,12 @@ export function inventoryLegacyProject(options: {
         !entry.isFile() ||
         !(
           entry.name.endsWith(".json") ||
-          (family === "reconciliation-block" &&
-            entry.name === "reconciliation-block.json")
+          (family === "reconciliation-block" && entry.name === "reconciliation-block.json")
         )
       )
         continue;
-      if (
-        family === "task-mutation-queues" &&
-        entry.name.endsWith(".block.json")
-      )
-        continue;
-      if (
-        family === "task-mutation-blocks" &&
-        !entry.name.endsWith(".block.json")
-      )
-        continue;
+      if (family === "task-mutation-queues" && entry.name.endsWith(".block.json")) continue;
+      if (family === "task-mutation-blocks" && !entry.name.endsWith(".block.json")) continue;
       add(family, path.join(directory, entry.name));
     }
   }
@@ -429,24 +396,14 @@ export function inventoryLegacyProject(options: {
     const raw = record.parsed as { sessionLogPaths?: unknown };
     if (!Array.isArray(raw.sessionLogPaths)) continue;
     for (const referenced of raw.sessionLogPaths) {
-      if (
-        typeof referenced !== "string" ||
-        !referenced ||
-        referenced.trim() !== referenced
-      ) {
-        blockers.push(
-          `${record.path}: invalid referenced session artifact path`,
-        );
+      if (typeof referenced !== "string" || !referenced || referenced.trim() !== referenced) {
+        blockers.push(`${record.path}: invalid referenced session artifact path`);
         continue;
       }
       const referencePath = path.resolve(runtimeRoot, referenced);
       try {
         const stat = fs.lstatSync(referencePath);
-        if (
-          !stat.isFile() ||
-          stat.isSymbolicLink() ||
-          stat.size > 8 * 1024 * 1024
-        )
+        if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 8 * 1024 * 1024)
           throw new Error("unsafe or oversized referenced artifact");
         const bytes = fs.readFileSync(referencePath);
         records.push({
@@ -467,21 +424,11 @@ export function inventoryLegacyProject(options: {
   }
   const byCard = new Map<string, LegacySourceRecord[]>();
   for (const record of records) {
-    if (record.cardId)
-      byCard.set(record.cardId, [...(byCard.get(record.cardId) ?? []), record]);
+    if (record.cardId) byCard.set(record.cardId, [...(byCard.get(record.cardId) ?? []), record]);
     const data = record.parsed as { operations?: unknown } | null;
-    if (
-      record.family === "pr-maintenance" &&
-      data &&
-      Array.isArray(data.operations)
-    )
+    if (record.family === "pr-maintenance" && data && Array.isArray(data.operations))
       for (const raw of data.operations) {
-        if (
-          !raw ||
-          typeof raw !== "object" ||
-          !("cardId" in raw) ||
-          typeof raw.cardId !== "string"
-        )
+        if (!raw || typeof raw !== "object" || !("cardId" in raw) || typeof raw.cardId !== "string")
           continue;
         const operation = raw as {
           cardId: string;
@@ -498,10 +445,7 @@ export function inventoryLegacyProject(options: {
             },
           },
         };
-        byCard.set(operation.cardId, [
-          ...(byCard.get(operation.cardId) ?? []),
-          associated,
-        ]);
+        byCard.set(operation.cardId, [...(byCard.get(operation.cardId) ?? []), associated]);
       }
   }
   for (const [card, values] of byCard) {
@@ -519,9 +463,7 @@ export function inventoryLegacyProject(options: {
         ((prior.url && next.url && prior.url !== next.url) ||
           (prior.head && next.head && prior.head !== next.head))
       )
-        blockers.push(
-          `${card}: conflicting PR URL or head identity across legacy records`,
-        );
+        blockers.push(`${card}: conflicting PR URL or head identity across legacy records`);
       identities.set(key, { ...prior, ...next });
     };
     for (const record of values) {
@@ -550,18 +492,12 @@ export function inventoryLegacyProject(options: {
             pullRequest?: unknown;
             expectedRemoteHead?: unknown;
           };
-          const maintenancePr = op.pullRequest as
-            { number?: unknown; url?: unknown } | undefined;
+          const maintenancePr = op.pullRequest as { number?: unknown; url?: unknown } | undefined;
           if (op.cardId === card)
-            addIdentity(
-              maintenancePr?.number,
-              maintenancePr?.url,
-              op.expectedRemoteHead,
-            );
+            addIdentity(maintenancePr?.number, maintenancePr?.url, op.expectedRemoteHead);
         }
     }
-    if (identities.size > 1)
-      blockers.push(`${card}: conflicting PR numbers across legacy records`);
+    if (identities.size > 1) blockers.push(`${card}: conflicting PR numbers across legacy records`);
   }
   const taskByCard = new Map(
     records
@@ -578,9 +514,7 @@ export function inventoryLegacyProject(options: {
         },
       ]),
   );
-  for (const record of records.filter(
-    (source) => source.family === "pr-maintenance",
-  )) {
+  for (const record of records.filter((source) => source.family === "pr-maintenance")) {
     const source = record.parsed as {
       operations?: {
         cardId?: string;
@@ -637,14 +571,11 @@ export function buildLegacyRunSnapshot(input: {
 } {
   const task = parseTaskExecutionRecord(input.rawTask);
   if (task.projectId !== input.pinned.projectId)
-    throw new Error(
-      "Legacy task project differs from pinned canonical project",
-    );
+    throw new Error("Legacy task project differs from pinned canonical project");
   if (input.lease.integrationId !== input.pinned.integrationId)
     throw new Error("Legacy import requires the matching canonical lease");
   const taskSource = input.sources.filter(
-    (source) =>
-      source.family === "task-executions" && source.cardId === task.cardId,
+    (source) => source.family === "task-executions" && source.cardId === task.cardId,
   );
   if (
     taskSource.length !== 1 ||
@@ -655,21 +586,14 @@ export function buildLegacyRunSnapshot(input: {
     );
   for (const source of input.sources) {
     const actualHash = createHash("sha256").update(source.bytes).digest("hex");
-    if (actualHash !== source.sha256)
-      throw new Error(`Source hash mismatch: ${source.path}`);
+    if (actualHash !== source.sha256) throw new Error(`Source hash mismatch: ${source.path}`);
     if (source.family !== "session-artifacts") {
-      const decoded: unknown = JSON.parse(
-        Buffer.from(source.bytes).toString("utf8"),
-      );
+      const decoded: unknown = JSON.parse(Buffer.from(source.bytes).toString("utf8"));
       if (JSON.stringify(decoded) !== JSON.stringify(source.parsed))
-        throw new Error(
-          `Parsed source differs from original bytes: ${source.path}`,
-        );
+        throw new Error(`Parsed source differs from original bytes: ${source.path}`);
     }
   }
-  const sortedSources = [...input.sources].sort((a, b) =>
-    a.path.localeCompare(b.path),
-  );
+  const sortedSources = [...input.sources].sort((a, b) => a.path.localeCompare(b.path));
   const sourceManifest = sortedSources.map(
     ({ path: sourcePath, family, projectId, cardId, sha256 }) => ({
       path: sourcePath,
@@ -710,20 +634,16 @@ export function buildLegacyRunSnapshot(input: {
     done: "human-review",
   };
   const mapped = sourcePhase[task.phase];
-  if (!mapped)
-    throw new Error(`Unsupported legacy phase: ${String(task.phase)}`);
+  if (!mapped) throw new Error(`Unsupported legacy phase: ${String(task.phase)}`);
   const checkpoint = mapped === "waiting" ? "implementation" : mapped;
-  const artifactDigest = createHash("sha256")
-    .update(artifact.content)
-    .digest("hex");
+  const artifactDigest = createHash("sha256").update(artifact.content).digest("hex");
   const artifactPath = path.join(
     input.pinned.storageRoot,
     "artifacts",
     attemptId,
     `sha256-${artifactDigest}`,
   );
-  const hasPr =
-    task.pullRequest !== undefined || task.externalRecovery !== undefined;
+  const hasPr = task.pullRequest !== undefined || task.externalRecovery !== undefined;
   const primarySession = task.primarySessionId;
   const compatibility = buildLegacyCompatibilityProjection(
     input.sources,
@@ -731,13 +651,10 @@ export function buildLegacyRunSnapshot(input: {
     task.cardId,
   );
   const hasPreparedConflict = input.sources.some(
-    (source) =>
-      source.family === "prepared-conflicts" && source.cardId === task.cardId,
+    (source) => source.family === "prepared-conflicts" && source.cardId === task.cardId,
   );
   const recoveryDisposition =
-    task.phase === "attention-required" ||
-    task.phase === "done" ||
-    hasPreparedConflict
+    task.phase === "attention-required" || task.phase === "done" || hasPreparedConflict
       ? "operator-reconciliation-required"
       : "task-session-reconcile";
   const run = parseRunRecord({
@@ -763,10 +680,7 @@ export function buildLegacyRunSnapshot(input: {
           : task.phase === "attention-required"
             ? "legacy-attention-required"
             : "legacy-execution-reconciliation",
-      dependency:
-        recoveryDisposition === "task-session-reconcile"
-          ? "task-session"
-          : "operator",
+      dependency: recoveryDisposition === "task-session-reconcile" ? "task-session" : "operator",
       since: stamp,
       retryAt: null,
     },
@@ -844,12 +758,9 @@ export function importLegacyRun(
     store.assertLeaseForImport();
     if (
       existing.attemptId !== candidate.record.attemptId ||
-      existing.legacy.sourceManifestHash !==
-        candidate.record.legacy.sourceManifestHash
+      existing.legacy.sourceManifestHash !== candidate.record.legacy.sourceManifestHash
     )
-      throw new Error(
-        "Conflicting imported candidate exists; preserve and reconcile",
-      );
+      throw new Error("Conflicting imported candidate exists; preserve and reconcile");
     return existing;
   }
   return store.importSnapshot(candidate.record, candidate.artifacts);
@@ -860,18 +771,12 @@ function assertManifestIntegrity(record: RunRecord): void {
   const claimed = record.legacy.sourceManifestHash;
   if (!Array.isArray(manifest) || typeof claimed !== "string")
     throw new Error("Imported candidate lacks source manifest provenance");
-  const computed = createHash("sha256")
-    .update(JSON.stringify(manifest))
-    .digest("hex");
-  if (computed !== claimed)
-    throw new Error("Imported source manifest hash mismatch");
+  const computed = createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
+  if (computed !== claimed) throw new Error("Imported source manifest hash mismatch");
   const artifact = record.artifacts.find(
-    (item) =>
-      item.mediaType ===
-      "application/vnd.agent-orchestrator.legacy-snapshot+json",
+    (item) => item.mediaType === "application/vnd.agent-orchestrator.legacy-snapshot+json",
   );
-  if (!artifact)
-    throw new Error("Imported source snapshot artifact is missing");
+  if (!artifact) throw new Error("Imported source snapshot artifact is missing");
   const snapshot: unknown = JSON.parse(fs.readFileSync(artifact.path, "utf8"));
   const envelope = z
     .strictObject({
@@ -890,9 +795,7 @@ function assertManifestIntegrity(record: RunRecord): void {
     })
     .parse(snapshot);
   if (JSON.stringify(envelope.sourceManifest) !== JSON.stringify(manifest))
-    throw new Error(
-      "Snapshot artifact manifest differs from candidate provenance",
-    );
+    throw new Error("Snapshot artifact manifest differs from candidate provenance");
   const seenPaths = new Set<string>();
   const manifestByPath = new Map<
     string,
@@ -924,8 +827,7 @@ function assertManifestIntegrity(record: RunRecord): void {
   }
   let matchingTaskCount = 0;
   for (const source of envelope.sources) {
-    if (seenPaths.has(source.path))
-      throw new Error("Duplicate source path in import snapshot");
+    if (seenPaths.has(source.path)) throw new Error("Duplicate source path in import snapshot");
     seenPaths.add(source.path);
     const manifestEntry = manifestByPath.get(source.path);
     if (
@@ -935,35 +837,24 @@ function assertManifestIntegrity(record: RunRecord): void {
       manifestEntry.cardId !== source.cardId ||
       manifestEntry.sha256 !== source.sha256
     )
-      throw new Error(
-        `Source snapshot does not match manifest entry: ${source.path}`,
-      );
+      throw new Error(`Source snapshot does not match manifest entry: ${source.path}`);
     const bytes = Buffer.from(source.bytesBase64, "base64");
     if (createHash("sha256").update(bytes).digest("hex") !== source.sha256)
       throw new Error(`Snapshot source hash mismatch: ${source.path}`);
-    if (
-      source.family === "task-executions" &&
-      source.cardId === record.cardId
-    ) {
-      const task = parseTaskExecutionRecord(
-        JSON.parse(bytes.toString("utf8")) as unknown,
-      );
+    if (source.family === "task-executions" && source.cardId === record.cardId) {
+      const task = parseTaskExecutionRecord(JSON.parse(bytes.toString("utf8")) as unknown);
       if (
         task.projectId !== record.projectId ||
         JSON.stringify(task) !== JSON.stringify(record.legacy.legacyTaskRecord)
       )
-        throw new Error(
-          "Snapshot task source does not match preserved task identity",
-        );
+        throw new Error("Snapshot task source does not match preserved task identity");
       matchingTaskCount += 1;
     }
   }
   if (seenPaths.size !== manifestByPath.size)
     throw new Error("Source snapshot is missing manifest entries");
   if (matchingTaskCount !== 1)
-    throw new Error(
-      "Snapshot must contain exactly one matching task authority",
-    );
+    throw new Error("Snapshot must contain exactly one matching task authority");
 }
 
 interface MigrationMarker {
@@ -994,10 +885,7 @@ function ensureSafeDirectory(directory: string): void {
   const absolute = path.resolve(directory);
   const parsed = path.parse(absolute);
   let current = parsed.root;
-  for (const component of path
-    .relative(parsed.root, absolute)
-    .split(path.sep)
-    .filter(Boolean)) {
+  for (const component of path.relative(parsed.root, absolute).split(path.sep).filter(Boolean)) {
     current = path.join(current, component);
     let stat = fs.lstatSync(current, { throwIfNoEntry: false });
     if (!stat) {
@@ -1051,16 +939,12 @@ function writeMigrationMarker(file: string, marker: MigrationMarker): void {
 function readMigrationMarker(file: string): unknown {
   const descriptor = fs.openSync(
     file,
-    fs.constants.O_RDONLY |
-      (fs.constants.O_NOFOLLOW ?? 0) |
-      (fs.constants.O_NONBLOCK ?? 0),
+    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0),
   );
   try {
     const stat = fs.fstatSync(descriptor);
     if (!stat.isFile() || stat.size > 4 * 1024 * 1024)
-      throw new Error(
-        "Unsafe or oversized migration marker; preserve project blockage",
-      );
+      throw new Error("Unsafe or oversized migration marker; preserve project blockage");
     return JSON.parse(fs.readFileSync(descriptor, "utf8")) as unknown;
   } finally {
     fs.closeSync(descriptor);
@@ -1081,13 +965,8 @@ export function migrateLegacyAttempt(options: {
   options.lease.assertHeld();
   const { store, registry, candidate, lease } = options;
   const stagedArtifacts = store.stageImportArtifacts(candidate.artifacts);
-  if (
-    JSON.stringify(stagedArtifacts) !==
-    JSON.stringify(candidate.record.artifacts)
-  )
-    throw new Error(
-      "Staged snapshot artifacts do not match candidate manifest; migration blocked",
-    );
+  if (JSON.stringify(stagedArtifacts) !== JSON.stringify(candidate.record.artifacts))
+    throw new Error("Staged snapshot artifacts do not match candidate manifest; migration blocked");
   options.afterDurableStage?.("artifacts-durable");
   const sourceManifest = candidate.record.legacy.sourceManifest;
   const manifestHash = String(candidate.record.legacy.sourceManifestHash);
@@ -1095,11 +974,7 @@ export function migrateLegacyAttempt(options: {
   const markerId = createHash("sha256")
     .update(`${lease.integrationId}:${candidate.record.attemptId}`)
     .digest("hex");
-  const markerPath = path.join(
-    options.markerRoot,
-    "migrations",
-    `${markerId}.json`,
-  );
+  const markerPath = path.join(options.markerRoot, "migrations", `${markerId}.json`);
   ensureSafeDirectory(path.dirname(markerPath));
   const expectedPrior = registry.read();
   let marker: MigrationMarker;
@@ -1127,12 +1002,9 @@ export function migrateLegacyAttempt(options: {
       validated.integrationId !== lease.integrationId ||
       validated.attemptId !== candidate.record.attemptId ||
       validated.manifestHash !== manifestHash ||
-      JSON.stringify(validated.sourceManifest) !==
-        JSON.stringify(sourceManifest)
+      JSON.stringify(validated.sourceManifest) !== JSON.stringify(sourceManifest)
     )
-      throw new Error(
-        "Conflicting migration marker; preserve project blockage",
-      );
+      throw new Error("Conflicting migration marker; preserve project blockage");
     marker = validated as MigrationMarker;
   } else {
     marker = {
@@ -1153,29 +1025,20 @@ export function migrateLegacyAttempt(options: {
       "Migration marker records an installed/published candidate that is missing; stale legacy state will not be re-imported",
     );
   if (!current && expectedPrior?.attemptId === marker.attemptId)
-    throw new Error(
-      "Registry points to a missing migrated attempt; preserve project blockage",
-    );
+    throw new Error("Registry points to a missing migrated attempt; preserve project blockage");
   if (current) {
     assertManifestIntegrity(current);
     if (
       current.attemptId !== candidate.record.attemptId ||
       current.legacy.sourceManifestHash !== manifestHash
     )
-      throw new Error(
-        "Installed candidate provenance conflicts; ownership unchanged",
-      );
+      throw new Error("Installed candidate provenance conflicts; ownership unchanged");
   }
   if (
     current &&
-    (current.owner.instanceId !== lease.instanceId ||
-      current.owner.token !== lease.token)
+    (current.owner.instanceId !== lease.instanceId || current.owner.token !== lease.token)
   ) {
-    current = store.takeOwnership(
-      current.revision,
-      current.owner.generation,
-      lease.token,
-    );
+    current = store.takeOwnership(current.revision, current.owner.generation, lease.token);
   }
   if (!current) {
     store.importSnapshot(candidate.record, candidate.artifacts);
@@ -1184,9 +1047,7 @@ export function migrateLegacyAttempt(options: {
     current.attemptId !== marker.attemptId ||
     current.legacy.sourceManifestHash !== marker.manifestHash
   )
-    throw new Error(
-      "Installed candidate conflicts with migration source manifest",
-    );
+    throw new Error("Installed candidate conflicts with migration source manifest");
   if (marker.stage === "snapshots-complete") {
     marker = { ...marker, stage: "candidate-installed" };
     writeMigrationMarker(markerPath, marker);
@@ -1234,23 +1095,15 @@ export function migrateLegacyProject(options: {
     project: options.project,
   });
   if (inventory.blockers.length)
-    throw new Error(
-      `Legacy project migration blocked: ${inventory.blockers.join("; ")}`,
-    );
-  const tasks = inventory.records.filter(
-    (source) => source.family === "task-executions",
-  );
+    throw new Error(`Legacy project migration blocked: ${inventory.blockers.join("; ")}`);
+  const tasks = inventory.records.filter((source) => source.family === "task-executions");
   if (tasks.length === 0) {
     if (inventory.records.length)
-      throw new Error(
-        "Legacy records exist without a task authority; project claim blocked",
-      );
+      throw new Error("Legacy records exist without a task authority; project claim blocked");
     return { status: "no-legacy-task" };
   }
   if (tasks.length !== 1)
-    throw new Error(
-      "Multiple legacy task records require explicit project-level reconciliation",
-    );
+    throw new Error("Multiple legacy task records require explicit project-level reconciliation");
   const task = tasks[0]!;
   const candidate = buildLegacyRunSnapshot({
     rawTask: task.parsed,
@@ -1262,11 +1115,7 @@ export function migrateLegacyProject(options: {
   const markerId = createHash("sha256")
     .update(`${options.lease.integrationId}:${candidate.record.attemptId}`)
     .digest("hex");
-  const markerPath = path.join(
-    options.pinned.storageRoot,
-    "migrations",
-    `${markerId}.json`,
-  );
+  const markerPath = path.join(options.pinned.storageRoot, "migrations", `${markerId}.json`);
   const currentPointer = options.registry.read();
   if (fs.existsSync(markerPath)) {
     const marker = z
@@ -1292,29 +1141,20 @@ export function migrateLegacyProject(options: {
       marker.attemptId !== candidate.record.attemptId ||
       marker.manifestHash !== candidate.record.legacy.sourceManifestHash
     )
-      throw new Error(
-        "Legacy migration marker identity conflicts with source snapshot",
-      );
-    if (
-      marker.stage === "complete" &&
-      currentPointer?.attemptId === candidate.record.attemptId
-    ) {
+      throw new Error("Legacy migration marker identity conflicts with source snapshot");
+    if (marker.stage === "complete" && currentPointer?.attemptId === candidate.record.attemptId) {
       const existingStore = RunStore.openWithPersistedIdentity(
         options.pinned.storageRoot,
         candidate.record.attemptId,
         options.lease,
       );
-      if (!existingStore)
-        throw new Error("Completed migration candidate disappeared");
+      if (!existingStore) throw new Error("Completed migration candidate disappeared");
       const existing = existingStore.read();
       if (
         !existing ||
-        existing.legacy.sourceManifestHash !==
-          candidate.record.legacy.sourceManifestHash
+        existing.legacy.sourceManifestHash !== candidate.record.legacy.sourceManifestHash
       )
-        throw new Error(
-          "Completed legacy migration marker does not match its durable candidate",
-        );
+        throw new Error("Completed legacy migration marker does not match its durable candidate");
       return { status: "imported", record: existing };
     }
     if (
@@ -1325,15 +1165,12 @@ export function migrateLegacyProject(options: {
       return { status: "no-legacy-task" };
   }
   const record = migrateLegacyAttempt({
-    store:
-      options.storeForAttempt?.(candidate.record.attemptId) ?? options.store,
+    store: options.storeForAttempt?.(candidate.record.attemptId) ?? options.store,
     registry: options.registry,
     lease: options.lease,
     candidate,
     markerRoot: options.pinned.storageRoot,
-    ...(options.afterDurableStage
-      ? { afterDurableStage: options.afterDurableStage }
-      : {}),
+    ...(options.afterDurableStage ? { afterDurableStage: options.afterDurableStage } : {}),
   });
   return { status: "imported", record };
 }

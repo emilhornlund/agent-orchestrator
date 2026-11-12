@@ -4,8 +4,7 @@ import { acquireProjectOwnership } from "../../src/coordination/project-ownershi
 import path from "node:path";
 
 const [root, barrier, clock, effect = "pr"] = process.argv.slice(2);
-if (!root || !barrier || !clock)
-  throw new Error("Missing publication crash arguments");
+if (!root || !barrier || !clock) throw new Error("Missing publication crash arguments");
 let time = Number(clock);
 globalThis.Date = new Proxy(Date, {
   construct(target, args) {
@@ -48,19 +47,13 @@ f.store.persistMutationIntent = (...args) => {
 const record = f.store.recordMutationEvent.bind(f.store);
 f.store.recordMutationEvent = (...args) => {
   const event = args[4] as { type: string; outcome?: string };
-  if (
-    args[2] === `initial:${effect}` &&
-    barrier === "response" &&
-    event.type === "response"
-  )
+  if (args[2] === `initial:${effect}` && barrier === "response" && event.type === "response")
     stop();
   const result = record(...args);
   if (
     args[2] === `initial:${effect}` &&
     ((barrier === "dispatch" && event.type === "dispatch") ||
-      (barrier === "completion" &&
-        event.type === "observe" &&
-        event.outcome === "verified"))
+      (barrier === "completion" && event.type === "observe" && event.outcome === "verified"))
   )
     stop();
   return result;

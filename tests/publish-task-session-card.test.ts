@@ -4,10 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import type { GitClient } from "../src/git/git-client.js";
-import {
-  publishCard,
-  type PublishCardOptions,
-} from "../src/orchestrator/publish-card.js";
+import { publishCard, type PublishCardOptions } from "../src/orchestrator/publish-card.js";
 import { publishTaskSessionCard } from "../src/orchestrator/publish-task-session-card.js";
 import {
   readPendingCommitState,
@@ -64,9 +61,7 @@ const evidence: VerifiedPublicationDecisionInput = {
 };
 
 function fixture() {
-  const stateRoot = fs.mkdtempSync(
-    path.join(os.tmpdir(), "task-session-publish-"),
-  );
+  const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "task-session-publish-"));
   temporaryRoots.push(stateRoot);
   const project = {
     id: "project",
@@ -78,10 +73,7 @@ function fixture() {
   } as ProjectConfig;
   const card = { id: "card" } as TrelloCard;
   const git = {
-    getHeadSha: vi
-      .fn()
-      .mockResolvedValueOnce("a".repeat(40))
-      .mockResolvedValue("b".repeat(40)),
+    getHeadSha: vi.fn().mockResolvedValueOnce("a".repeat(40)).mockResolvedValue("b".repeat(40)),
     stageAllExcept: vi.fn(),
     commit: vi.fn(),
     getCommitCountBetween: vi.fn().mockResolvedValue(1),
@@ -117,8 +109,7 @@ describe("publishTaskSessionCard", () => {
         {
           requirementId: "REQ-1",
           status: "unsatisfied" as const,
-          details:
-            "The current source misses the requested persistence behavior.",
+          details: "The current source misses the requested persistence behavior.",
           evidence: [],
         },
       ],
@@ -141,8 +132,7 @@ describe("publishTaskSessionCard", () => {
       review,
     };
     const preparedReviewPublication = {
-      reviewResult:
-        "Failed (human review required; material findings unresolved)",
+      reviewResult: "Failed (human review required; material findings unresolved)",
       reviewDisclosure: review,
       qualityNeedsDraft: false,
     };
@@ -156,9 +146,7 @@ describe("publishTaskSessionCard", () => {
 
     const publicationOptions = vi.mocked(publishCard).mock.calls[0]?.[0];
     expect(publicationOptions?.reviewResult).toBe("Passed");
-    await expect(
-      publicationOptions?.beforePushVerification?.(),
-    ).resolves.toEqual({
+    await expect(publicationOptions?.beforePushVerification?.()).resolves.toEqual({
       ...preparedReviewPublication,
       readinessEvidence: currentEvidence,
     });
@@ -184,8 +172,7 @@ describe("publishTaskSessionCard", () => {
   it("blocks publication when configured setup has no validated commit disposition", async () => {
     const { base, git } = fixture();
     vi.mocked(publishCard).mockClear();
-    (base.project.repository as { setupCommand?: string }).setupCommand =
-      "yarn install";
+    (base.project.repository as { setupCommand?: string }).setupCommand = "yarn install";
     await expect(publishTaskSessionCard(base as never)).rejects.toThrow(
       "Setup commit disposition is unavailable",
     );
@@ -197,8 +184,7 @@ describe("publishTaskSessionCard", () => {
   it("fails closed for an existing PR when historical setup scope proof is missing", async () => {
     const { base, git } = fixture();
     vi.mocked(publishCard).mockClear();
-    (base.project.repository as { setupCommand?: string }).setupCommand =
-      "yarn install";
+    (base.project.repository as { setupCommand?: string }).setupCommand = "yarn install";
     await expect(
       publishTaskSessionCard({
         ...base,
@@ -221,19 +207,13 @@ describe("publishTaskSessionCard", () => {
     });
     await publishTaskSessionCard(base as never);
     expect(readPendingCommitState(base.project, base.card.id)).toBeNull();
-    expect(readTrustedCommitState(base.project, base.card.id)?.commitSha).toBe(
-      "b".repeat(40),
-    );
+    expect(readTrustedCommitState(base.project, base.card.id)?.commitSha).toBe("b".repeat(40));
   });
 
   it("preserves unresolved commit intent when commit execution fails", async () => {
     const { base, git } = fixture();
-    vi.mocked(git.commit).mockRejectedValueOnce(
-      new Error("commit interrupted"),
-    );
-    await expect(publishTaskSessionCard(base as never)).rejects.toThrow(
-      "commit interrupted",
-    );
+    vi.mocked(git.commit).mockRejectedValueOnce(new Error("commit interrupted"));
+    await expect(publishTaskSessionCard(base as never)).rejects.toThrow("commit interrupted");
     expect(readPendingCommitState(base.project, base.card.id)).toMatchObject({
       parentSha: "a".repeat(40),
     });
@@ -275,9 +255,7 @@ describe("publishTaskSessionCard", () => {
         claimHumanReviewNotification,
       }),
     );
-    expect(vi.mocked(publishCard).mock.calls[0]?.[0]).not.toHaveProperty(
-      "deferAutoMerge",
-    );
+    expect(vi.mocked(publishCard).mock.calls[0]?.[0]).not.toHaveProperty("deferAutoMerge");
   });
 
   it("publishes exhausted failed reviews only to Human Review with valid snapshot evidence", async () => {

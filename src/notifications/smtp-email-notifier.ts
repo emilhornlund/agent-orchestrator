@@ -38,22 +38,13 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function redactCredentials(
-  message: string,
-  options: SmtpEmailNotifierOptions,
-): string {
+function redactCredentials(message: string, options: SmtpEmailNotifierOptions): string {
   return [options.username, options.password]
     .filter((credential) => credential.length > 0)
-    .reduce(
-      (redacted, credential) => redacted.split(credential).join("[redacted]"),
-      message,
-    );
+    .reduce((redacted, credential) => redacted.split(credential).join("[redacted]"), message);
 }
 
-function deliveryError(
-  error: unknown,
-  options: SmtpEmailNotifierOptions,
-): Error {
+function deliveryError(error: unknown, options: SmtpEmailNotifierOptions): Error {
   const message = getErrorMessage(error);
   // A concrete SMTP negative reply is proof only when the transaction failed
   // before message acceptance. Socket errors/timeouts, including after DATA,
@@ -67,9 +58,7 @@ function deliveryError(
     error.responseCode <= 599 &&
     "command" in error &&
     typeof error.command === "string" &&
-    /^(DATA|AUTH|MAIL FROM|RCPT TO|STARTTLS|EHLO|HELO|CONN)/u.test(
-      error.command,
-    )
+    /^(DATA|AUTH|MAIL FROM|RCPT TO|STARTTLS|EHLO|HELO|CONN)/u.test(error.command)
   ) {
     return new NotificationNotDeliveredError(
       "SMTP delivery failed: transaction rejected before acceptance",
@@ -80,9 +69,7 @@ function deliveryError(
     return new Error(message);
   }
 
-  return new Error(
-    `SMTP delivery failed: ${redactCredentials(message, options)}`,
-  );
+  return new Error(`SMTP delivery failed: ${redactCredentials(message, options)}`);
 }
 
 export class SmtpEmailNotifier implements EmailNotifier {
@@ -104,9 +91,7 @@ export class SmtpEmailNotifier implements EmailNotifier {
 
   async send(message: EmailMessage): Promise<EmailDeliveryReceipt> {
     if (this.options.signal?.aborted) {
-      throw new NotificationNotDeliveredError(
-        "SMTP delivery aborted before submission",
-      );
+      throw new NotificationNotDeliveredError("SMTP delivery aborted before submission");
     }
 
     // Observe protocol progress, not error wording/codes. Nodemailer's client
@@ -116,8 +101,7 @@ export class SmtpEmailNotifier implements EmailNotifier {
     let submissionPossible = false;
     const protocolLogger = {
       debug(data: { tnx?: string }, text: string) {
-        if (data.tnx === "client" && /^DATA(?:\s|$)/u.test(text))
-          submissionPossible = true;
+        if (data.tnx === "client" && /^DATA(?:\s|$)/u.test(text)) submissionPossible = true;
       },
       trace() {},
       info() {},
@@ -133,10 +117,7 @@ export class SmtpEmailNotifier implements EmailNotifier {
 
     const getSocket = (
       _transportOptions: unknown,
-      callback: (
-        error: Error | null,
-        socketOptions: SmtpSocketOptions | false,
-      ) => void,
+      callback: (error: Error | null, socketOptions: SmtpSocketOptions | false) => void,
     ): void => {
       if (abortRequested) {
         callback(abortError, false);
@@ -159,17 +140,12 @@ export class SmtpEmailNotifier implements EmailNotifier {
       const connectionTimer = setTimeout(() => {
         socket.destroy();
         complete(
-          new Error(
-            `SMTP connection timed out after ${this.options.timeoutMilliseconds}ms`,
-          ),
+          new Error(`SMTP connection timed out after ${this.options.timeoutMilliseconds}ms`),
           false,
         );
       }, this.options.timeoutMilliseconds);
 
-      const complete = (
-        error: Error | null,
-        socketOptions: SmtpSocketOptions | false,
-      ): void => {
+      const complete = (error: Error | null, socketOptions: SmtpSocketOptions | false): void => {
         if (settled) {
           return;
         }
@@ -196,9 +172,7 @@ export class SmtpEmailNotifier implements EmailNotifier {
 
         complete(
           null,
-          this.options.secure
-            ? { connection: socket, secured: true }
-            : { connection: socket },
+          this.options.secure ? { connection: socket, secured: true } : { connection: socket },
         );
       };
 
@@ -264,15 +238,11 @@ export class SmtpEmailNotifier implements EmailNotifier {
           });
 
       const receipt: unknown =
-        aborted === undefined
-          ? await delivery
-          : await Promise.race([delivery, aborted]);
+        aborted === undefined ? await delivery : await Promise.race([delivery, aborted]);
       const info = receipt as { messageId?: unknown; rejected?: unknown };
       return {
         providerId: sanitizeControlledText(
-          typeof info.messageId === "string"
-            ? info.messageId
-            : (message.messageId ?? "SMTP relay"),
+          typeof info.messageId === "string" ? info.messageId : (message.messageId ?? "SMTP relay"),
         ),
         partial: Array.isArray(info.rejected) && info.rejected.length > 0,
       };

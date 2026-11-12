@@ -35,10 +35,7 @@ export interface RunPlanVerificationOptions {
   projectId: string;
   card: TrelloCard;
   attachmentContext?: CardAttachmentPromptContext;
-  runOptions: Omit<
-    OpenCodeRunOptions,
-    "prompt" | "sessionId" | "captureSessionId"
-  >;
+  runOptions: Omit<OpenCodeRunOptions, "prompt" | "sessionId" | "captureSessionId">;
 }
 
 export interface PlanVerificationOperationResult {
@@ -49,15 +46,8 @@ export interface PlanVerificationOperationResult {
 export async function runPlanVerification(
   options: RunPlanVerificationOptions,
 ): Promise<PlanVerificationOperationResult> {
-  const {
-    taskRecordStore,
-    planStore,
-    openCode,
-    projectId,
-    card,
-    attachmentContext,
-    runOptions,
-  } = options;
+  const { taskRecordStore, planStore, openCode, projectId, card, attachmentContext, runOptions } =
+    options;
   const taskRecord = taskRecordStore.read(card.id);
 
   if (
@@ -73,11 +63,7 @@ export async function runPlanVerification(
     );
   }
 
-  const storedPlan = planStore.read(
-    card.id,
-    taskRecord.revision,
-    taskRecord.operationKey,
-  );
+  const storedPlan = planStore.read(card.id, taskRecord.revision, taskRecord.operationKey);
 
   if (storedPlan === null) {
     throw new PlanVerificationOperationError(
@@ -99,18 +85,15 @@ export async function runPlanVerification(
   try {
     runResult = await openCode.run({
       ...runOptions,
-      sessionLogPath:
-        runOptions.sessionLogPath ?? getSessionLogPath(projectId, card.id),
+      sessionLogPath: runOptions.sessionLogPath ?? getSessionLogPath(projectId, card.id),
       sessionLabel: runOptions.sessionLabel ?? "Independent plan verification",
       prompt,
     });
   } catch (error) {
     if (runOptions.signal?.aborted) throw error;
-    const safelyStoppedTimeout =
-      error instanceof OpenCodeTimeoutError && error.treeStopped;
+    const safelyStoppedTimeout = error instanceof OpenCodeTimeoutError && error.treeStopped;
     const verifiedNeverDispatched =
-      error instanceof ProcessExecutionError &&
-      error.classification === "spawn-failure";
+      error instanceof ProcessExecutionError && error.classification === "spawn-failure";
     if (!safelyStoppedTimeout && !verifiedNeverDispatched) throw error;
     throw new PlanVerificationOperationError(
       "Independent plan review execution failed",
@@ -131,9 +114,7 @@ export async function runPlanVerification(
   let verification: PlanVerificationResult;
 
   try {
-    verification = parsePlanVerificationResult(
-      JSON.parse(runResult.output) as unknown,
-    );
+    verification = parsePlanVerificationResult(JSON.parse(runResult.output) as unknown);
   } catch (error) {
     throw new PlanVerificationOperationError(
       "Independent plan review returned a malformed structured result",

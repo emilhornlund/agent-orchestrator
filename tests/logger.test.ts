@@ -10,9 +10,7 @@ const timestamp = "2026-08-30T09:00:00.000Z";
 let temporaryDirectory: string | undefined;
 
 beforeEach(() => {
-  temporaryDirectory = fs.mkdtempSync(
-    path.join(os.tmpdir(), "orchestrator-logger-test-"),
-  );
+  temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "orchestrator-logger-test-"));
 
   vi.spyOn(process, "cwd").mockReturnValue(temporaryDirectory);
   vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -40,11 +38,7 @@ afterEach(() => {
 });
 
 function getDailyLogPath(): string {
-  return path.join(
-    temporaryDirectory!,
-    "logs",
-    "test-orchestrator-2026-08-30.log",
-  );
+  return path.join(temporaryDirectory!, "logs", "test-orchestrator-2026-08-30.log");
 }
 
 describe("Logger", () => {
@@ -103,12 +97,8 @@ describe("Logger", () => {
     expect(console.log).toHaveBeenCalledWith(
       `${timestamp} [project-1] first line\n${timestamp} [project-1] second line`,
     );
-    expect(console.warn).toHaveBeenCalledWith(
-      `${timestamp} [project-1] Task warning`,
-    );
-    expect(console.error).toHaveBeenCalledWith(
-      `${timestamp} [project-1] Task failed`,
-    );
+    expect(console.warn).toHaveBeenCalledWith(`${timestamp} [project-1] Task warning`);
+    expect(console.error).toHaveBeenCalledWith(`${timestamp} [project-1] Task failed`);
   });
 
   it("preserves console output outside Vitest regardless of the opt-in", () => {
@@ -120,15 +110,9 @@ describe("Logger", () => {
     logger.warn("Task warning");
     logger.error("Task failed");
 
-    expect(console.log).toHaveBeenCalledWith(
-      `${timestamp} [project-1] Agent Orchestrator started`,
-    );
-    expect(console.warn).toHaveBeenCalledWith(
-      `${timestamp} [project-1] Task warning`,
-    );
-    expect(console.error).toHaveBeenCalledWith(
-      `${timestamp} [project-1] Task failed`,
-    );
+    expect(console.log).toHaveBeenCalledWith(`${timestamp} [project-1] Agent Orchestrator started`);
+    expect(console.warn).toHaveBeenCalledWith(`${timestamp} [project-1] Task warning`);
+    expect(console.error).toHaveBeenCalledWith(`${timestamp} [project-1] Task failed`);
   });
 
   it("does not emit new console output for debug or info logs", () => {

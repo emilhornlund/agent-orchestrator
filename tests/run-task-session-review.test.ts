@@ -82,20 +82,14 @@ const plan: TaskPlan = {
 };
 
 function createFixture(options: { coverageCommand?: string } = {}) {
-  temporaryRoot = fs.mkdtempSync(
-    path.join(os.tmpdir(), "agent-orchestrator-task-review-"),
-  );
+  temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-task-review-"));
   const repositoryPath = path.join(temporaryRoot, "repository");
   const worktreeRoot = path.join(temporaryRoot, "worktrees");
   const worktreePath = path.join(worktreeRoot, card.id);
   const storageRoot = path.join(temporaryRoot, "runtime-state");
   fs.mkdirSync(repositoryPath);
   fs.mkdirSync(worktreePath, { recursive: true });
-  fs.writeFileSync(
-    path.join(worktreePath, "src.ts"),
-    "implementation\n",
-    "utf8",
-  );
+  fs.writeFileSync(path.join(worktreePath, "src.ts"), "implementation\n", "utf8");
   fs.writeFileSync(path.join(worktreePath, "new-test.ts"), "test\n", "utf8");
 
   const project = {
@@ -161,10 +155,7 @@ function createFixture(options: { coverageCommand?: string } = {}) {
     git,
     executionIdentity,
     createStoredPlan: async (includePlan = true) => {
-      const contentIdentity = await getTaskSessionSourceSnapshotIdentity(
-        git,
-        worktreePath,
-      );
+      const contentIdentity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
       taskRecordStore.create({
         ...executionIdentity,
         validationRepair: {
@@ -311,33 +302,28 @@ describe("runTaskSessionReview", () => {
   it.each([
     ["process-group uncertainty", new ProcessGroupTerminationError(1234)],
     ["process evidence failure", new ProcessEvidenceError("evidence failed")],
-  ])(
-    "propagates %s instead of treating it as optional review failure",
-    async (_label, failure) => {
-      const fixture = createFixture();
-      const identity = await fixture.createStoredPlan();
-      const run = vi.fn<RunOpenCode>().mockRejectedValue(failure);
+  ])("propagates %s instead of treating it as optional review failure", async (_label, failure) => {
+    const fixture = createFixture();
+    const identity = await fixture.createStoredPlan();
+    const run = vi.fn<RunOpenCode>().mockRejectedValue(failure);
 
-      await expect(
-        runTaskSessionReview(
-          reviewOptions(
-            fixture,
-            new OpenCodeClient(run),
-            successfulQualityEvidence(identity).validation,
-          ),
+    await expect(
+      runTaskSessionReview(
+        reviewOptions(
+          fixture,
+          new OpenCodeClient(run),
+          successfulQualityEvidence(identity).validation,
         ),
-      ).rejects.toBe(failure);
-    },
-  );
+      ),
+    ).rejects.toBe(failure);
+  });
 
   it("classifies a timeout as optional only when the process tree is confirmed stopped", async () => {
     const fixture = createFixture();
     const identity = await fixture.createStoredPlan();
     const run = vi
       .fn<RunOpenCode>()
-      .mockRejectedValue(
-        new OpenCodeTimeoutError(1_000, "review-execution", true),
-      );
+      .mockRejectedValue(new OpenCodeTimeoutError(1_000, "review-execution", true));
 
     await expect(
       runTaskSessionReview(
@@ -356,11 +342,7 @@ describe("runTaskSessionReview", () => {
     const run = vi
       .fn<RunOpenCode>()
       .mockRejectedValue(
-        new ProcessExecutionError(
-          "OpenCode",
-          "review-execution",
-          "spawn-failure",
-        ),
+        new ProcessExecutionError("OpenCode", "review-execution", "spawn-failure"),
       );
 
     await expect(
@@ -445,39 +427,24 @@ describe("runTaskSessionReview", () => {
     expect(run?.prompt).toContain("new-test.ts");
     expect(run?.prompt).toContain('"content": "test\\n"');
     expect(run?.prompt).toContain("validation passed");
-    expect(run?.prompt).toContain(
-      "status (string enum 'satisfied' or 'unsatisfied')",
-    );
+    expect(run?.prompt).toContain("status (string enum 'satisfied' or 'unsatisfied')");
     expect(run?.prompt).toContain(
       "kind (string enum 'defect', 'incomplete', or 'contract-violation')",
     );
     expect(run?.prompt).toContain(
       "explain concrete current-source evidence demonstrating why it is material and blocks",
     );
-    expect(run?.prompt).toContain(
-      "verify each previously reported blocking finding",
-    );
-    expect(run?.prompt).toContain(
-      "detect material regressions introduced by remediation",
-    );
-    expect(run?.prompt).toContain(
-      "independently reassess every approved requirement",
-    );
-    expect(run?.prompt).toContain(
-      "sourceContentIdentity equal to the reviewed source identity",
-    );
+    expect(run?.prompt).toContain("verify each previously reported blocking finding");
+    expect(run?.prompt).toContain("detect material regressions introduced by remediation");
+    expect(run?.prompt).toContain("independently reassess every approved requirement");
+    expect(run?.prompt).toContain("sourceContentIdentity equal to the reviewed source identity");
     expect(run?.prompt).toContain("unsupported hypothetical problems");
     expect(run?.prompt).toContain("do not run tests or other commands");
     expect(run?.prompt).toContain("Valid pass example:");
     expect(run?.prompt).toContain("Valid fail example:");
-    expect(run?.prompt).toContain(
-      "A valid 'fail' is a review verdict, not a format/parse error",
-    );
+    expect(run?.prompt).toContain("A valid 'fail' is a review verdict, not a format/parse error");
     expect(fixture.taskRecordStore.read(card.id)?.phase).toBe("review");
-    expect(fixture.git.getDiff).toHaveBeenCalledWith(
-      fixture.worktreePath,
-      true,
-    );
+    expect(fixture.git.getDiff).toHaveBeenCalledWith(fixture.worktreePath, true);
     expect(fixture.git.getDiff).toHaveBeenCalledWith(fixture.worktreePath);
   });
 
@@ -552,9 +519,7 @@ describe("runTaskSessionReview", () => {
     );
 
     expect(result.review.verdict).toBe("pass");
-    expect(runOpenCode.mock.calls[0]?.[0].prompt).toContain(
-      "No usable plan is available",
-    );
+    expect(runOpenCode.mock.calls[0]?.[0].prompt).toContain("No usable plan is available");
     expect(runOpenCode.mock.calls[0]?.[0].prompt).toContain(card.desc);
   });
 
@@ -586,9 +551,7 @@ describe("runTaskSessionReview", () => {
       "Do not report unrelated refactoring opportunities, stylistic preferences without an applicable contract, optional enhancements beyond approved scope, unsupported hypothetical problems, or requests to redesign an otherwise correct implementation as blocking findings.",
     );
     expect(prompt).toContain("These may not cause a failed review.");
-    expect(prompt).toContain(
-      "exactly these fields: version (number, exactly 1)",
-    );
+    expect(prompt).toContain("exactly these fields: version (number, exactly 1)");
   });
 
   it("returns blocking omitted-requirement and serious-defect findings without publication", async () => {
@@ -600,8 +563,7 @@ describe("runTaskSessionReview", () => {
       requirementAssessments: plan.requirements.map((requirement, index) => ({
         requirementId: requirement.id,
         status: index === 1 ? "unsatisfied" : "satisfied",
-        details:
-          index === 1 ? "REQ-2 behavior is omitted." : "REQ-1 is implemented.",
+        details: index === 1 ? "REQ-2 behavior is omitted." : "REQ-1 is implemented.",
         evidence: index === 1 ? [] : ["src.ts"],
       })),
       blockingFindings: [
@@ -662,9 +624,7 @@ describe("runTaskSessionReview", () => {
           location: { filePath: "src.ts", line: 8 },
         },
       ],
-      previousFindingAssessments: [
-        { findingId: "finding-prior", status: "resolved" },
-      ],
+      previousFindingAssessments: [{ findingId: "finding-prior", status: "resolved" }],
     };
     const runOpenCode = vi.fn<RunOpenCode>().mockResolvedValue({
       exitCode: 0,
@@ -717,11 +677,7 @@ describe("runTaskSessionReview", () => {
 
     await expect(
       runTaskSessionReview(
-        reviewOptions(
-          fixture,
-          new OpenCodeClient(runOpenCode),
-          evidence.validation,
-        ),
+        reviewOptions(fixture, new OpenCodeClient(runOpenCode), evidence.validation),
       ),
     ).rejects.toThrow("stale source snapshot");
     expect(runOpenCode).toHaveBeenCalledOnce();
@@ -789,12 +745,8 @@ describe("runTaskSessionReview", () => {
     ).rejects.toBeInstanceOf(TaskSessionReviewUnavailableError);
     expect(fixture.taskRecordStore.read(card.id)?.phase).toBe("review");
     expect(runOpenCode).toHaveBeenCalledTimes(2);
-    expect(runOpenCode.mock.calls[1]?.[0].prompt).toContain(
-      "FORMAT-ONLY CORRECTION",
-    );
-    expect(runOpenCode.mock.calls.every(([options]) => options.readOnly)).toBe(
-      true,
-    );
+    expect(runOpenCode.mock.calls[1]?.[0].prompt).toContain("FORMAT-ONLY CORRECTION");
+    expect(runOpenCode.mock.calls.every(([options]) => options.readOnly)).toBe(true);
   });
 
   it("accepts a corrected response after one format-only retry", async () => {
@@ -824,9 +776,7 @@ describe("runTaskSessionReview", () => {
     expect(result.review.verdict).toBe("pass");
     expect(runOpenCode).toHaveBeenCalledTimes(2);
     expect(runOpenCode.mock.calls[1]?.[0].prompt).toContain("{not json}");
-    expect(runOpenCode.mock.calls.every(([options]) => options.readOnly)).toBe(
-      true,
-    );
+    expect(runOpenCode.mock.calls.every(([options]) => options.readOnly)).toBe(true);
   });
 
   it("rejects a validly-shaped response that assesses an out-of-scope requirement without retry", async () => {

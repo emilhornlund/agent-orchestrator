@@ -20,14 +20,11 @@ describe("bounded external diagnostics", () => {
   it("truncates oversized values deterministically within the limit", () => {
     const value = "x".repeat(MAX_EXTERNAL_DIAGNOSTIC_LENGTH + 100);
     const expected = `${"x".repeat(
-      MAX_EXTERNAL_DIAGNOSTIC_LENGTH -
-        EXTERNAL_DIAGNOSTIC_TRUNCATION_MARKER.length,
+      MAX_EXTERNAL_DIAGNOSTIC_LENGTH - EXTERNAL_DIAGNOSTIC_TRUNCATION_MARKER.length,
     )}${EXTERNAL_DIAGNOSTIC_TRUNCATION_MARKER}`;
 
     expect(presentExternalDiagnostic(value)).toBe(expected);
-    expect(presentExternalDiagnostic(value)).toHaveLength(
-      MAX_EXTERNAL_DIAGNOSTIC_LENGTH,
-    );
+    expect(presentExternalDiagnostic(value)).toHaveLength(MAX_EXTERNAL_DIAGNOSTIC_LENGTH);
   });
 
   it("applies the presentation limit in characters, not UTF-8 bytes", () => {
@@ -36,9 +33,7 @@ describe("bounded external diagnostics", () => {
     const presented = presentExternalDiagnostic(oversized);
 
     expect(exact).toHaveLength(MAX_EXTERNAL_DIAGNOSTIC_LENGTH);
-    expect(Buffer.byteLength(exact)).toBeGreaterThan(
-      MAX_EXTERNAL_DIAGNOSTIC_LENGTH,
-    );
+    expect(Buffer.byteLength(exact)).toBeGreaterThan(MAX_EXTERNAL_DIAGNOSTIC_LENGTH);
     expect(presented).toHaveLength(MAX_EXTERNAL_DIAGNOSTIC_LENGTH);
     expect(presented).toContain(EXTERNAL_DIAGNOSTIC_TRUNCATION_MARKER);
   });

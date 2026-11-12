@@ -27,16 +27,11 @@ function parseArguments(args: readonly string[]): {
   return { projectId: args[1], eventId: args[3] };
 }
 
-export async function recoverLegacyRetiredMutation(
-  args: readonly string[],
-): Promise<void> {
+export async function recoverLegacyRetiredMutation(args: readonly string[]): Promise<void> {
   const { projectId, eventId } = parseArguments(args);
   const config = loadConfig();
-  const configured = config.projects.find(
-    (project) => project.id === projectId,
-  );
-  if (configured === undefined)
-    throw new Error(`Unknown project: ${projectId}`);
+  const configured = config.projects.find((project) => project.id === projectId);
+  if (configured === undefined) throw new Error(`Unknown project: ${projectId}`);
   const project = { ...configured, contextRoot: config.workflow.contextRoot };
   const environment = parseEnvironment(process.env);
   const trello = new TrelloClient({
@@ -45,16 +40,11 @@ export async function recoverLegacyRetiredMutation(
     signal: new AbortController().signal,
     timeoutMilliseconds: 30_000,
   });
-  const operatorContext = await acquireProjectRunOperatorContext(
-    config,
-    configured,
-  );
+  const operatorContext = await acquireProjectRunOperatorContext(config, configured);
   try {
     await operatorContext.run(async () => {
       const queue = new TaskMutationQueue(config.workflow.contextRoot, project);
-      const event = queue
-        .list()
-        .find((candidate) => candidate.eventId === eventId);
+      const event = queue.list().find((candidate) => candidate.eventId === eventId);
       if (
         event === undefined ||
         event.projectId !== project.id ||
@@ -65,10 +55,7 @@ export async function recoverLegacyRetiredMutation(
           "The specified event is not a legacy completed Ready mutation in the canonical attempt projection",
         );
 
-      const taskStore = new TaskExecutionStore(
-        config.workflow.contextRoot,
-        project,
-      );
+      const taskStore = new TaskExecutionStore(config.workflow.contextRoot, project);
       if (taskStore.read(event.cardId) !== null)
         throw new Error(
           `Task execution ownership exists for ${event.cardId}; preserving the completed mutation`,
@@ -97,16 +84,9 @@ export async function recoverLegacyRetiredMutation(
   }
 }
 
-if (
-  process.argv[1] !== undefined &&
-  pathToFileURL(process.argv[1]).href === import.meta.url
-) {
-  recoverLegacyRetiredMutation(process.argv.slice(2)).catch(
-    (error: unknown) => {
-      process.stderr.write(
-        `${error instanceof Error ? error.message : String(error)}\n`,
-      );
-      process.exitCode = 1;
-    },
-  );
+if (process.argv[1] !== undefined && pathToFileURL(process.argv[1]).href === import.meta.url) {
+  recoverLegacyRetiredMutation(process.argv.slice(2)).catch((error: unknown) => {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  });
 }

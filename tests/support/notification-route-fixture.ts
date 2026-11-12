@@ -4,10 +4,7 @@ import type { ProjectConfig } from "../../src/config/config.js";
 import type { GitClient } from "../../src/git/git-client.js";
 import type { GitHubClient } from "../../src/github/github-client.js";
 import type { OpenCodeClient } from "../../src/opencode/opencode-client.js";
-import type {
-  TrelloClient,
-  TrelloCard,
-} from "../../src/trello/trello-client.js";
+import type { TrelloClient, TrelloCard } from "../../src/trello/trello-client.js";
 import { Logger } from "../../src/logging/logger.js";
 import {
   NotificationOutbox,
@@ -57,21 +54,16 @@ export function notificationRouteFixture(
     idLabels: ["refine"],
   };
   const statePath = path.join(root, "external-card.json");
-  if (!fs.existsSync(statePath))
-    fs.writeFileSync(statePath, JSON.stringify(card));
-  const read = (): TrelloCard =>
-    JSON.parse(fs.readFileSync(statePath, "utf8")) as TrelloCard;
+  if (!fs.existsSync(statePath)) fs.writeFileSync(statePath, JSON.stringify(card));
+  const read = (): TrelloCard => JSON.parse(fs.readFileSync(statePath, "utf8")) as TrelloCard;
   const update = (values: Partial<TrelloCard>) =>
     fs.writeFileSync(statePath, JSON.stringify({ ...read(), ...values }));
   const trello = {
-    getLists: async () =>
-      ["backlog", "review", "failed"].map((id) => ({ id, name: id })),
+    getLists: async () => ["backlog", "review", "failed"].map((id) => ({ id, name: id })),
     getCards: async (list: string) => (read().idList === list ? [read()] : []),
     getListTransitions: async () =>
       fs.existsSync(path.join(root, "transitions.json"))
-        ? (JSON.parse(
-            fs.readFileSync(path.join(root, "transitions.json"), "utf8"),
-          ) as {
+        ? (JSON.parse(fs.readFileSync(path.join(root, "transitions.json"), "utf8")) as {
             id: string;
             date: string;
             listBeforeId: string;
@@ -125,10 +117,7 @@ export function notificationRouteFixture(
   } as unknown as GitHubClient;
   const notifier = {
     send: async (message: { text: string }) => {
-      fs.appendFileSync(
-        path.join(root, "sink.jsonl"),
-        `${JSON.stringify(message)}\n`,
-      );
+      fs.appendFileSync(path.join(root, "sink.jsonl"), `${JSON.stringify(message)}\n`);
     },
   };
   const open = () =>

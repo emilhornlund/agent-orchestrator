@@ -31,9 +31,7 @@ const response = {
 
 describe("parseFeedbackVerificationResult", () => {
   it("accepts one evidence-backed or unresolved disposition for every actionable item", () => {
-    expect(
-      parseFeedbackVerificationResult(response, expected).dispositions,
-    ).toHaveLength(2);
+    expect(parseFeedbackVerificationResult(response, expected).dispositions).toHaveLength(2);
   });
   it("rejects omitted and invented feedback IDs", () => {
     expect(() =>
@@ -54,10 +52,7 @@ describe("parseFeedbackVerificationResult", () => {
   });
   it("rejects results from an earlier PR head or source snapshot", () => {
     expect(() =>
-      parseFeedbackVerificationResult(
-        { ...response, headSha: "c".repeat(40) },
-        expected,
-      ),
+      parseFeedbackVerificationResult({ ...response, headSha: "c".repeat(40) }, expected),
     ).toThrow("does not match");
     expect(() =>
       parseFeedbackVerificationResult(

@@ -9,9 +9,7 @@ import { acquireProjectOwnership } from "../src/coordination/project-ownership.j
 
 const execFile = promisify(nodeExecFile);
 
-function readProcessStat(
-  pid: number,
-): { state: string; processGroupId: number } | null {
+function readProcessStat(pid: number): { state: string; processGroupId: number } | null {
   try {
     const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
     const closingParenthesis = stat.lastIndexOf(")");
@@ -166,24 +164,10 @@ describe("coordinated shutdown integration", () => {
       const source = path.join(root, "actual-worktree");
       fs.mkdirSync(repository, { recursive: true });
       fs.mkdirSync(path.join(root, "coordination"), { recursive: true });
-      const git = (
-        await execFile("git", ["init", "--initial-branch=main", repository])
-      ).stdout;
+      const git = (await execFile("git", ["init", "--initial-branch=main", repository])).stdout;
       void git;
-      await execFile("git", [
-        "-C",
-        repository,
-        "config",
-        "user.name",
-        "Fixture",
-      ]);
-      await execFile("git", [
-        "-C",
-        repository,
-        "config",
-        "user.email",
-        "fixture@example.test",
-      ]);
+      await execFile("git", ["-C", repository, "config", "user.name", "Fixture"]);
+      await execFile("git", ["-C", repository, "config", "user.email", "fixture@example.test"]);
       fs.writeFileSync(path.join(repository, "tracked.txt"), "fixture\n");
       await execFile("git", ["-C", repository, "add", "."]);
       await execFile("git", ["-C", repository, "commit", "-m", "fixture"]);
@@ -229,9 +213,10 @@ describe("coordinated shutdown integration", () => {
       };
       const first = launch("first");
       await waitForFile(path.join(root, "child.pid"));
-      const processInfo = JSON.parse(
-        fs.readFileSync(path.join(root, "child.pid"), "utf8"),
-      ) as { descendantPid: number; processGroupId: number };
+      const processInfo = JSON.parse(fs.readFileSync(path.join(root, "child.pid"), "utf8")) as {
+        descendantPid: number;
+        processGroupId: number;
+      };
       const descendantStat = readProcessStat(processInfo.descendantPid);
       expect(descendantStat).not.toBeNull();
       expect(descendantStat?.state).not.toBe("Z");
@@ -245,9 +230,7 @@ describe("coordinated shutdown integration", () => {
       ).rejects.toThrow(/already held/u);
       first.signal("SIGTERM");
       await first.done;
-      expect(
-        JSON.parse(fs.readFileSync(path.join(root, "first.done"), "utf8")),
-      ).toMatchObject({
+      expect(JSON.parse(fs.readFileSync(path.join(root, "first.done"), "utf8"))).toMatchObject({
         runCount: 1,
         dispatchCount: 1,
         terminal: true,
@@ -257,8 +240,7 @@ describe("coordinated shutdown integration", () => {
         releasedLeaseRejectsWrites: true,
       });
       expect(
-        JSON.parse(fs.readFileSync(path.join(root, "first.done"), "utf8"))
-          .readyReadCount,
+        JSON.parse(fs.readFileSync(path.join(root, "first.done"), "utf8")).readyReadCount,
       ).toBeGreaterThan(0);
       const stoppedDescendant = readProcessStat(processInfo.descendantPid);
       expect(
@@ -274,13 +256,10 @@ describe("coordinated shutdown integration", () => {
       );
       await releasedLease.release();
       await launch("restart").done;
-      expect(
-        fs.existsSync(path.join(root, "restart.done")),
-        fs.readdirSync(root).join(","),
-      ).toBe(true);
-      const restarted = JSON.parse(
-        fs.readFileSync(path.join(root, "restart.json"), "utf8"),
-      ) as {
+      expect(fs.existsSync(path.join(root, "restart.done")), fs.readdirSync(root).join(",")).toBe(
+        true,
+      );
+      const restarted = JSON.parse(fs.readFileSync(path.join(root, "restart.json"), "utf8")) as {
         attemptId: string;
         pinned: {
           repositoryPath: string;
@@ -299,18 +278,21 @@ describe("coordinated shutdown integration", () => {
       expect(fs.readFileSync(path.join(source, "tracked.txt"), "utf8")).toBe(
         "uncommitted implementation in progress\n",
       );
-      expect(
-        (await execFile("git", ["-C", source, "status", "--porcelain"])).stdout,
-      ).toContain("M tracked.txt");
-      expect(
-        fs.readdirSync(path.join(restarted.pinned.storageRoot, "attempts")),
-      ).toEqual(["shutdown-attempt.json"]);
-      expect(
-        JSON.parse(fs.readFileSync(path.join(root, "restart.done"), "utf8")),
-      ).toMatchObject({ dispatchCount: 0, claimCount: 0, lateClaimCount: 0 });
-      expect(
-        JSON.parse(fs.readFileSync(path.join(root, "restart.done"), "utf8")),
-      ).toMatchObject({ runCount: 1, dispatchCount: 0 });
+      expect((await execFile("git", ["-C", source, "status", "--porcelain"])).stdout).toContain(
+        "M tracked.txt",
+      );
+      expect(fs.readdirSync(path.join(restarted.pinned.storageRoot, "attempts"))).toEqual([
+        "shutdown-attempt.json",
+      ]);
+      expect(JSON.parse(fs.readFileSync(path.join(root, "restart.done"), "utf8"))).toMatchObject({
+        dispatchCount: 0,
+        claimCount: 0,
+        lateClaimCount: 0,
+      });
+      expect(JSON.parse(fs.readFileSync(path.join(root, "restart.done"), "utf8"))).toMatchObject({
+        runCount: 1,
+        dispatchCount: 0,
+      });
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

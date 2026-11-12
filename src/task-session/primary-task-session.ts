@@ -10,10 +10,7 @@ import type {
 import { TaskExecutionStore } from "./task-execution-store.js";
 import { getSessionLogPath } from "../logging/session-log.js";
 import type { TaskExecutionRecord } from "./task-execution-record.js";
-import {
-  PrimaryOperationWaitingError,
-  runPrimaryOperation,
-} from "./run-primary-operation.js";
+import { PrimaryOperationWaitingError, runPrimaryOperation } from "./run-primary-operation.js";
 import type { PendingPrimaryInspection } from "./run-primary-operation.js";
 import { reconcilePendingPrimaryExecution } from "./primary-operation-ledger.js";
 import { bindPrimaryExecutionEvidence } from "./primary-operation-ledger.js";
@@ -44,9 +41,7 @@ export type PrimaryExecutionIdentity =
       operationId: string;
       activity: string;
       inspectPending: (
-        entry: NonNullable<
-          NonNullable<TaskExecutionRecord["primaryOperations"]>[string]
-        >,
+        entry: NonNullable<NonNullable<TaskExecutionRecord["primaryOperations"]>[string]>,
       ) => Promise<PendingPrimaryInspection>;
     }
   | {
@@ -54,9 +49,7 @@ export type PrimaryExecutionIdentity =
       operationId: string;
       activity?: string;
       inspectPending?: (
-        entry: NonNullable<
-          NonNullable<TaskExecutionRecord["primaryOperations"]>[string]
-        >,
+        entry: NonNullable<NonNullable<TaskExecutionRecord["primaryOperations"]>[string]>,
       ) => Promise<PendingPrimaryInspection>;
     }
   | {
@@ -64,14 +57,10 @@ export type PrimaryExecutionIdentity =
       operationId: string;
       readOnlyAcknowledged: true;
       inspectPending?: (
-        entry: NonNullable<
-          NonNullable<TaskExecutionRecord["primaryOperations"]>[string]
-        >,
+        entry: NonNullable<NonNullable<TaskExecutionRecord["primaryOperations"]>[string]>,
       ) => Promise<PendingPrimaryInspection>;
       inspectOwningPrimary?: (
-        entry: NonNullable<
-          NonNullable<TaskExecutionRecord["primaryOperations"]>[string]
-        >,
+        entry: NonNullable<NonNullable<TaskExecutionRecord["primaryOperations"]>[string]>,
       ) => Promise<PendingPrimaryInspection>;
     };
 
@@ -132,8 +121,7 @@ async function runWithPrimaryTaskSessionOwned(
 ): Promise<OpenCodeRunResult> {
   runOptions = {
     ...runOptions,
-    sessionLogPath:
-      runOptions.sessionLogPath ?? getSessionLogPath(projectId, cardId),
+    sessionLogPath: runOptions.sessionLogPath ?? getSessionLogPath(projectId, cardId),
   };
   const record = store.read(cardId);
 
@@ -149,10 +137,7 @@ async function runWithPrimaryTaskSessionOwned(
     );
   }
 
-  if (
-    record.sessionCreationStatus === "creating" ||
-    record.sessionCreationStatus === "ambiguous"
-  ) {
+  if (record.sessionCreationStatus === "creating" || record.sessionCreationStatus === "ambiguous") {
     throw new PrimaryTaskSessionError(
       `Primary OpenCode session creation is ambiguous for ${projectId}/${cardId}; refusing to create a replacement`,
     );
@@ -197,13 +182,7 @@ async function runWithPrimaryTaskSessionOwned(
         if (
           bundle === undefined ||
           !isReconstructable(bundle) ||
-          !contextIdentityMatches(
-            bundle,
-            projectId,
-            cardId,
-            runOptions.cwd,
-            recovery.attemptId,
-          )
+          !contextIdentityMatches(bundle, projectId, cardId, runOptions.cwd, recovery.attemptId)
         ) {
           throw new PrimaryTaskSessionError(
             "Original primary session is confirmed absent, but reconstructable task context is unavailable",
@@ -228,9 +207,7 @@ async function runWithPrimaryTaskSessionOwned(
           ...record,
           sessionRecovery: {
             ...record.sessionRecovery,
-            originalSessionId:
-              record.sessionRecovery?.originalSessionId ??
-              record.primarySessionId,
+            originalSessionId: record.sessionRecovery?.originalSessionId ?? record.primarySessionId,
             status: "replacement-creating",
             reconstructionBaseline: baseline,
             contextReference: persisted.reference,
@@ -246,8 +223,7 @@ async function runWithPrimaryTaskSessionOwned(
             ...(record.sessionRecovery?.replacementSessionIds === undefined
               ? {}
               : {
-                  replacementSessionIds:
-                    record.sessionRecovery.replacementSessionIds,
+                  replacementSessionIds: record.sessionRecovery.replacementSessionIds,
                 }),
           },
           revision: nextRevision(record),
@@ -279,10 +255,7 @@ async function runWithPrimaryTaskSessionOwned(
           return replacement;
         } catch (error) {
           const current = store.read(cardId);
-          if (
-            current !== null &&
-            current.sessionRecovery?.status === "replacement-creating"
-          ) {
+          if (current !== null && current.sessionRecovery?.status === "replacement-creating") {
             store.compareAndSwap(cardId, current.revision, {
               ...current,
               sessionRecovery: {
@@ -302,13 +275,8 @@ async function runWithPrimaryTaskSessionOwned(
     }
     const sessionId = record.primarySessionId;
     const dispatchAvailability =
-      recovery.inspect === undefined
-        ? "reachable"
-        : await recovery.inspect(sessionId);
-    if (
-      dispatchAvailability === "unknown" ||
-      dispatchAvailability === "conflict"
-    ) {
+      recovery.inspect === undefined ? "reachable" : await recovery.inspect(sessionId);
+    if (dispatchAvailability === "unknown" || dispatchAvailability === "conflict") {
       if (execution.role !== "advisory")
         throw new PrimaryOperationWaitingError(execution.operationId);
       throw new PrimaryTaskSessionError(
@@ -348,13 +316,7 @@ async function runWithPrimaryTaskSessionOwned(
         if (
           bundle === undefined ||
           !isReconstructable(bundle) ||
-          !contextIdentityMatches(
-            bundle,
-            projectId,
-            cardId,
-            runOptions.cwd,
-            recovery.attemptId,
-          )
+          !contextIdentityMatches(bundle, projectId, cardId, runOptions.cwd, recovery.attemptId)
         )
           throw new PrimaryTaskSessionError(
             "Bound replacement requires validated reconstruction context",
@@ -407,10 +369,7 @@ async function runWithPrimaryTaskSessionOwned(
               ...runOptions,
               sessionId,
               onExecutionPrepared: async (evidence) => {
-                const current =
-                  store.read(cardId)?.primaryOperations?.[
-                    execution.operationId
-                  ];
+                const current = store.read(cardId)?.primaryOperations?.[execution.operationId];
                 if (!current)
                   throw new PrimaryTaskSessionError(
                     "Reserved advisory operation disappeared before process evidence binding",
@@ -425,8 +384,7 @@ async function runWithPrimaryTaskSessionOwned(
                 await runOptions.onExecutionPrepared?.(evidence);
               },
             }),
-          inspectPending:
-            execution.inspectPending ?? (async () => ({ status: "unknown" })),
+          inspectPending: execution.inspectPending ?? (async () => ({ status: "unknown" })),
         });
       if (execution.role === "reconstruction") {
         if (!execution.readOnlyAcknowledged || !runOptions.readOnly)
@@ -435,18 +393,12 @@ async function runWithPrimaryTaskSessionOwned(
           );
         for (;;) {
           const current = store.read(cardId);
-          const unresolved = Object.values(
-            current?.primaryOperations ?? {},
-          ).find(
+          const unresolved = Object.values(current?.primaryOperations ?? {}).find(
             (operation) =>
               operation !== undefined &&
               ["intent", "dispatched", "ambiguous"].includes(operation.status),
           );
-          if (
-            unresolved === undefined ||
-            unresolved.id === execution.operationId
-          )
-            break;
+          if (unresolved === undefined || unresolved.id === execution.operationId) break;
           if (execution.inspectOwningPrimary === undefined)
             throw new PrimaryOperationWaitingError(unresolved.id);
           let inspection: PendingPrimaryInspection;
@@ -457,18 +409,10 @@ async function runWithPrimaryTaskSessionOwned(
               cause: error,
             });
           }
-          if (
-            inspection.status === "unknown" ||
-            inspection.status === "running"
-          )
+          if (inspection.status === "unknown" || inspection.status === "running")
             throw new PrimaryOperationWaitingError(unresolved.id);
           if (inspection.status === "never-dispatched") {
-            reconcilePendingPrimaryExecution(
-              store,
-              cardId,
-              unresolved.id,
-              "not-dispatched",
-            );
+            reconcilePendingPrimaryExecution(store, cardId, unresolved.id, "not-dispatched");
           } else if (inspection.status === "stopped-after-dispatch") {
             if (
               inspection.operationId !== unresolved.id ||
@@ -513,10 +457,7 @@ async function runWithPrimaryTaskSessionOwned(
               ...runOptions,
               sessionId,
               onExecutionPrepared: async (evidence) => {
-                const current =
-                  store.read(cardId)?.primaryOperations?.[
-                    execution.operationId
-                  ];
+                const current = store.read(cardId)?.primaryOperations?.[execution.operationId];
                 if (!current)
                   throw new PrimaryTaskSessionError(
                     "Reserved reconstruction acknowledgement disappeared before process evidence binding",
@@ -531,8 +472,7 @@ async function runWithPrimaryTaskSessionOwned(
                 await runOptions.onExecutionPrepared?.(evidence);
               },
             }),
-          inspectPending:
-            execution.inspectPending ?? (async () => ({ status: "unknown" })),
+          inspectPending: execution.inspectPending ?? (async () => ({ status: "unknown" })),
         });
       }
       return runPrimaryOperation({
@@ -547,8 +487,7 @@ async function runWithPrimaryTaskSessionOwned(
             ...runOptions,
             sessionId,
             onExecutionPrepared: async (evidence) => {
-              const current =
-                store.read(cardId)?.primaryOperations?.[execution.operationId];
+              const current = store.read(cardId)?.primaryOperations?.[execution.operationId];
               if (!current)
                 throw new PrimaryTaskSessionError(
                   "Reserved primary operation disappeared before process evidence binding",
@@ -584,9 +523,7 @@ async function runWithPrimaryTaskSessionOwned(
     result = await openCode.run({ ...runOptions, captureSessionId: true });
 
     if (result.sessionId === undefined) {
-      throw new PrimaryTaskSessionError(
-        "OpenCode did not return the created primary session ID",
-      );
+      throw new PrimaryTaskSessionError("OpenCode did not return the created primary session ID");
     }
   } catch (error) {
     try {
@@ -773,9 +710,7 @@ function persistRecoveryContext(
     assertRecoveryArtifactPath(artifact.path, forbiddenPaths);
     const reference = `sha256:${createHash("sha256").update(contents).digest("hex")}`;
     if (artifact.reference !== reference)
-      throw new PrimaryTaskSessionError(
-        "Recovery context artifact identity mismatch",
-      );
+      throw new PrimaryTaskSessionError("Recovery context artifact identity mismatch");
     return { ...artifact, contents, reference };
   }
   if (forbiddenPaths.length < 2)
@@ -783,35 +718,22 @@ function persistRecoveryContext(
       "Repository and worktree exclusions are required for recovery artifacts",
     );
   if (directory === undefined || !path.isAbsolute(directory))
-    throw new PrimaryTaskSessionError(
-      "A durable absolute recovery context directory is required",
-    );
+    throw new PrimaryTaskSessionError("A durable absolute recovery context directory is required");
   const resolved = path.resolve(directory);
   if (
     forbiddenPaths.some(
       (item) =>
-        resolved === path.resolve(item) ||
-        resolved.startsWith(`${path.resolve(item)}${path.sep}`),
+        resolved === path.resolve(item) || resolved.startsWith(`${path.resolve(item)}${path.sep}`),
     )
   )
-    throw new PrimaryTaskSessionError(
-      "Recovery context directory overlaps a repository/worktree",
-    );
+    throw new PrimaryTaskSessionError("Recovery context directory overlaps a repository/worktree");
   const reference = `sha256:${createHash("sha256").update(contents).digest("hex")}`;
   let ancestor = path.parse(resolved).root;
-  for (const component of path
-    .relative(ancestor, resolved)
-    .split(path.sep)
-    .filter(Boolean)) {
+  for (const component of path.relative(ancestor, resolved).split(path.sep).filter(Boolean)) {
     ancestor = path.join(ancestor, component);
     const existing = fs.lstatSync(ancestor, { throwIfNoEntry: false });
-    if (
-      existing?.isSymbolicLink() ||
-      (existing !== undefined && !existing.isDirectory())
-    )
-      throw new PrimaryTaskSessionError(
-        "Recovery context path contains an unsafe component",
-      );
+    if (existing?.isSymbolicLink() || (existing !== undefined && !existing.isDirectory()))
+      throw new PrimaryTaskSessionError("Recovery context path contains an unsafe component");
   }
   const directoryExisted = fs.existsSync(directory);
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -833,17 +755,11 @@ function persistRecoveryContext(
       !stat.isFile() ||
       stat.isSymbolicLink() ||
       stat.size > 8 * 1024 * 1024 ||
-      createHash("sha256").update(fs.readFileSync(filePath)).digest("hex") !==
-        reference.slice(7)
+      createHash("sha256").update(fs.readFileSync(filePath)).digest("hex") !== reference.slice(7)
     )
-      throw new PrimaryTaskSessionError(
-        "Existing recovery context artifact is unsafe or corrupt",
-      );
+      throw new PrimaryTaskSessionError("Existing recovery context artifact is unsafe or corrupt");
   } else {
-    const temporaryPath = path.join(
-      directory,
-      `.${reference.slice(7)}.${randomUUID()}.tmp`,
-    );
+    const temporaryPath = path.join(directory, `.${reference.slice(7)}.${randomUUID()}.tmp`);
     const fd = fs.openSync(temporaryPath, "wx", 0o600);
     try {
       fs.writeFileSync(fd, contents);
@@ -862,13 +778,8 @@ function persistRecoveryContext(
       ))
         throw error;
       const existing = fs.readFileSync(filePath);
-      if (
-        createHash("sha256").update(existing).digest("hex") !==
-        reference.slice(7)
-      )
-        throw new PrimaryTaskSessionError(
-          "Concurrent recovery context artifact is corrupt",
-        );
+      if (createHash("sha256").update(existing).digest("hex") !== reference.slice(7))
+        throw new PrimaryTaskSessionError("Concurrent recovery context artifact is corrupt");
     } finally {
       fs.unlinkSync(temporaryPath);
     }
@@ -882,10 +793,7 @@ function persistRecoveryContext(
   return { reference, path: filePath, contents };
 }
 
-function assertRecoveryArtifactPath(
-  candidate: string,
-  forbiddenPaths: string[],
-): void {
+function assertRecoveryArtifactPath(candidate: string, forbiddenPaths: string[]): void {
   if (forbiddenPaths.length < 2)
     throw new PrimaryTaskSessionError(
       "Repository and worktree exclusions are required for recovery artifacts",

@@ -18,9 +18,7 @@ function hasControlCharacter(value: string): boolean {
   return Array.from(value).some((character) => {
     const code = character.codePointAt(0);
 
-    return (
-      code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f))
-    );
+    return code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f));
   });
 }
 
@@ -46,9 +44,7 @@ function pathsOverlap(first: string, second: string): boolean {
 
     return (
       relative === "" ||
-      (relative !== ".." &&
-        !relative.startsWith(`..${path.sep}`) &&
-        !path.isAbsolute(relative))
+      (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
     );
   };
 
@@ -315,9 +311,7 @@ const configSchema = z
       });
     }
 
-    const repositoryPaths = config.projects.map(
-      (project) => project.repository.path,
-    );
+    const repositoryPaths = config.projects.map((project) => project.repository.path);
 
     if (new Set(repositoryPaths).size !== repositoryPaths.length) {
       ctx.addIssue({
@@ -327,9 +321,7 @@ const configSchema = z
       });
     }
 
-    const worktreeRoots = config.projects.map(
-      (project) => project.repository.worktreeRoot,
-    );
+    const worktreeRoots = config.projects.map((project) => project.repository.worktreeRoot);
 
     if (new Set(worktreeRoots).size !== worktreeRoots.length) {
       ctx.addIssue({
@@ -339,9 +331,7 @@ const configSchema = z
       });
     }
 
-    const trelloBoardIds = config.projects.map(
-      (project) => project.trello.boardId,
-    );
+    const trelloBoardIds = config.projects.map((project) => project.trello.boardId);
 
     if (new Set(trelloBoardIds).size !== trelloBoardIds.length) {
       ctx.addIssue({
@@ -354,21 +344,15 @@ const configSchema = z
     const contextRoot = config.workflow.contextRoot;
     const coordinationRoot = config.workflow.coordinationRoot;
     const coordinationNamespaceId = config.workflow.coordinationNamespaceId;
-    if (
-      (coordinationRoot === undefined) !==
-      (coordinationNamespaceId === undefined)
-    ) {
+    if ((coordinationRoot === undefined) !== (coordinationNamespaceId === undefined)) {
       ctx.addIssue({
         code: "custom",
         path: ["workflow"],
-        message:
-          "coordinationRoot and coordinationNamespaceId must be configured together",
+        message: "coordinationRoot and coordinationNamespaceId must be configured together",
       });
     }
     for (const [projectIndex, project] of config.projects.entries()) {
-      if (
-        pathsOverlap(project.repository.path, project.repository.worktreeRoot)
-      ) {
+      if (pathsOverlap(project.repository.path, project.repository.worktreeRoot)) {
         ctx.addIssue({
           code: "custom",
           path: ["projects", projectIndex, "repository"],
@@ -390,10 +374,7 @@ const configSchema = z
           });
         }
 
-        if (
-          coordinationRoot !== undefined &&
-          pathsOverlap(coordinationRoot, configuredPath)
-        ) {
+        if (coordinationRoot !== undefined && pathsOverlap(coordinationRoot, configuredPath)) {
           ctx.addIssue({
             code: "custom",
             path: ["workflow", "coordinationRoot"],
@@ -406,19 +387,13 @@ const configSchema = z
 
 export type Config = z.infer<typeof configSchema>;
 export type ProjectConfig = Config["projects"][number];
-export type GitHubAppConfig = NonNullable<
-  ProjectConfig["repository"]["githubApp"]
->;
-export type EmailNotificationConfig = NonNullable<
-  NonNullable<Config["notifications"]>["email"]
->;
+export type GitHubAppConfig = NonNullable<ProjectConfig["repository"]["githubApp"]>;
+export type EmailNotificationConfig = NonNullable<NonNullable<Config["notifications"]>["email"]>;
 
 /** Canonical GitHub identity for supported owner/repository spellings. */
 export function canonicalizeGitHubRepository(input: string): string {
   if (input !== input.trim() || /\s/.test(input)) {
-    throw new Error(
-      `Unsupported GitHub repository identity (whitespace is not allowed): ${input}`,
-    );
+    throw new Error(`Unsupported GitHub repository identity (whitespace is not allowed): ${input}`);
   }
   let value = input;
   const spellings = [
@@ -430,21 +405,15 @@ export function canonicalizeGitHubRepository(input: string): string {
   if (prefix !== undefined) value = value.replace(prefix, "");
   if (value.endsWith("/")) value = value.slice(0, -1);
   if (
-    !/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\/[A-Za-z0-9_.-]+$/.test(
-      value,
-    ) ||
+    !/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\/[A-Za-z0-9_.-]+$/.test(value) ||
     /[?#]/.test(value)
   ) {
-    throw new Error(
-      `Unsupported GitHub repository identity (expected owner/repository): ${input}`,
-    );
+    throw new Error(`Unsupported GitHub repository identity (expected owner/repository): ${input}`);
   }
   while (value.toLocaleLowerCase("en-US").endsWith(".git")) {
     value = value.slice(0, -4);
   }
-  if (
-    !/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\/[A-Za-z0-9_.-]+$/.test(value)
-  ) {
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\/[A-Za-z0-9_.-]+$/.test(value)) {
     throw new Error(`Unsupported GitHub repository identity: ${input}`);
   }
   const repository = value.slice(value.indexOf("/") + 1);
@@ -460,10 +429,9 @@ export function parseConfig(raw: string): Config {
   try {
     parsed = YAML.parse(raw);
   } catch (error) {
-    throw new Error(
-      `Invalid YAML: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
-    );
+    throw new Error(`Invalid YAML: ${error instanceof Error ? error.message : String(error)}`, {
+      cause: error,
+    });
   }
 
   const result = configSchema.safeParse(parsed);

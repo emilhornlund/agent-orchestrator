@@ -74,10 +74,7 @@ const requestSchema = z.discriminatedUnion("route", [
   }),
 ]);
 
-export function hasVerifiedWorkflowMove(
-  authority: ProjectRunAuthority,
-  listId: string,
-): boolean {
+export function hasVerifiedWorkflowMove(authority: ProjectRunAuthority, listId: string): boolean {
   const run = authority.store.read()!;
   return run.pendingOperations.some((entry) => {
     if (
@@ -90,9 +87,7 @@ export function hasVerifiedWorkflowMove(
       (artifact) => artifact.id === entry.mutation?.intent.payloadId,
     );
     if (!reference) return false;
-    const request = requestSchema.parse(
-      JSON.parse(fs.readFileSync(reference.path, "utf8")),
-    );
+    const request = requestSchema.parse(JSON.parse(fs.readFileSync(reference.path, "utf8")));
     return (
       request.route === "trello-move" &&
       request.args.cardId === run.cardId &&
@@ -125,31 +120,21 @@ export async function reconcileWorkflowMutations(options: {
         entry.id.startsWith("workflow:") &&
         !["completed", "cancelled"].includes(entry.status) &&
         !isAbandonedRefinementWrite(authority, entry) &&
-        !(
-          terminalPrFenceFromRun(initial) &&
-          isConclusiveOperationResolution(entry)
-        ),
+        !(terminalPrFenceFromRun(initial) && isConclusiveOperationResolution(entry)),
     );
   for (const entry of pending) {
-    if (
-      entry.mutation?.nextRecheckAt &&
-      Date.now() < Date.parse(entry.mutation.nextRecheckAt)
-    )
+    if (entry.mutation?.nextRecheckAt && Date.now() < Date.parse(entry.mutation.nextRecheckAt))
       continue;
     const run = authority.store.read()!;
     const reference = run.artifacts.find(
       (artifact) => artifact.id === entry.mutation?.intent.payloadId,
     );
-    if (!reference)
-      throw new Error(
-        "Workflow mutation payload is missing; preserving ownership",
-      );
+    if (!reference) throw new Error("Workflow mutation payload is missing; preserving ownership");
     const request = z
       .union([requestSchema, gitMutationRequestSchema])
       .parse(JSON.parse(fs.readFileSync(reference.path, "utf8")));
     const terminal = terminalPrFenceFromRun(run);
-    const terminalSuperseded =
-      terminal !== null && !terminalMutationAllowed(run, request);
+    const terminalSuperseded = terminal !== null && !terminalMutationAllowed(run, request);
     if (
       entry.mutation?.dispatches.length === 0 &&
       (terminalSuperseded ||
@@ -159,8 +144,7 @@ export async function reconcileWorkflowMutations(options: {
     ) {
       const now = new Date().toISOString();
       const reason =
-        terminalSuperseded ||
-        ["done", "refined", "failed", "cancelled"].includes(run.lifecycle)
+        terminalSuperseded || ["done", "refined", "failed", "cancelled"].includes(run.lifecycle)
           ? "terminal-observed"
           : "execution-superseded";
       const evidence = authority.store.writeArtifact(
@@ -174,11 +158,7 @@ export async function reconcileWorkflowMutations(options: {
         ),
         "application/json",
       );
-      authority.store.referenceMutationArtifact(
-        run.revision,
-        authority.ownerGeneration,
-        evidence,
-      );
+      authority.store.referenceMutationArtifact(run.revision, authority.ownerGeneration, evidence);
       authority.store.recordMutationEvent(
         authority.store.read()!.revision,
         authority.ownerGeneration,
@@ -267,47 +247,32 @@ async function reconcileTerminalInitialEffects(
   const fence = terminalPrFenceFromRun(snapshot);
   if (!fence) return false;
   for (const entry of snapshot.pendingOperations.filter(
-    (entry) =>
-      entry.id.startsWith("initial:") &&
-      !isConclusiveOperationResolution(entry),
+    (entry) => entry.id.startsWith("initial:") && !isConclusiveOperationResolution(entry),
   )) {
     if (!entry.mutation)
-      throw new Error(
-        "Initial publication effect has no dispatch evidence; preserve ownership",
-      );
-    if (
-      entry.mutation.nextRecheckAt &&
-      Date.now() < Date.parse(entry.mutation.nextRecheckAt)
-    )
+      throw new Error("Initial publication effect has no dispatch evidence; preserve ownership");
+    if (entry.mutation.nextRecheckAt && Date.now() < Date.parse(entry.mutation.nextRecheckAt))
       continue;
     const raw: unknown = JSON.parse(
-      authority.store
-        .readArtifact(entry.mutation.intent.payloadId)
-        .toString("utf8"),
+      authority.store.readArtifact(entry.mutation.intent.payloadId).toString("utf8"),
     );
     let actual: { id: string; fields: unknown } | null = null;
     if (entry.mutation.dispatches.length > 0) {
       if (entry.kind === "trello-move") {
-        const payload = z
-          .strictObject({ listId: z.string().min(1) })
-          .parse(raw);
+        const payload = z.strictObject({ listId: z.string().min(1) }).parse(raw);
         const card = await trello.getCard(snapshot.cardId);
         if (card.id !== snapshot.cardId)
           throw new Error("Initial move readback returned another card");
-        if (card.idList === payload.listId)
-          actual = { id: card.id, fields: card };
+        if (card.idList === payload.listId) actual = { id: card.id, fields: card };
       } else if (entry.kind === "trello-comment") {
         const payload = z.strictObject({ text: z.string() }).parse(raw);
         const matches = (await trello.getCardComments(snapshot.cardId)).filter(
           (comment) => comment.text === payload.text,
         );
-        if (matches.length > 1)
-          throw new Error("Initial comment acceptance is ambiguous");
+        if (matches.length > 1) throw new Error("Initial comment acceptance is ambiguous");
         if (matches[0]) actual = { id: matches[0].id, fields: matches[0] };
       } else if (entry.kind === "github-pr-create") {
-        const payload = z
-          .object({ body: z.string(), title: z.string() })
-          .parse(raw);
+        const payload = z.object({ body: z.string(), title: z.string() }).parse(raw);
         const fields = await github.getPullRequestPublicationFields({
           cwd: project.repository.path,
           repository: project.repository.github,
@@ -323,9 +288,7 @@ async function reconcileTerminalInitialEffects(
     }
     const now = new Date().toISOString();
     const proof = authority.store.writeArtifact(
-      Buffer.from(
-        JSON.stringify({ terminal: fence, actual, originalEffect: entry.id }),
-      ),
+      Buffer.from(JSON.stringify({ terminal: fence, actual, originalEffect: entry.id })),
       "application/json",
     );
     authority.store.referenceMutationArtifact(
@@ -372,8 +335,6 @@ async function reconcileTerminalInitialEffects(
   return authority.store
     .read()!
     .pendingOperations.some(
-      (entry) =>
-        entry.id.startsWith("initial:") &&
-        !isConclusiveOperationResolution(entry),
+      (entry) => entry.id.startsWith("initial:") && !isConclusiveOperationResolution(entry),
     );
 }

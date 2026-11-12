@@ -25,18 +25,12 @@ describe("OpenCode default selection executable boundary", () => {
     fs.mkdirSync(worktree);
     const cli = path.join(bin, "opencode");
     fs.copyFileSync(
-      path.join(
-        process.cwd(),
-        "tests/fixtures/scripted-opencode-selection.mjs",
-      ),
+      path.join(process.cwd(), "tests/fixtures/scripted-opencode-selection.mjs"),
       cli,
     );
     fs.chmodSync(cli, 0o755);
     const configPath = path.join(temporaryRoot, "opencode.jsonc");
-    fs.writeFileSync(
-      configPath,
-      '{ // configured default\n "model": "openai/default-model", }',
-    );
+    fs.writeFileSync(configPath, '{ // configured default\n "model": "openai/default-model", }');
     const priorPath = process.env.PATH ?? "";
     vi.stubEnv("PATH", `${bin}${path.delimiter}${priorPath}`);
     vi.stubEnv("OPENAI_API_KEY", "default-provider-key");

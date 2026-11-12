@@ -31,9 +31,7 @@ afterEach(() => {
 });
 
 function useTemporaryWorkingDirectory(): void {
-  temporaryDirectory = fs.mkdtempSync(
-    path.join(os.tmpdir(), "orchestrator-retention-test-"),
-  );
+  temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "orchestrator-retention-test-"));
   process.chdir(temporaryDirectory);
 }
 
@@ -115,16 +113,10 @@ function canonicalAttempt(options: {
   });
 }
 
-function writeAttempt(
-  root: string,
-  record: ReturnType<typeof canonicalAttempt>,
-): void {
+function writeAttempt(root: string, record: ReturnType<typeof canonicalAttempt>): void {
   const directory = path.join(root, "attempts");
   fs.mkdirSync(directory, { recursive: true });
-  fs.writeFileSync(
-    path.join(directory, `${record.attemptId}.json`),
-    JSON.stringify(record),
-  );
+  fs.writeFileSync(path.join(directory, `${record.attemptId}.json`), JSON.stringify(record));
 }
 
 describe("cleanupLogRetention", () => {
@@ -134,13 +126,7 @@ describe("cleanupLogRetention", () => {
     const legacyRoot = path.join(process.cwd(), "legacy-runtime");
     const old = new Date("2025-12-01T00:00:00.000Z");
     const referenced = path.join(legacyRoot, "history", "referenced.log");
-    const legacySession = path.join(
-      process.cwd(),
-      "logs",
-      "sessions",
-      "p",
-      "c.log",
-    );
+    const legacySession = path.join(process.cwd(), "logs", "sessions", "p", "c.log");
     for (const file of [referenced, legacySession]) {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, "evidence");
@@ -171,12 +157,7 @@ describe("cleanupLogRetention", () => {
     const linkRoot = path.join(process.cwd(), "linked");
     const old = new Date("2025-12-01T00:00:00.000Z");
     const terminalFile = path.join(canonicalRoot, "history", "old.log");
-    const stateBlob = path.join(
-      canonicalRoot,
-      "artifacts",
-      "content-addressed",
-      "blob.bin",
-    );
+    const stateBlob = path.join(canonicalRoot, "artifacts", "content-addressed", "blob.bin");
     const malformedFile = path.join(malformedRoot, "artifacts", "old.log");
     const linkedFile = path.join(linkRoot, "artifacts", "old.log");
     for (const file of [terminalFile, stateBlob, malformedFile, linkedFile]) {
@@ -219,10 +200,7 @@ describe("cleanupLogRetention", () => {
     const dailyDirectory = path.join(customRoot, "orchestrator-logs");
     const old = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000 - 1);
     const exact = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    const expiredDaily = path.join(
-      dailyDirectory,
-      "orchestrator-2025-12-01.log",
-    );
+    const expiredDaily = path.join(dailyDirectory, "orchestrator-2025-12-01.log");
     const exactDaily = path.join(dailyDirectory, "orchestrator-2025-12-16.log");
     const processDirectory = path.join(
       customRoot,
@@ -242,10 +220,7 @@ describe("cleanupLogRetention", () => {
       fs.writeFileSync(file, "old");
       fs.utimesSync(file, modified, modified);
     }
-    writeAttempt(
-      customRoot,
-      canonicalAttempt({ attemptId: "finished", lifecycle: "done" }),
-    );
+    writeAttempt(customRoot, canonicalAttempt({ attemptId: "finished", lifecycle: "done" }));
     cleanupLogRetention(30, now, [customRoot]);
     expect(fs.existsSync(expiredDaily)).toBe(false);
     expect(fs.existsSync(exactDaily)).toBe(true);
@@ -294,36 +269,15 @@ describe("cleanupLogRetention", () => {
     const root = path.join(process.cwd(), "process-runtime");
     const cutoffOld = new Date("2025-12-01T00:00:00.000Z");
     const executions = path.join(root, "process-executions");
-    const finished = beginProcessEvidence(
-      "command",
-      process.cwd(),
-      [],
-      executions,
-    );
+    const finished = beginProcessEvidence("command", process.cwd(), [], executions);
     finished.finish("success");
-    const running = beginProcessEvidence(
-      "command",
-      process.cwd(),
-      [],
-      executions,
-    );
-    const ambiguous = beginProcessEvidence(
-      "command",
-      process.cwd(),
-      [],
-      executions,
-    );
+    const running = beginProcessEvidence("command", process.cwd(), [], executions);
+    const ambiguous = beginProcessEvidence("command", process.cwd(), [], executions);
     ambiguous.finish("ambiguous");
-    for (const id of [
-      finished.executionId,
-      running.executionId,
-      ambiguous.executionId,
-    ]) {
+    for (const id of [finished.executionId, running.executionId, ambiguous.executionId]) {
       const directory = path.join(root, "process-executions", id);
       const metadataPath = path.join(directory, "execution.json");
-      const metadata = JSON.parse(
-        fs.readFileSync(metadataPath, "utf8"),
-      ) as Record<string, unknown>;
+      const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf8")) as Record<string, unknown>;
       if (id !== running.executionId) {
         metadata.startedAt = "2025-11-30T00:00:00.000Z";
         metadata.finishedAt = "2025-12-01T00:00:00.000Z";
@@ -333,19 +287,9 @@ describe("cleanupLogRetention", () => {
         fs.utimesSync(path.join(directory, name), cutoffOld, cutoffOld);
     }
     cleanupLogRetention(14, now, [root]);
-    expect(
-      fs.existsSync(
-        path.join(root, "process-executions", finished.executionId),
-      ),
-    ).toBe(false);
-    expect(
-      fs.existsSync(path.join(root, "process-executions", running.executionId)),
-    ).toBe(true);
-    expect(
-      fs.existsSync(
-        path.join(root, "process-executions", ambiguous.executionId),
-      ),
-    ).toBe(true);
+    expect(fs.existsSync(path.join(root, "process-executions", finished.executionId))).toBe(false);
+    expect(fs.existsSync(path.join(root, "process-executions", running.executionId))).toBe(true);
+    expect(fs.existsSync(path.join(root, "process-executions", ambiguous.executionId))).toBe(true);
   });
 
   it("fails closed on unknown or malformed process metadata and honors active artifact references", () => {
@@ -365,41 +309,25 @@ describe("cleanupLogRetention", () => {
     fixtures.forEach((fixture, index) => {
       const directory = path.join(executions, fixture.executionId);
       const metadataPath = path.join(directory, "execution.json");
-      const metadata = JSON.parse(
-        fs.readFileSync(metadataPath, "utf8"),
-      ) as Record<string, unknown>;
+      const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf8")) as Record<string, unknown>;
       metadata.startedAt = "2025-11-30T00:00:00.000Z";
       metadata.finishedAt = "2025-12-01T00:00:00.000Z";
       if (index === 0) metadata.status = "future-terminal-status";
       if (index === 1) metadata.finishedAt = "not-a-timestamp";
       if (index === 2) metadata.executionId = "different-id";
-      if (index === 3)
-        metadata.stdoutArtifact = path.join(directory, "..", "outside.txt");
+      if (index === 3) metadata.stdoutArtifact = path.join(directory, "..", "outside.txt");
       fs.writeFileSync(metadataPath, JSON.stringify(metadata));
       for (const name of fs.readdirSync(directory))
         fs.utimesSync(path.join(directory, name), old, old);
     });
-    const referenced = path.join(
-      executions,
-      fixtures[4]!.executionId,
-      "stderr.txt",
-    );
-    const unreferenced = path.join(
-      executions,
-      fixtures[5]!.executionId,
-      "stderr.txt",
-    );
-    writeAttempt(
-      root,
-      canonicalAttempt({ attemptId: "owner", artifacts: [referenced] }),
-    );
+    const referenced = path.join(executions, fixtures[4]!.executionId, "stderr.txt");
+    const unreferenced = path.join(executions, fixtures[5]!.executionId, "stderr.txt");
+    writeAttempt(root, canonicalAttempt({ attemptId: "owner", artifacts: [referenced] }));
 
     cleanupLogRetention(14, now, [root]);
 
     for (const fixture of fixtures.slice(0, 4))
-      expect(fs.existsSync(path.join(executions, fixture.executionId))).toBe(
-        true,
-      );
+      expect(fs.existsSync(path.join(executions, fixture.executionId))).toBe(true);
     expect(fs.existsSync(path.dirname(referenced))).toBe(true);
     expect(fs.existsSync(referenced)).toBe(true);
     expect(fs.existsSync(path.dirname(unreferenced))).toBe(false);
@@ -434,12 +362,7 @@ describe("cleanupLogRetention", () => {
     const store = new RunStore(root, "finished", pinned, lease);
     const content = Buffer.from("durable state blob");
     const digest = createHash("sha256").update(content).digest("hex");
-    const artifactPath = path.join(
-      root,
-      "artifacts",
-      "finished",
-      `sha256-${digest}`,
-    );
+    const artifactPath = path.join(root, "artifacts", "finished", `sha256-${digest}`);
     fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
     fs.writeFileSync(artifactPath, content);
     const record = runRecordSchema.parse({
@@ -470,10 +393,7 @@ describe("cleanupLogRetention", () => {
     fs.mkdirSync(path.dirname(evidence), { recursive: true });
     fs.writeFileSync(evidence, "evidence");
     fs.utimesSync(evidence, old, old);
-    writeAttempt(
-      target,
-      canonicalAttempt({ attemptId: "terminal", lifecycle: "done" }),
-    );
+    writeAttempt(target, canonicalAttempt({ attemptId: "terminal", lifecycle: "done" }));
     const rootLink = path.join(process.cwd(), "runtime-link");
     fs.symlinkSync(target, rootLink, "dir");
     cleanupLogRetention(14, now, [rootLink]);
@@ -486,10 +406,7 @@ describe("cleanupLogRetention", () => {
     fs.mkdirSync(path.dirname(nestedEvidence), { recursive: true });
     fs.writeFileSync(nestedEvidence, "evidence");
     fs.utimesSync(nestedEvidence, old, old);
-    writeAttempt(
-      nestedRoot,
-      canonicalAttempt({ attemptId: "terminal", lifecycle: "done" }),
-    );
+    writeAttempt(nestedRoot, canonicalAttempt({ attemptId: "terminal", lifecycle: "done" }));
     const ancestorLink = path.join(process.cwd(), "ancestor-link");
     fs.symlinkSync(ancestorTarget, ancestorLink, "dir");
     cleanupLogRetention(14, now, [path.join(ancestorLink, "nested-runtime")]);
@@ -500,13 +417,7 @@ describe("cleanupLogRetention", () => {
     useTemporaryWorkingDirectory();
     const runtimeRoot = path.join(process.cwd(), "runtime");
     const hiddenOwnerRoot = path.join(process.cwd(), "hidden-owner");
-    const session = path.join(
-      process.cwd(),
-      "logs",
-      "sessions",
-      "legacy",
-      "card.log",
-    );
+    const session = path.join(process.cwd(), "logs", "sessions", "legacy", "card.log");
     const old = new Date("2025-12-01T00:00:00.000Z");
     fs.mkdirSync(path.dirname(session), { recursive: true });
     fs.writeFileSync(session, "referenced session");
@@ -538,23 +449,9 @@ describe("cleanupLogRetention", () => {
     const attemptDirectory = path.join(runtime, "attempts");
     fs.mkdirSync(attemptDirectory, { recursive: true });
     const old = new Date("2025-12-31T23:59:59.999Z");
-    const activeLog = path.join(
-      runtime,
-      "history",
-      "p",
-      "c",
-      "active",
-      "events.jsonl",
-    );
+    const activeLog = path.join(runtime, "history", "p", "c", "active", "events.jsonl");
     const activeArtifact = path.join(legacy, "history", "session.log");
-    const terminalLog = path.join(
-      runtime,
-      "history",
-      "p",
-      "c",
-      "terminal",
-      "events.jsonl",
-    );
+    const terminalLog = path.join(runtime, "history", "p", "c", "terminal", "events.jsonl");
     for (const file of [activeLog, activeArtifact, terminalLog]) {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, "evidence");
@@ -605,22 +502,8 @@ describe("cleanupLogRetention", () => {
     const runtime = path.join(process.cwd(), "pinned-runtime");
     const attempts = path.join(runtime, "attempts");
     fs.mkdirSync(attempts, { recursive: true });
-    const terminal = path.join(
-      runtime,
-      "history",
-      "p",
-      "c",
-      "done",
-      "events.jsonl",
-    );
-    const cutoffFile = path.join(
-      runtime,
-      "history",
-      "p",
-      "c",
-      "cutoff",
-      "events.jsonl",
-    );
+    const terminal = path.join(runtime, "history", "p", "c", "done", "events.jsonl");
+    const cutoffFile = path.join(runtime, "history", "p", "c", "cutoff", "events.jsonl");
     for (const [file, timestamp] of [
       [terminal, new Date(cutoff.getTime() - 1)],
       [cutoffFile, cutoff],
@@ -686,10 +569,7 @@ describe("cleanupLogRetention", () => {
       "sessions/project-1/active-card.log",
       new Date("2025-12-31T23:59:59.999Z"),
     );
-    const unrelatedFile = createFile(
-      "notes.txt",
-      new Date("2025-12-31T23:59:59.999Z"),
-    );
+    const unrelatedFile = createFile("notes.txt", new Date("2025-12-31T23:59:59.999Z"));
     const unrelatedDirectory = path.join(process.cwd(), "logs", "archive");
 
     fs.mkdirSync(unrelatedDirectory, {
@@ -728,18 +608,8 @@ describe("cleanupLogRetention", () => {
         new Date("2025-12-31T23:59:59.999Z"),
       );
 
-      const dailyLink = path.join(
-        process.cwd(),
-        "logs",
-        "orchestrator-2025-12-31.log",
-      );
-      const sessionLink = path.join(
-        process.cwd(),
-        "logs",
-        "sessions",
-        "project-1",
-        "card-1.log",
-      );
+      const dailyLink = path.join(process.cwd(), "logs", "orchestrator-2025-12-31.log");
+      const sessionLink = path.join(process.cwd(), "logs", "sessions", "project-1", "card-1.log");
 
       fs.mkdirSync(path.dirname(sessionLink), {
         recursive: true,
@@ -799,9 +669,7 @@ describe("cleanupLogRetention", () => {
     );
     const diagnostic = fs.readFileSync(diagnosticPath, "utf8");
 
-    expect(diagnostic).toContain(
-      `Log retention could not remove ${failedPath}`,
-    );
+    expect(diagnostic).toContain(`Log retention could not remove ${failedPath}`);
     expect(diagnostic).toContain("permission denied");
   });
 
@@ -844,9 +712,7 @@ describe("cleanupLogRetention", () => {
     );
     const diagnostic = fs.readFileSync(diagnosticPath, "utf8");
 
-    expect(diagnostic).toContain(
-      `Log retention could not scan ${failedProjectDirectory}`,
-    );
+    expect(diagnostic).toContain(`Log retention could not scan ${failedProjectDirectory}`);
     expect(diagnostic).toContain("directory unavailable");
   });
 });

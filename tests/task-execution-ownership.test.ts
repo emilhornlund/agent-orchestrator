@@ -26,9 +26,7 @@ function createFixture(): {
   recordPath: string;
   store: TaskExecutionStore;
 } {
-  temporaryRoot = fs.mkdtempSync(
-    path.join(os.tmpdir(), "agent-orchestrator-task-ownership-"),
-  );
+  temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-task-ownership-"));
   const project = {
     id: "project-one",
     repository: {
@@ -39,10 +37,7 @@ function createFixture(): {
   fs.mkdirSync(project.repository.path);
   fs.mkdirSync(project.repository.worktreeRoot);
 
-  const store = new TaskExecutionStore(
-    path.join(temporaryRoot, "runtime-state"),
-    project,
-  );
+  const store = new TaskExecutionStore(path.join(temporaryRoot, "runtime-state"), project);
   const record: TaskExecutionRecord = {
     version: 1,
     projectId: project.id,
@@ -117,10 +112,7 @@ describe("loadOwnedTaskExecutionRecord", () => {
     const before = fs.readFileSync(recordPath, "utf8");
 
     expect(() =>
-      loadOwnedTaskExecutionRecord(
-        store,
-        request({ operationKey: "operation-two" }),
-      ),
+      loadOwnedTaskExecutionRecord(store, request({ operationKey: "operation-two" })),
     ).toThrow(TaskExecutionOwnershipError);
     expect(fs.readFileSync(recordPath, "utf8")).toBe(before);
   });
@@ -130,10 +122,7 @@ describe("loadOwnedTaskExecutionRecord", () => {
     const before = fs.readFileSync(recordPath, "utf8");
 
     expect(() =>
-      loadOwnedTaskExecutionRecord(
-        store,
-        request({ expectedBranch: "agent/other-card" }),
-      ),
+      loadOwnedTaskExecutionRecord(store, request({ expectedBranch: "agent/other-card" })),
     ).toThrow("branch does not match");
     expect(fs.readFileSync(recordPath, "utf8")).toBe(before);
   });
@@ -142,9 +131,9 @@ describe("loadOwnedTaskExecutionRecord", () => {
     const { recordPath, store } = createFixture();
     const before = fs.readFileSync(recordPath, "utf8");
 
-    expect(() =>
-      loadOwnedTaskExecutionRecord(store, request({ cardId: "missing-card" })),
-    ).toThrow("No task execution record exists");
+    expect(() => loadOwnedTaskExecutionRecord(store, request({ cardId: "missing-card" }))).toThrow(
+      "No task execution record exists",
+    );
     expect(fs.readFileSync(recordPath, "utf8")).toBe(before);
   });
 
@@ -153,10 +142,7 @@ describe("loadOwnedTaskExecutionRecord", () => {
     const before = fs.readFileSync(recordPath, "utf8");
 
     expect(() =>
-      loadOwnedTaskExecutionRecord(
-        store,
-        request({ projectId: "project-two" }),
-      ),
+      loadOwnedTaskExecutionRecord(store, request({ projectId: "project-two" })),
     ).toThrow("owner does not match");
     expect(fs.readFileSync(recordPath, "utf8")).toBe(before);
   });

@@ -1,8 +1,5 @@
 import { z } from "zod";
-import {
-  durableMutationSchema,
-  mutationProvenNotDelivered,
-} from "./durable-mutation.js";
+import { durableMutationSchema, mutationProvenNotDelivered } from "./durable-mutation.js";
 
 const identifier = z
   .string()
@@ -14,9 +11,7 @@ const identifier = z
       !value.includes("\\") &&
       !Array.from(value).some((character) => {
         const code = character.codePointAt(0);
-        return (
-          code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f))
-        );
+        return code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f));
       }),
   );
 const date = z.string().datetime();
@@ -70,12 +65,7 @@ export type RunEventType = (typeof runEventTypes)[number];
 /** Exact (event, prior lifecycle) -> next lifecycle inventory; absent tuples are forbidden. */
 type TransitionDestination = RunLifecycleState | readonly RunLifecycleState[];
 export const runTransitionMatrix: Readonly<
-  Partial<
-    Record<
-      RunEventType,
-      Partial<Record<RunLifecycleState, TransitionDestination>>
-    >
-  >
+  Partial<Record<RunEventType, Partial<Record<RunLifecycleState, TransitionDestination>>>>
 > = {
   claim: { ready: "planning" },
   "implementation-claimed": { preparing: "planning" },
@@ -188,14 +178,7 @@ const operation = z.strictObject({
   mutation: durableMutationSchema.optional(),
   id: identifier,
   kind: identifier,
-  status: z.enum([
-    "pending",
-    "running",
-    "ambiguous",
-    "completed",
-    "failed",
-    "cancelled",
-  ]),
+  status: z.enum(["pending", "running", "ambiguous", "completed", "failed", "cancelled"]),
   generation: z.number().int().positive().safe(),
   expectedRevision: z.number().int().positive().safe(),
   prerequisites: z.array(identifier),
@@ -232,12 +215,7 @@ const operation = z.strictObject({
     .optional(),
 });
 export const terminalEvidenceSchema = z.strictObject({
-  prOutcome: z.enum([
-    "merged",
-    "closed-unmerged",
-    "no-pr-failure",
-    "refinement-completed",
-  ]),
+  prOutcome: z.enum(["merged", "closed-unmerged", "no-pr-failure", "refinement-completed"]),
   prObservationId: identifier,
   prVerifiedAt: date,
   trelloListId: identifier,
@@ -251,19 +229,11 @@ export const runRecordSchema = z
     projectId: identifier,
     cardId: identifier,
     attemptId: identifier,
-    taskKind: z
-      .enum(["implementation", "refinement"])
-      .default("implementation"),
+    taskKind: z.enum(["implementation", "refinement"]).default("implementation"),
     pinned: pinnedIdentitySchema,
     lifecycle: z.enum(runLifecycleStates),
     checkpoint: z.enum(runLifecycleStates),
-    publicationState: z.enum([
-      "none",
-      "open",
-      "merged",
-      "closed-unmerged",
-      "unknown",
-    ]),
+    publicationState: z.enum(["none", "open", "merged", "closed-unmerged", "unknown"]),
     operation: z.strictObject({
       id: identifier.nullable(),
       kind: identifier.nullable(),
@@ -310,12 +280,7 @@ export const runRecordSchema = z
     sessions: z.record(identifier, identifier),
     artifacts: z.array(artifactReference),
     expectedTrelloListId: identifier.nullable(),
-    terminalSync: z.enum([
-      "not-applicable",
-      "pending",
-      "verified",
-      "ambiguous",
-    ]),
+    terminalSync: z.enum(["not-applicable", "pending", "verified", "ambiguous"]),
     terminalEvidence: terminalEvidenceSchema.nullable(),
     legacy: z.record(identifier, z.unknown()),
     /** Validated legacy-store projections, owned by this attempt envelope. */
@@ -334,8 +299,7 @@ export const runRecordSchema = z
         ctx.addIssue({
           code: "custom",
           path: ["pendingOperations"],
-          message:
-            "Operation expected revision cannot be ahead of current revision",
+          message: "Operation expected revision cannot be ahead of current revision",
         });
     for (const [index, op] of run.pendingOperations.entries()) {
       if (op.mutation) {
@@ -343,15 +307,12 @@ export const runRecordSchema = z
           op.mutation.cancellation &&
           (op.mutation.cancellation.ownerGeneration > run.owner.generation ||
             (op.mutation.cancellation.reason === "terminal-observed" &&
-              !["done", "refined", "failed", "cancelled"].includes(
-                run.lifecycle,
-              )))
+              !["done", "refined", "failed", "cancelled"].includes(run.lifecycle)))
         )
           ctx.addIssue({
             code: "custom",
             path: ["pendingOperations", index],
-            message:
-              "Cancellation must retain authoritative terminal/owner provenance",
+            message: "Cancellation must retain authoritative terminal/owner provenance",
           });
         const refs = [
           op.mutation.intent.payloadId,
@@ -359,25 +320,18 @@ export const runRecordSchema = z
             entry.response ? [entry.response.evidence.artifactId] : [],
           ),
           ...op.mutation.observations.map((entry) => entry.evidence.artifactId),
-          ...(op.mutation.cancellation
-            ? [op.mutation.cancellation.evidence.artifactId]
-            : []),
+          ...(op.mutation.cancellation ? [op.mutation.cancellation.evidence.artifactId] : []),
         ];
         if (
-          refs.some(
-            (id) => !run.artifacts.some((artifact) => artifact.id === id),
-          ) ||
+          refs.some((id) => !run.artifacts.some((artifact) => artifact.id === id)) ||
           JSON.stringify(op.intent) !== JSON.stringify(op.mutation.intent)
         )
           ctx.addIssue({
             code: "custom",
             path: ["pendingOperations", index],
-            message:
-              "Mutation payload/evidence references and intent must agree",
+            message: "Mutation payload/evidence references and intent must agree",
           });
-        const verified = op.mutation.observations.find(
-          (entry) => entry.outcome === "verified",
-        );
+        const verified = op.mutation.observations.find((entry) => entry.outcome === "verified");
         const expectedStatus = op.mutation.cancellation
           ? "cancelled"
           : verified
@@ -392,23 +346,20 @@ export const runRecordSchema = z
           op.kind !== op.mutation.intent.kind ||
           op.resolutionEvidence !== undefined ||
           (op.mutation.cancellation && op.completionEvidence !== undefined) ||
-          (verified &&
-            op.completionEvidence !== verified.evidence.observationId) ||
+          (verified && op.completionEvidence !== verified.evidence.observationId) ||
           op.generation !== Math.max(1, op.mutation.dispatches.length)
         )
           ctx.addIssue({
             code: "custom",
             path: ["pendingOperations", index],
-            message:
-              "Mutation state must match durable dispatch/verification evidence",
+            message: "Mutation state must match durable dispatch/verification evidence",
           });
       }
       if (op.status === "cancelled" && !op.mutation?.cancellation)
         ctx.addIssue({
           code: "custom",
           path: ["pendingOperations", index],
-          message:
-            "Cancelled operation requires never-dispatched mutation cancellation evidence",
+          message: "Cancelled operation requires never-dispatched mutation cancellation evidence",
         });
       if (op.status === "completed" && op.completionEvidence === undefined)
         ctx.addIssue({
@@ -424,25 +375,20 @@ export const runRecordSchema = z
         ctx.addIssue({
           code: "custom",
           path: ["pendingOperations", index, "resolutionEvidence"],
-          message:
-            "A failed operation requires conclusive non-acceptance evidence",
+          message: "A failed operation requires conclusive non-acceptance evidence",
         });
       if (
         op.resolutionEvidence &&
-        ((op.resolutionEvidence.disposition === "accepted" &&
-          op.status !== "completed") ||
+        ((op.resolutionEvidence.disposition === "accepted" && op.status !== "completed") ||
           (op.resolutionEvidence.disposition === "conclusively-not-accepted" &&
             op.status !== "failed") ||
-          (["not-found", "uncertain"].includes(
-            op.resolutionEvidence.disposition,
-          ) &&
+          (["not-found", "uncertain"].includes(op.resolutionEvidence.disposition) &&
             op.status !== "ambiguous"))
       )
         ctx.addIssue({
           code: "custom",
           path: ["pendingOperations", index, "resolutionEvidence"],
-          message:
-            "Discovered operation state must match its evidence disposition",
+          message: "Discovered operation state must match its evidence disposition",
         });
     }
     const correlations = run.pendingOperations.flatMap((entry) =>
@@ -455,8 +401,7 @@ export const runRecordSchema = z
         message: "Mutation correlation identities must be unique",
       });
     if (
-      new Set(run.pendingOperations.map((entry) => entry.id)).size !==
-      run.pendingOperations.length
+      new Set(run.pendingOperations.map((entry) => entry.id)).size !== run.pendingOperations.length
     )
       ctx.addIssue({
         code: "custom",
@@ -470,10 +415,7 @@ export const runRecordSchema = z
           path: ["budgets"],
           message: "Budget usage may not exceed its limit",
         });
-    if (
-      run.lifecycle === "waiting" &&
-      (run.wait.reason === null || run.wait.since === null)
-    )
+    if (run.lifecycle === "waiting" && (run.wait.reason === null || run.wait.since === null))
       ctx.addIssue({
         code: "custom",
         path: ["wait"],
@@ -481,9 +423,7 @@ export const runRecordSchema = z
       });
     if (
       run.lifecycle === "waiting" &&
-      ["waiting", "done", "refined", "failed", "cancelled"].includes(
-        run.checkpoint,
-      )
+      ["waiting", "done", "refined", "failed", "cancelled"].includes(run.checkpoint)
     )
       ctx.addIssue({
         code: "custom",
@@ -491,9 +431,7 @@ export const runRecordSchema = z
         message: "Wait checkpoint must be resumable",
       });
     if (
-      !["waiting", "done", "refined", "failed", "cancelled"].includes(
-        run.lifecycle,
-      ) &&
+      !["waiting", "done", "refined", "failed", "cancelled"].includes(run.lifecycle) &&
       run.lifecycle !== run.checkpoint
     )
       ctx.addIssue({
@@ -522,8 +460,7 @@ export const runRecordSchema = z
       ctx.addIssue({
         code: "custom",
         path: ["terminalSync"],
-        message:
-          "Terminal state requires verified external synchronization and evidence",
+        message: "Terminal state requires verified external synchronization and evidence",
       });
     if (run.lifecycle === "failed" && run.publicationState !== "none")
       ctx.addIssue({
@@ -546,8 +483,7 @@ export const runRecordSchema = z
       ctx.addIssue({
         code: "custom",
         path: ["terminalEvidence"],
-        message:
-          "Refined requires a verified refinement completion, not PR closure",
+        message: "Refined requires a verified refinement completion, not PR closure",
       });
     if (
       run.terminalEvidence?.prOutcome === "refinement-completed" &&
@@ -557,13 +493,9 @@ export const runRecordSchema = z
       ctx.addIssue({
         code: "custom",
         path: ["terminalEvidence"],
-        message:
-          "Refinement completion must verify Backlog for a refinement attempt",
+        message: "Refinement completion must verify Backlog for a refinement attempt",
       });
-    if (
-      run.lifecycle === "cancelled" &&
-      run.publicationState !== "closed-unmerged"
-    )
+    if (run.lifecycle === "cancelled" && run.publicationState !== "closed-unmerged")
       ctx.addIssue({
         code: "custom",
         path: ["publicationState"],
@@ -593,10 +525,8 @@ export function isConclusiveOperationResolution(op: RunOperation): boolean {
   return (
     (op.status === "completed" &&
       op.completionEvidence !== undefined &&
-      (op.resolutionEvidence === undefined ||
-        op.resolutionEvidence.disposition === "accepted")) ||
-    (op.status === "failed" &&
-      op.resolutionEvidence?.disposition === "conclusively-not-accepted")
+      (op.resolutionEvidence === undefined || op.resolutionEvidence.disposition === "accepted")) ||
+    (op.status === "failed" && op.resolutionEvidence?.disposition === "conclusively-not-accepted")
   );
 }
 export function parseRunRecord(value: unknown): RunRecord {

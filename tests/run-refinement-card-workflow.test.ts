@@ -5,10 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ProjectConfig } from "../src/config/config.js";
 import type { GitClient } from "../src/git/git-client.js";
-import {
-  OpenCodeClient,
-  type OpenCodeRunOptions,
-} from "../src/opencode/opencode-client.js";
+import { OpenCodeClient, type OpenCodeRunOptions } from "../src/opencode/opencode-client.js";
 import { runRefinementCardWorkflow } from "../src/refinement/run-refinement-card.js";
 import { getRefinementResultPath } from "../src/refinement/refinement-result.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
@@ -131,10 +128,7 @@ function fixture() {
   };
 }
 
-function run(
-  f: ReturnType<typeof fixture>,
-  signal = new AbortController().signal,
-) {
+function run(f: ReturnType<typeof fixture>, signal = new AbortController().signal) {
   return runRefinementCardWorkflow({
     trello: f.trello,
     git: f.git,
@@ -181,20 +175,14 @@ describe("runRefinementCardWorkflow", () => {
       await configure(f);
       await expect(run(f)).rejects.toThrow(expectedError);
       expect(f.cardList()).toBe(f.project.trello.failedListId);
-      expect(f.trello.moveCard).toHaveBeenCalledWith(
-        f.card.id,
-        f.project.trello.failedListId,
-      );
+      expect(f.trello.moveCard).toHaveBeenCalledWith(f.card.id, f.project.trello.failedListId);
       expect(f.trello.updateCardContent).not.toHaveBeenCalled();
       expect(f.git.resetHard).not.toHaveBeenCalled();
       expect(f.git.cleanUntracked).not.toHaveBeenCalled();
       if (_label === "failed execution") {
-        expect(
-          fs.readFileSync(
-            path.join(f.worktreePath, "src", "agent-change.ts"),
-            "utf8",
-          ),
-        ).toBe("preserve me");
+        expect(fs.readFileSync(path.join(f.worktreePath, "src", "agent-change.ts"), "utf8")).toBe(
+          "preserve me",
+        );
       }
     },
   );

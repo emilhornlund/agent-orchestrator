@@ -1,6 +1,4 @@
-export function buildValidationPromptLines(
-  validationCommand?: string,
-): string[] {
+export function buildValidationPromptLines(validationCommand?: string): string[] {
   return [
     validationCommand
       ? `Run the configured repository validation command: \`${validationCommand}\` before finishing.`

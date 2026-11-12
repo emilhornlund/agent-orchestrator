@@ -9,6 +9,4 @@ if (typeof token !== "string" || token.length === 0) {
 }
 
 const prompt = (process.argv[2] ?? "").toLowerCase();
-process.stdout.write(
-  prompt.includes("username") ? "x-access-token\n" : `${token}\n`,
-);
+process.stdout.write(prompt.includes("username") ? "x-access-token\n" : `${token}\n`);

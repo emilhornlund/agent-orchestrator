@@ -103,9 +103,7 @@ function fixture(options: { mutationPending?: boolean } = {}) {
     })),
   } as unknown as Pick<
     GitHubClient,
-    | "getPullRequestStateByNumber"
-    | "getPullRequestCommitShas"
-    | "getCiObservations"
+    "getPullRequestStateByNumber" | "getPullRequestCommitShas" | "getCiObservations"
   >;
   const git = {
     hasEquivalentImplementationCommit: vi.fn(async () => true),
@@ -118,9 +116,7 @@ function fixture(options: { mutationPending?: boolean } = {}) {
     pullRequestNumber: 18,
   };
   const reconcile = (
-    overrides: Partial<
-      Parameters<typeof reconcileExternalTaskSessionPullRequest>[0]
-    > = {},
+    overrides: Partial<Parameters<typeof reconcileExternalTaskSessionPullRequest>[0]> = {},
   ) =>
     reconcileExternalTaskSessionPullRequest({
       project,
@@ -148,9 +144,7 @@ function fixture(options: { mutationPending?: boolean } = {}) {
   };
 }
 
-function ciEvidence(
-  status: "pending" | "failed" | "missing" | "ambiguous",
-): CiObservationsResult {
+function ciEvidence(status: "pending" | "failed" | "missing" | "ambiguous"): CiObservationsResult {
   const headSha = "b".repeat(40);
   return {
     headSha,
@@ -277,9 +271,7 @@ describe("reconcileExternalTaskSessionPullRequest", () => {
       revision: current!.revision + 1,
       updatedAt: "2026-10-25T00:00:01.000Z",
     });
-    await expect(f.reconcile()).rejects.toThrow(
-      "Conflicting external recovery",
-    );
+    await expect(f.reconcile()).rejects.toThrow("Conflicting external recovery");
     expect(f.taskStore.read("card")).toEqual(conflicting);
     expect(f.moveCard).not.toHaveBeenCalled();
   });
@@ -288,12 +280,8 @@ describe("reconcileExternalTaskSessionPullRequest", () => {
     "rejects %s PR-head CI evidence before any recovery mutation",
     async (status) => {
       const f = fixture();
-      vi.mocked(f.github.getCiObservations).mockResolvedValueOnce(
-        ciEvidence(status),
-      );
-      await expect(f.reconcile()).rejects.toThrow(
-        "publication checks are not verified",
-      );
+      vi.mocked(f.github.getCiObservations).mockResolvedValueOnce(ciEvidence(status));
+      await expect(f.reconcile()).rejects.toThrow("publication checks are not verified");
       expect(f.taskStore.read("card")?.externalRecovery).toBeUndefined();
       expect(f.moveCard).not.toHaveBeenCalled();
       expect(f.queue.list()[0]?.status).toBe("completed");
@@ -311,9 +299,7 @@ describe("reconcileExternalTaskSessionPullRequest", () => {
       enqueuedAt: "2026-10-25T00:00:01.000Z",
     });
     f.queue.claimNext();
-    await expect(f.reconcile()).rejects.toThrow(
-      "Another worker owns the project mutation queue",
-    );
+    await expect(f.reconcile()).rejects.toThrow("Another worker owns the project mutation queue");
     expect(f.taskStore.read("card")?.externalRecovery).toBeUndefined();
     expect(f.moveCard).not.toHaveBeenCalled();
   });
@@ -335,33 +321,21 @@ describe("reconcileExternalTaskSessionPullRequest", () => {
     expect(missing.taskStore.read("card")?.externalRecovery).toBeUndefined();
 
     const wrongRepository = fixture();
-    vi.mocked(
-      wrongRepository.github.getPullRequestStateByNumber,
-    ).mockResolvedValueOnce({
+    vi.mocked(wrongRepository.github.getPullRequestStateByNumber).mockResolvedValueOnce({
       ...wrongRepository.pullRequest,
       url: "https://github.com/other/repository/pull/18",
     });
-    await expect(wrongRepository.reconcile()).rejects.toThrow(
-      "identity or merge target",
-    );
-    expect(
-      wrongRepository.taskStore.read("card")?.externalRecovery,
-    ).toBeUndefined();
+    await expect(wrongRepository.reconcile()).rejects.toThrow("identity or merge target");
+    expect(wrongRepository.taskStore.read("card")?.externalRecovery).toBeUndefined();
     expect(wrongRepository.moveCard).not.toHaveBeenCalled();
 
     const missingHead = fixture();
-    vi.mocked(
-      missingHead.github.getPullRequestStateByNumber,
-    ).mockResolvedValueOnce({
+    vi.mocked(missingHead.github.getPullRequestStateByNumber).mockResolvedValueOnce({
       ...missingHead.pullRequest,
       headRefOid: undefined,
     } as unknown as PullRequestState);
-    await expect(missingHead.reconcile()).rejects.toThrow(
-      "incomplete commit evidence",
-    );
-    expect(
-      missingHead.taskStore.read("card")?.externalRecovery,
-    ).toBeUndefined();
+    await expect(missingHead.reconcile()).rejects.toThrow("incomplete commit evidence");
+    expect(missingHead.taskStore.read("card")?.externalRecovery).toBeUndefined();
     expect(missingHead.moveCard).not.toHaveBeenCalled();
   });
 
@@ -369,9 +343,7 @@ describe("reconcileExternalTaskSessionPullRequest", () => {
     const f = fixture();
     const originalCompareAndSwap = f.taskStore.compareAndSwap.bind(f.taskStore);
     const compareAndSwap = vi.spyOn(f.taskStore, "compareAndSwap");
-    compareAndSwap.mockImplementationOnce((...args) =>
-      originalCompareAndSwap(...args),
-    );
+    compareAndSwap.mockImplementationOnce((...args) => originalCompareAndSwap(...args));
     compareAndSwap.mockImplementationOnce(() => {
       throw new Error("simulated interruption after Trello move");
     });
@@ -391,9 +363,9 @@ describe("reconcileExternalTaskSessionPullRequest", () => {
       currentListId = "done";
       throw new Error("response lost after Trello applied the move");
     });
-    await expect(
-      f.reconcile({ readTrelloListId: async () => currentListId }),
-    ).rejects.toThrow("response lost");
+    await expect(f.reconcile({ readTrelloListId: async () => currentListId })).rejects.toThrow(
+      "response lost",
+    );
     await f.reconcile({ readTrelloListId: async () => currentListId });
     expect(f.moveCard).toHaveBeenCalledOnce();
     expect(f.taskStore.read("card")?.phase).toBe("done");
@@ -401,13 +373,9 @@ describe("reconcileExternalTaskSessionPullRequest", () => {
 
   it("resumes a persisted move intent after interruption before the move", async () => {
     const f = fixture();
-    f.moveCard.mockRejectedValueOnce(
-      new Error("Trello unavailable before move"),
-    );
+    f.moveCard.mockRejectedValueOnce(new Error("Trello unavailable before move"));
     await expect(f.reconcile()).rejects.toThrow("Trello unavailable");
-    expect(f.taskStore.read("card")?.externalRecovery?.status).toBe(
-      "move-pending",
-    );
+    expect(f.taskStore.read("card")?.externalRecovery?.status).toBe("move-pending");
     expect(f.taskStore.read("card")?.phase).toBe("attention-required");
 
     await f.reconcile();

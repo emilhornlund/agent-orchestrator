@@ -3,19 +3,13 @@ import type { ProjectConfig } from "../config/config.js";
 import type { CiCheckEvaluation } from "../github/evaluate-ci-checks.js";
 import type { GitClient } from "../git/git-client.js";
 import { TaskExecutionStore } from "./task-execution-store.js";
-import type {
-  TaskExecutionRecord,
-  TaskExecutionPhase,
-} from "./task-execution-record.js";
+import type { TaskExecutionRecord, TaskExecutionPhase } from "./task-execution-record.js";
 import { transitionTaskExecutionRecord } from "./task-execution-transition.js";
 import { loadOwnedTaskExecutionRecord } from "./task-execution-ownership.js";
 import { assertOwnedTaskWorktreePath } from "./run-task-session-implementation.js";
 import { isRetryableGitHubError } from "../github/github-client.js";
 import { isRetryableTrelloError } from "../trello/trello-client.js";
-import {
-  assertSetupInventoryIdentity,
-  captureSetupEffects,
-} from "../process/run-setup.js";
+import { assertSetupInventoryIdentity, captureSetupEffects } from "../process/run-setup.js";
 import { OPERATION_RECOVERY_MAX_EXECUTIONS } from "./operation-recovery-policy.js";
 import {
   isSameProcessInstance,
@@ -62,9 +56,7 @@ export interface ReconcileTaskSessionOptions {
     url: string;
     state: "OPEN" | "CLOSED" | "MERGED";
   } | null>;
-  readAuthoritativeSnapshot: (
-    record: TaskExecutionRecord,
-  ) => Promise<TaskSessionRecoverySnapshot>;
+  readAuthoritativeSnapshot: (record: TaskExecutionRecord) => Promise<TaskSessionRecoverySnapshot>;
 }
 
 export type TaskSessionRecoveryResult =
@@ -85,9 +77,7 @@ export type TaskSessionRecoveryResult =
   | { status: "complete"; record: TaskExecutionRecord };
 
 function bumpTimestamp(record: TaskExecutionRecord): string {
-  return new Date(
-    Math.max(Date.now(), Date.parse(record.updatedAt) + 1),
-  ).toISOString();
+  return new Date(Math.max(Date.now(), Date.parse(record.updatedAt) + 1)).toISOString();
 }
 
 function preserveAttention(
@@ -139,10 +129,7 @@ function persistWait(
       reason,
       resumePhase:
         record.recoveryWait?.resumePhase ??
-        (record.phase as Exclude<
-          TaskExecutionPhase,
-          "done" | "attention-required"
-        >),
+        (record.phase as Exclude<TaskExecutionPhase, "done" | "attention-required">),
       since,
       retryAt,
       attempts: (record.recoveryWait?.attempts ?? 0) + 1,
@@ -198,8 +185,7 @@ export function expectedTaskTrelloList(
   record: TaskExecutionRecord,
 ): string {
   if (record.phase === "done") return project.trello.doneListId;
-  if (record.expectedTrelloListId !== undefined)
-    return record.expectedTrelloListId;
+  if (record.expectedTrelloListId !== undefined) return record.expectedTrelloListId;
   const { phase } = record;
   // A feedback-remediation checkpoint has durable ownership evidence that it
   // belongs to an already-published PR. Its phase can temporarily move back
@@ -212,8 +198,7 @@ export function expectedTaskTrelloList(
       record.ciRepair?.activePrimaryOperation !== undefined)
   )
     return project.trello.reviewListId;
-  if (phase === "human-feedback" || phase === "ci")
-    return project.trello.reviewListId;
+  if (phase === "human-feedback" || phase === "ci") return project.trello.reviewListId;
   return project.trello.workingListId;
 }
 
@@ -236,8 +221,7 @@ function readSetupInventory(
   worktreePath: string,
   branch: string,
 ): void {
-  if (reference === undefined)
-    throw new Error("Setup inventory evidence is missing");
+  if (reference === undefined) throw new Error("Setup inventory evidence is missing");
   const inventory = store.readPrimaryResultArtifact(reference);
   assertSetupInventoryIdentity(inventory, worktreePath, branch);
 }
@@ -307,17 +291,13 @@ function checkObservationIsStale(
   snapshot: TaskSessionRecoverySnapshot,
   expectedHead: string,
 ): boolean {
-  return (
-    snapshot.ciEvaluation !== null &&
-    snapshot.ciEvaluation.expectedHeadSha !== expectedHead
-  );
+  return snapshot.ciEvaluation !== null && snapshot.ciEvaluation.expectedHeadSha !== expectedHead;
 }
 
 export async function reconcileTaskSession(
   options: ReconcileTaskSessionOptions,
 ): Promise<TaskSessionRecoveryResult> {
-  const { project, cardId, expectedBranch, operationKey, taskRecordStore } =
-    options;
+  const { project, cardId, expectedBranch, operationKey, taskRecordStore } = options;
   let record = loadOwnedTaskExecutionRecord(taskRecordStore, {
     projectId: project.id,
     cardId,
@@ -339,10 +319,7 @@ export async function reconcileTaskSession(
         `Setup baseline evidence is invalid: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    const execution = taskRecordStore.readProcessExecution(
-      record.cardId,
-      record.setup.executionId,
-    );
+    const execution = taskRecordStore.readProcessExecution(record.cardId, record.setup.executionId);
     const evidence = execution as {
       executionId?: unknown;
       command?: unknown;
@@ -365,10 +342,7 @@ export async function reconcileTaskSession(
       if (typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0) {
         try {
           process.kill(pid, 0);
-          const sameInstance = isSameProcessInstance(
-            pid,
-            evidence.pidStartIdentity,
-          );
+          const sameInstance = isSameProcessInstance(pid, evidence.pidStartIdentity);
           if (sameInstance === false)
             return preserveAttention(
               taskRecordStore,
@@ -384,11 +358,7 @@ export async function reconcileTaskSession(
               : "Repository setup process identity cannot be verified; waiting without replay",
           );
         } catch (error) {
-          if (!(
-            error instanceof Error &&
-            "code" in error &&
-            error.code === "ESRCH"
-          ))
+          if (!(error instanceof Error && "code" in error && error.code === "ESRCH"))
             return persistWait(
               taskRecordStore,
               record,
@@ -420,12 +390,7 @@ export async function reconcileTaskSession(
         `setup-recovered-after-${record.cardId}-${record.revision}`,
         JSON.parse(
           (
-            await captureSetupEffects(
-              options.setupGit,
-              options.worktreePath,
-              options.signal,
-              true,
-            )
+            await captureSetupEffects(options.setupGit, options.worktreePath, options.signal, true)
           ).toString("utf8"),
         ) as unknown,
       );
@@ -450,9 +415,7 @@ export async function reconcileTaskSession(
           ],
         },
         revision: record.revision + 1,
-        updatedAt: new Date(
-          Math.max(Date.now(), Date.parse(record.updatedAt) + 1),
-        ).toISOString(),
+        updatedAt: new Date(Math.max(Date.now(), Date.parse(record.updatedAt) + 1)).toISOString(),
       });
     } else if (
       expectedSetupExecution !== undefined &&
@@ -482,8 +445,7 @@ export async function reconcileTaskSession(
           ...record.setup,
           status: retryAllowed ? "pending" : "failed",
           after: artifact.reference,
-          exitCode:
-            typeof evidence.exitCode === "number" ? evidence.exitCode : null,
+          exitCode: typeof evidence.exitCode === "number" ? evidence.exitCode : null,
           diagnostic: `Setup process ended with ${String(evidence.status)}`,
           history: [
             ...(record.setup.history ?? []),
@@ -493,18 +455,13 @@ export async function reconcileTaskSession(
               before: record.setup.attemptBefore ?? record.setup.before!,
               after: artifact.reference,
               executionId: record.setup.executionId,
-              exitCode:
-                typeof evidence.exitCode === "number"
-                  ? evidence.exitCode
-                  : null,
+              exitCode: typeof evidence.exitCode === "number" ? evidence.exitCode : null,
               outcome: "failed" as const,
             },
           ],
         },
         revision: record.revision + 1,
-        updatedAt: new Date(
-          Math.max(Date.now(), Date.parse(record.updatedAt) + 1),
-        ).toISOString(),
+        updatedAt: new Date(Math.max(Date.now(), Date.parse(record.updatedAt) + 1)).toISOString(),
       });
     }
   }
@@ -547,12 +504,7 @@ export async function reconcileTaskSession(
         options.worktreePath,
         expectedBranch,
       );
-      readSetupInventory(
-        taskRecordStore,
-        record.setup.after,
-        options.worktreePath,
-        expectedBranch,
-      );
+      readSetupInventory(taskRecordStore, record.setup.after, options.worktreePath, expectedBranch);
       const evidence = readSetupExecution(
         taskRecordStore,
         record.cardId,
@@ -578,14 +530,11 @@ export async function reconcileTaskSession(
           (attempt) =>
             attempt.executionId === record.setup!.executionId &&
             attempt.outcome === "passed" &&
-            attempt.before ===
-              (record.setup!.attemptBefore ?? record.setup!.before) &&
+            attempt.before === (record.setup!.attemptBefore ?? record.setup!.before) &&
             attempt.after === record.setup!.after,
         )
       )
-        throw new Error(
-          "Setup process result does not bind the stored effects",
-        );
+        throw new Error("Setup process result does not bind the stored effects");
     } catch (error) {
       return preserveAttention(
         taskRecordStore,
@@ -624,8 +573,7 @@ export async function reconcileTaskSession(
     snapshot.pullRequest !== null &&
     snapshot.pullRequest.number === expectedTerminalPr.number &&
     snapshot.pullRequest.url === expectedTerminalPr.url &&
-    (snapshot.pullRequest.state === "MERGED" ||
-      snapshot.pullRequest.state === "CLOSED")
+    (snapshot.pullRequest.state === "MERGED" || snapshot.pullRequest.state === "CLOSED")
   )
     return { status: "terminal-observed", record };
   if (
@@ -641,12 +589,10 @@ export async function reconcileTaskSession(
   }
   if (
     record.setup?.status === "active" ||
-    (project.repository.setupCommand !== undefined &&
-      record.setup === undefined) ||
+    (project.repository.setupCommand !== undefined && record.setup === undefined) ||
     (record.setup !== undefined &&
       record.setup.command !== (project.repository.setupCommand ?? null)) ||
-    (record.setup?.status === "passed" &&
-      record.setup.worktreePath !== options.worktreePath) ||
+    (record.setup?.status === "passed" && record.setup.worktreePath !== options.worktreePath) ||
     record.setup?.status === "ambiguous" ||
     record.setup?.status === "failed"
   ) {
@@ -671,19 +617,15 @@ export async function reconcileTaskSession(
         operationKey: record.operationKey,
         occurredAt: bumpTimestamp(record),
       });
-      const persisted = taskRecordStore.compareAndSwap(
-        record.cardId,
-        record.revision,
-        {
-          ...next,
-          recoveryWait: undefined,
-          terminalFailure: {
-            kind: "implementation",
-            reason: reason.slice(0, 4_000),
-            outcome: "pending",
-          },
+      const persisted = taskRecordStore.compareAndSwap(record.cardId, record.revision, {
+        ...next,
+        recoveryWait: undefined,
+        terminalFailure: {
+          kind: "implementation",
+          reason: reason.slice(0, 4_000),
+          outcome: "pending",
         },
-      );
+      });
       return { status: "attention-required", reason, record: persisted };
     }
     return preserveAttention(
@@ -761,8 +703,7 @@ export async function reconcileTaskSession(
       );
     }
     const uncommitted =
-      (record.validationRepair?.status === "exhausted" ||
-        record.reviewUnavailable !== undefined) &&
+      (record.validationRepair?.status === "exhausted" || record.reviewUnavailable !== undefined) &&
       record.reviewRepair?.finalReview === undefined &&
       snapshot.verifiedUncommittedPublication === true &&
       snapshot.trustedCommitSha === null &&
@@ -771,8 +712,7 @@ export async function reconcileTaskSession(
       record.pullRequest === undefined;
     if (
       (!uncommitted && snapshot.trustedCommitSha === null) ||
-      (!uncommitted &&
-        snapshot.worktreeHeadSha !== snapshot.trustedCommitSha) ||
+      (!uncommitted && snapshot.worktreeHeadSha !== snapshot.trustedCommitSha) ||
       (snapshot.remoteBranchHeadSha !== null &&
         snapshot.remoteBranchHeadSha !== snapshot.trustedCommitSha)
     ) {
@@ -817,16 +757,11 @@ export async function reconcileTaskSession(
       );
     }
     if (record.phase !== "done" && actualPr.state !== "OPEN") {
-      return preserveAttention(
-        taskRecordStore,
-        record,
-        "Active pull request is not open",
-      );
+      return preserveAttention(taskRecordStore, record, "Active pull request is not open");
     }
     if (
       record.phase === "ci" &&
-      (snapshot.ciEvaluation === null ||
-        checkObservationIsStale(snapshot, expectedPr.headSha))
+      (snapshot.ciEvaluation === null || checkObservationIsStale(snapshot, expectedPr.headSha))
     ) {
       return preserveAttention(
         taskRecordStore,
@@ -834,10 +769,7 @@ export async function reconcileTaskSession(
         "CI snapshot is missing or belongs to a different PR head",
       );
     }
-    if (
-      record.phase === "human-feedback" &&
-      snapshot.feedbackHeadSha !== expectedPr.headSha
-    ) {
+    if (record.phase === "human-feedback" && snapshot.feedbackHeadSha !== expectedPr.headSha) {
       return preserveAttention(
         taskRecordStore,
         record,
@@ -846,8 +778,7 @@ export async function reconcileTaskSession(
     }
   }
   const uncertainReplies = new Set(snapshot.uncertainReplyIds);
-  for (const replyId of snapshot.reconciledReplyIds)
-    uncertainReplies.delete(replyId);
+  for (const replyId of snapshot.reconciledReplyIds) uncertainReplies.delete(replyId);
   if (uncertainReplies.size > 0) {
     return preserveAttention(
       taskRecordStore,
@@ -873,10 +804,7 @@ export async function reconcileTaskSession(
       record,
       "Bound primary session identity conflicts with the task worktree",
     );
-  if (
-    snapshot.primarySessionAccessible === null ||
-    snapshot.primarySessionAccessible === "unknown"
-  )
+  if (snapshot.primarySessionAccessible === null || snapshot.primarySessionAccessible === "unknown")
     return persistWait(
       taskRecordStore,
       record,

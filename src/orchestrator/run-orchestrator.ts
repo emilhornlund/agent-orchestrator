@@ -6,23 +6,11 @@ import {
 import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
 import { withGitHubOperationProject } from "../github/github-operation-context.js";
-import {
-  cleanupLogRetention,
-  logRetentionIntervalMilliseconds,
-} from "../logging/log-retention.js";
+import { cleanupLogRetention, logRetentionIntervalMilliseconds } from "../logging/log-retention.js";
 import { logger, shouldWriteConsole } from "../logging/logger.js";
-import {
-  notifyAttentionRequired,
-  type EmailNotifier,
-} from "../notifications/email-notifier.js";
-import {
-  OpenCodeRunAbortedError,
-  type OpenCodeClient,
-} from "../opencode/opencode-client.js";
-import {
-  CommandRunAbortedError,
-  type CommandRunner,
-} from "../process/command-runner.js";
+import { notifyAttentionRequired, type EmailNotifier } from "../notifications/email-notifier.js";
+import { OpenCodeRunAbortedError, type OpenCodeClient } from "../opencode/opencode-client.js";
+import { CommandRunAbortedError, type CommandRunner } from "../process/command-runner.js";
 import { ProcessExecutionError } from "../process/process-runtime.js";
 import {
   TrelloRequestAbortedError,
@@ -83,8 +71,7 @@ export function hasDueTaskSessionRecoveryWait(
   now = Date.now(),
 ): boolean {
   if (!authorityRecord || authorityRecord.lifecycle !== "waiting") return false;
-  const projection =
-    authorityRecord.compatibility[`task-execution-${authorityRecord.cardId}`];
+  const projection = authorityRecord.compatibility[`task-execution-${authorityRecord.cardId}`];
   if (projection === undefined) return false;
   const taskProjection = parseTaskExecutionRecord(projection);
   const recoveryWait = taskProjection.recoveryWait;
@@ -102,15 +89,12 @@ export function persistEssentialDependencyWait(
   dependency: string,
 ): string | undefined {
   const ownedCardId = cardId ?? authority?.cardId;
-  if (!authority || !ownedCardId || authority.cardId !== ownedCardId)
-    return undefined;
+  if (!authority || !ownedCardId || authority.cardId !== ownedCardId) return undefined;
   const run = authority.store.read();
   if (
     !run ||
     run.cardId !== ownedCardId ||
-    run.pendingOperations.some(
-      (operation) => !isConclusiveOperationResolution(operation),
-    )
+    run.pendingOperations.some((operation) => !isConclusiveOperationResolution(operation))
   )
     return undefined;
   const key = `task-execution-${ownedCardId}`;
@@ -127,9 +111,7 @@ export function persistEssentialDependencyWait(
     operation: (raw) => {
       const latest = parseTaskExecutionRecord(raw);
       if (latest.revision !== task.revision || latest.phase !== task.phase)
-        throw new Error(
-          "Task checkpoint changed while scheduling dependency recovery",
-        );
+        throw new Error("Task checkpoint changed while scheduling dependency recovery");
       return {
         value: {
           ...latest,
@@ -158,10 +140,7 @@ import { getCardsForDiscovery } from "./trello-list-discovery.js";
 import { getWorkflowKind } from "./workflow-kind.js";
 import { isCardStartDateReached } from "./card-start-eligibility.js";
 import { MAX_VALIDATION_REPAIR_ATTEMPTS } from "../task-session/run-task-session-validation-repairs.js";
-import {
-  AiExecutionCapacity,
-  AiCapacityCancelledError,
-} from "./ai-execution-capacity.js";
+import { AiExecutionCapacity, AiCapacityCancelledError } from "./ai-execution-capacity.js";
 import { withActivePrObservation } from "./active-pr-observation.js";
 import { terminalPrFenceFromRun } from "../task-session/terminal-pr-fence.js";
 
@@ -250,18 +229,13 @@ function clearHumanReviewFailureForMissingCards(
   const observedCardIds = new Set(cardIds);
 
   for (const key of identities.keys()) {
-    if (
-      getHumanReviewCardIds(key).some((cardId) => !observedCardIds.has(cardId))
-    ) {
+    if (getHumanReviewCardIds(key).some((cardId) => !observedCardIds.has(cardId))) {
       identities.delete(key);
     }
   }
 }
 
-function clearHumanReviewFailureForCard(
-  identities: Map<string, string>,
-  cardId: string,
-): void {
+function clearHumanReviewFailureForCard(identities: Map<string, string>, cardId: string): void {
   for (const key of identities.keys()) {
     if (getHumanReviewCardIds(key).includes(cardId)) {
       identities.delete(key);
@@ -312,16 +286,14 @@ function getProcessExecutionError(
       typeof current.executionId === "string" &&
       /^[0-9a-f-]{36}$/iu.test(current.executionId) &&
       "stdoutArtifactReference" in current &&
-      current.stdoutArtifactReference ===
-        `process-executions/${current.executionId}/stdout.txt`
+      current.stdoutArtifactReference === `process-executions/${current.executionId}/stdout.txt`
     )
       return {
         executionId: current.executionId,
         artifactReference: current.stdoutArtifactReference,
       };
     if (current instanceof AggregateError) pending.push(...current.errors);
-    if (current instanceof Error && current.cause !== undefined)
-      pending.push(current.cause);
+    if (current instanceof Error && current.cause !== undefined) pending.push(current.cause);
   }
   return undefined;
 }
@@ -350,8 +322,7 @@ async function hasReconciliationRecovery(
     signal.aborted ||
     blocked.cardId === undefined ||
     blocked.recoveryCondition !== "card-moved-to-ready" ||
-    (blocked.reconciliationListId === undefined &&
-      !blocked.operation.startsWith("GitHub "))
+    (blocked.reconciliationListId === undefined && !blocked.operation.startsWith("GitHub "))
   ) {
     return false;
   }
@@ -395,9 +366,7 @@ async function hasReconciliationRecovery(
   return false;
 }
 
-function restoreReconciliationFailure(
-  block: PersistedReconciliationBlock,
-): Error {
+function restoreReconciliationFailure(block: PersistedReconciliationBlock): Error {
   const failure = new Error(block.failureReason);
 
   annotateFailure(
@@ -409,12 +378,8 @@ function restoreReconciliationFailure(
       ...(block.reconciliationListId === undefined
         ? {}
         : { reconciliationListId: block.reconciliationListId }),
-      ...(block.handlingOutcome === undefined
-        ? {}
-        : { handlingOutcome: block.handlingOutcome }),
-      ...(block.sessionLogPaths === undefined
-        ? {}
-        : { sessionLogPaths: block.sessionLogPaths }),
+      ...(block.handlingOutcome === undefined ? {} : { handlingOutcome: block.handlingOutcome }),
+      ...(block.sessionLogPaths === undefined ? {} : { sessionLogPaths: block.sessionLogPaths }),
     },
     {
       category: block.failureCategory,
@@ -540,10 +505,7 @@ async function runProjectWorkerLoop(
   const blockedReconciliations = new Map<string, BlockedReconciliation>();
   const activeHumanReviewFailureIdentities = new Map<string, string>();
   const onHumanReviewCardsObserved = (cardIds: string[]): void => {
-    clearHumanReviewFailureForMissingCards(
-      activeHumanReviewFailureIdentities,
-      cardIds,
-    );
+    clearHumanReviewFailureForMissingCards(activeHumanReviewFailureIdentities, cardIds);
   };
   const onHumanReviewCardLeft = (cardId: string): void => {
     clearHumanReviewFailureForCard(activeHumanReviewFailureIdentities, cardId);
@@ -568,10 +530,7 @@ async function runProjectWorkerLoop(
     return;
   }
 
-  const persistedBlock = loadReconciliationBlock(
-    runtimeStorageRoot,
-    project.id,
-  );
+  const persistedBlock = loadReconciliationBlock(runtimeStorageRoot, project.id);
 
   if (persistedBlock.status === "loaded") {
     const block = persistedBlock.block;
@@ -793,9 +752,7 @@ async function runProjectWorkerLoop(
     try {
       if (runContext && !runContext.authority) {
         if (runContext.newClaimsBlockedReason) {
-          logger
-            .child({ projectId: project.id })
-            .warn(runContext.newClaimsBlockedReason);
+          logger.child({ projectId: project.id }).warn(runContext.newClaimsBlockedReason);
           await sleep(pollIntervalMilliseconds, signal);
           continue;
         }
@@ -804,9 +761,7 @@ async function runProjectWorkerLoop(
           runContext.pinned === undefined ||
           runContext.coordinationRoot === undefined
         ) {
-          throw new Error(
-            "Project has no lease-bound attempt creation context",
-          );
+          throw new Error("Project has no lease-bound attempt creation context");
         }
         if (pendingTrelloValidation !== undefined) {
           await pendingTrelloValidation(trello, project);
@@ -821,8 +776,7 @@ async function runProjectWorkerLoop(
         );
         let selected = readyCards.find(
           (card) =>
-            isCardStartDateReached(card, Date.now()) &&
-            getWorkflowKind(card, project) !== null,
+            isCardStartDateReached(card, Date.now()) && getWorkflowKind(card, project) !== null,
         );
         if (selected === undefined) {
           await sleep(pollIntervalMilliseconds, signal);
@@ -839,8 +793,7 @@ async function runProjectWorkerLoop(
         );
         selected = currentReady.find(
           (card) =>
-            isCardStartDateReached(card, Date.now()) &&
-            getWorkflowKind(card, project) !== null,
+            isCardStartDateReached(card, Date.now()) && getWorkflowKind(card, project) !== null,
         );
         if (!selected || signal.aborted) continue;
         const taskKind = getWorkflowKind(selected, project);
@@ -906,9 +859,7 @@ async function runProjectWorkerLoop(
         continue;
       }
       const authorityRecord = runContext?.authority?.store.read();
-      const recoverableTaskWaitDue = hasDueTaskSessionRecoveryWait(
-        authorityRecord ?? null,
-      );
+      const recoverableTaskWaitDue = hasDueTaskSessionRecoveryWait(authorityRecord ?? null);
       const resumableLegacyAttempt =
         authorityRecord?.lifecycle === "waiting" &&
         authorityRecord.legacy.recoveryDisposition === "task-session-reconcile";
@@ -963,9 +914,7 @@ async function runProjectWorkerLoop(
           "Could not revalidate the preparing attempt in Ready for Agent",
           signal,
         );
-        const card = readyCards.find(
-          (candidate) => candidate.id === preparingAttempt.cardId,
-        );
+        const card = readyCards.find((candidate) => candidate.id === preparingAttempt.cardId);
         if (
           !card ||
           !isCardStartDateReached(card, Date.now()) ||
@@ -1017,14 +966,11 @@ async function runProjectWorkerLoop(
       const completedAttempt = runContext?.authority?.store.read();
       if (
         completedAttempt &&
-        ["done", "refined", "failed", "cancelled"].includes(
-          completedAttempt.lifecycle,
-        ) &&
+        ["done", "refined", "failed", "cancelled"].includes(completedAttempt.lifecycle) &&
         completedAttempt.terminalSync === "verified"
       ) {
         await runContext!.authority!.releaseVerifiedTerminal();
-        const { authority: _releasedAuthority, ...releasedContext } =
-          runContext!;
+        const { authority: _releasedAuthority, ...releasedContext } = runContext!;
         void _releasedAuthority;
         runContext = releasedContext;
       }
@@ -1035,14 +981,10 @@ async function runProjectWorkerLoop(
       suppressedFailureIdentity = undefined;
       restoredFailureIdentity = undefined;
       activeHumanReviewFailureIdentities.clear();
-      if (completedAttempt && runContext && !runContext.authority)
-        return "authority-released";
+      if (completedAttempt && runContext && !runContext.authority) return "authority-released";
     } catch (error) {
       if (error instanceof NotificationPreparationError) throw error;
-      if (
-        isShutdownCancellation(error, signal) ||
-        (signal.aborted && signal.reason === "fatal")
-      ) {
+      if (isShutdownCancellation(error, signal) || (signal.aborted && signal.reason === "fatal")) {
         const processFailure = getProcessExecutionError(error);
         if (processFailure) {
           logger
@@ -1066,8 +1008,7 @@ async function runProjectWorkerLoop(
         .read()
         ?.pendingOperations.some(
           (entry) =>
-            entry.id.startsWith("workflow:") &&
-            !["completed", "cancelled"].includes(entry.status),
+            entry.id.startsWith("workflow:") && !["completed", "cancelled"].includes(entry.status),
         );
       if (pendingMutations) {
         logger
@@ -1082,9 +1023,7 @@ async function runProjectWorkerLoop(
       if (
         runContext?.authority &&
         alreadyTerminal &&
-        ["done", "refined", "failed", "cancelled"].includes(
-          alreadyTerminal.lifecycle,
-        ) &&
+        ["done", "refined", "failed", "cancelled"].includes(alreadyTerminal.lifecycle) &&
         alreadyTerminal.terminalSync === "verified"
       ) {
         logger
@@ -1093,8 +1032,7 @@ async function runProjectWorkerLoop(
             `Workflow returned an error after authoritative terminal completion; preserving the verified outcome: ${getErrorMessage(error)}`,
           );
         await runContext.authority.releaseVerifiedTerminal();
-        const { authority: _completedAuthority, ...releasedContext } =
-          runContext;
+        const { authority: _completedAuthority, ...releasedContext } = runContext;
         void _completedAuthority;
         runContext = releasedContext;
         return "authority-released";
@@ -1237,9 +1175,7 @@ async function runProjectWorkerLoop(
           cardId: error.cardId,
         });
         const causeMessage =
-          error.cause instanceof Error
-            ? error.cause.message
-            : String(error.cause);
+          error.cause instanceof Error ? error.cause.message : String(error.cause);
 
         projectLog.warn(
           `Retryable GitHub reconciliation attempt ${attempt}/${MAX_GITHUB_RECONCILIATION_ATTEMPTS} failed for ${error.operation}: ${causeMessage}`,
@@ -1248,9 +1184,7 @@ async function runProjectWorkerLoop(
           code: "recovery-deferred",
           classification: "external-operation",
           recovery:
-            attempt < MAX_GITHUB_RECONCILIATION_ATTEMPTS
-              ? "retry-scheduled"
-              : "state-preserved",
+            attempt < MAX_GITHUB_RECONCILIATION_ATTEMPTS ? "retry-scheduled" : "state-preserved",
           attempt,
           maximumAttempts: MAX_GITHUB_RECONCILIATION_ATTEMPTS,
         });
@@ -1261,13 +1195,11 @@ async function runProjectWorkerLoop(
         }
 
         const activeRun = runContext?.authority?.store.read();
-        const activeTaskValue =
-          activeRun?.compatibility[`task-execution-${error.cardId}`];
+        const activeTaskValue = activeRun?.compatibility[`task-execution-${error.cardId}`];
         const previousWaitId =
           activeTaskValue === undefined
             ? undefined
-            : parseTaskExecutionRecord(activeTaskValue).recoveryWait
-                ?.notificationId;
+            : parseTaskExecutionRecord(activeTaskValue).recoveryWait?.notificationId;
         const waitId = persistEssentialDependencyWait(
           runContext?.authority,
           error.cardId,
@@ -1289,8 +1221,7 @@ async function runProjectWorkerLoop(
           attemptKey,
           operation: `GitHub ${error.operation}`,
           cardId: error.cardId,
-          reconciliationListId:
-            error.reconciliationListId ?? failureContext?.reconciliationListId,
+          reconciliationListId: error.reconciliationListId ?? failureContext?.reconciliationListId,
           failure: error,
           recoveryCheckFailed: false,
           recoveryCondition: "card-moved-to-ready",
@@ -1331,9 +1262,7 @@ async function runProjectWorkerLoop(
           code: "trello-retry-deferred",
           classification: "external-operation",
           recovery:
-            attempt < MAX_TRELLO_RECONCILIATION_ATTEMPTS
-              ? "retry-scheduled"
-              : "state-preserved",
+            attempt < MAX_TRELLO_RECONCILIATION_ATTEMPTS ? "retry-scheduled" : "state-preserved",
           attempt,
           maximumAttempts: MAX_TRELLO_RECONCILIATION_ATTEMPTS,
         });
@@ -1351,8 +1280,7 @@ async function runProjectWorkerLoop(
         const previousWaitId =
           activeTaskValue === undefined
             ? undefined
-            : parseTaskExecutionRecord(activeTaskValue).recoveryWait
-                ?.notificationId;
+            : parseTaskExecutionRecord(activeTaskValue).recoveryWait?.notificationId;
         const retryableRead = [
           "board lookup",
           "list lookup",
@@ -1390,12 +1318,10 @@ async function runProjectWorkerLoop(
           attemptKey,
           operation: `Trello ${operation}`,
           cardId,
-          reconciliationListId:
-            reconciliationListId ?? failureContext?.reconciliationListId,
+          reconciliationListId: reconciliationListId ?? failureContext?.reconciliationListId,
           failure: error instanceof Error ? error : new Error(String(error)),
           recoveryCheckFailed: false,
-          recoveryCondition:
-            cardId === undefined ? "worker-restart" : "card-moved-to-ready",
+          recoveryCondition: cardId === undefined ? "worker-restart" : "card-moved-to-ready",
           notificationIdentity: undefined,
           failureIdentity: undefined,
           restored: false,
@@ -1410,38 +1336,26 @@ async function runProjectWorkerLoop(
           });
           failureContext = getFailureContext(error);
         }
-        projectLog.error(
-          `Trello retry threshold exhausted for ${operation}; ${handlingOutcome}`,
-        );
+        projectLog.error(`Trello retry threshold exhausted for ${operation}; ${handlingOutcome}`);
       }
 
       const projectLog = logger.child({
         projectId: project.id,
-        ...(failureContext?.cardId === undefined
-          ? {}
-          : { cardId: failureContext.cardId }),
+        ...(failureContext?.cardId === undefined ? {} : { cardId: failureContext.cardId }),
       });
 
       const cardIds = [
         ...(failureContext?.cardIds ?? []),
-        ...(failureContext?.cardId === undefined
-          ? []
-          : [failureContext.cardId]),
+        ...(failureContext?.cardId === undefined ? [] : [failureContext.cardId]),
       ].filter((cardId, index, ids) => ids.indexOf(cardId) === index);
       const sessionLogPaths = [
         ...(failureContext?.sessionLogPaths ?? []),
-        ...(failureContext?.sessionLogPath === undefined
-          ? []
-          : [failureContext.sessionLogPath]),
-      ].filter(
-        (sessionLogPath, index, paths) =>
-          paths.indexOf(sessionLogPath) === index,
-      );
+        ...(failureContext?.sessionLogPath === undefined ? [] : [failureContext.sessionLogPath]),
+      ].filter((sessionLogPath, index, paths) => paths.indexOf(sessionLogPath) === index);
       const handlingOutcome = failureContext?.handlingOutcome;
 
       const cardFailureHandled =
-        failureContext?.cardId !== undefined &&
-        failureContext.cardFailureHandled === true;
+        failureContext?.cardId !== undefined && failureContext.cardFailureHandled === true;
 
       const failureDescription = describeFailure(error);
       const processFailure = getProcessExecutionError(error);
@@ -1452,9 +1366,7 @@ async function runProjectWorkerLoop(
           : error instanceof WorkflowError
             ? "internal-workflow"
             : "external-operation",
-        recovery: newlyBlockedReconciliation
-          ? "state-preserved"
-          : "manual-review",
+        recovery: newlyBlockedReconciliation ? "state-preserved" : "manual-review",
         ...(processFailure
           ? {
               artifactReferences: [processFailure.artifactReference],
@@ -1525,8 +1437,7 @@ async function runProjectWorkerLoop(
             ...(sessionLogPaths.length ? { sessionLogPaths } : {}),
             ...(handlingOutcome === undefined ? {} : { handlingOutcome }),
           });
-        newlyBlockedReconciliation.notificationIdentity =
-          currentFailureIdentity;
+        newlyBlockedReconciliation.notificationIdentity = currentFailureIdentity;
         newlyBlockedReconciliation.failureIdentity = currentFailureBaseIdentity;
 
         try {
@@ -1567,10 +1478,7 @@ async function runProjectWorkerLoop(
         );
       } else {
         if (humanReviewFailureKey !== undefined) {
-          activeHumanReviewFailureIdentities.set(
-            humanReviewFailureKey,
-            currentFailureBaseIdentity,
-          );
+          activeHumanReviewFailureIdentities.set(humanReviewFailureKey, currentFailureBaseIdentity);
         }
         suppressedFailureIdentity = currentFailureIdentity;
         restoredFailureIdentity = undefined;
@@ -1610,16 +1518,12 @@ async function runProjectWorker(
   let currentContext = runContext;
   const outbox = runContext?.projectLease
     ? new NotificationOutbox(
-        runContext.pinned?.storageRoot ??
-          project.contextRoot ??
-          DEFAULT_CONTEXT_ROOT,
+        runContext.pinned?.storageRoot ?? project.contextRoot ?? DEFAULT_CONTEXT_ROOT,
         project.id,
         () => runContext.projectLease!.assertHeld(),
         Date.now,
         notificationTriggerObserver(
-          runContext.pinned?.storageRoot ??
-            project.contextRoot ??
-            DEFAULT_CONTEXT_ROOT,
+          runContext.pinned?.storageRoot ?? project.contextRoot ?? DEFAULT_CONTEXT_ROOT,
           project.id,
           () => runContext.projectLease!.assertHeld(),
         ),
@@ -1641,9 +1545,7 @@ async function runProjectWorker(
         currentContext,
       );
     const owned = () =>
-      currentContext?.authority
-        ? currentContext.authority.run(execute)
-        : execute();
+      currentContext?.authority ? currentContext.authority.run(execute) : execute();
     let outcome: "authority-released" | undefined;
     try {
       outcome = outbox ? await outbox.run(owned) : await owned();
@@ -1660,8 +1562,7 @@ async function runProjectWorker(
     }
     if (outcome !== "authority-released") return;
     if (currentContext) {
-      const { authority: _releasedAuthority, ...releasedContext } =
-        currentContext;
+      const { authority: _releasedAuthority, ...releasedContext } = currentContext;
       void _releasedAuthority;
       currentContext = releasedContext;
     }
@@ -1717,19 +1618,14 @@ export async function runOrchestrator(
         ),
       );
     },
-    Math.max(
-      logRetentionIntervalMilliseconds,
-      contextRetentionIntervalMilliseconds,
-    ),
+    Math.max(logRetentionIntervalMilliseconds, contextRetentionIntervalMilliseconds),
   );
 
   if (shouldWriteConsole()) {
     console.log("");
   }
 
-  logger.event(
-    `Polling every ${config.workflow.pollIntervalSeconds} seconds...`,
-  );
+  logger.event(`Polling every ${config.workflow.pollIntervalSeconds} seconds...`);
 
   try {
     const execute = () =>
@@ -1752,8 +1648,7 @@ export async function runOrchestrator(
               ...(config.workflow.maxTotalAttachmentBytes === undefined
                 ? {}
                 : {
-                    maxTotalAttachmentBytes:
-                      config.workflow.maxTotalAttachmentBytes,
+                    maxTotalAttachmentBytes: config.workflow.maxTotalAttachmentBytes,
                   }),
             } satisfies PollingProject,
             pollIntervalMilliseconds,

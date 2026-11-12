@@ -81,14 +81,7 @@ function fixture() {
     compatibility: {},
     updatedAt: new Date().toISOString(),
   });
-  const authority = new ProjectRunAuthority(
-    project.id,
-    store,
-    1,
-    undefined,
-    undefined,
-    "card",
-  );
+  const authority = new ProjectRunAuthority(project.id, store, 1, undefined, undefined, "card");
   const tasks = new TaskExecutionStore(project.contextRoot, project, authority);
   const headSha = "a".repeat(40);
   const pr = {
@@ -174,28 +167,15 @@ it("retains deduplicated arrivals during a blocked writer without changing its c
   f.edit("new request during execution");
   await vi.advanceTimersByTimeAsync(100);
   expect(readActivePrArrivals(f.authority)).toHaveLength(2);
-  const queue = new TaskMutationQueue(
-    f.project.contextRoot,
-    f.project,
-    f.authority,
-  );
+  const queue = new TaskMutationQueue(f.project.contextRoot, f.project, f.authority);
   expect(queue.list()).toMatchObject([
     { kind: "feedback", status: "queued", dispatchReady: false },
     { kind: "feedback", status: "queued", dispatchReady: false },
   ]);
   expect(queue.claimNext()).toBeNull();
   expect(f.tasks.read("card")).toEqual(before);
-  const restarted = new ProjectRunAuthority(
-    f.project.id,
-    f.store,
-    1,
-    undefined,
-    undefined,
-    "card",
-  );
-  expect(readActivePrArrivals(restarted)).toEqual(
-    readActivePrArrivals(f.authority),
-  );
+  const restarted = new ProjectRunAuthority(f.project.id, f.store, 1, undefined, undefined, "card");
+  expect(readActivePrArrivals(restarted)).toEqual(readActivePrArrivals(f.authority));
   finish();
   await running;
   expect(vi.getTimerCount()).toBe(0);
@@ -205,31 +185,18 @@ it("retains deduplicated arrivals during a blocked writer without changing its c
 it("preserves prior arrivals on outages and rejects stale owner generations", async () => {
   const f = fixture();
   await observeActivePullRequest(f);
-  vi.mocked(f.github.findPullRequestState).mockRejectedValueOnce(
-    new Error("outage"),
-  );
+  vi.mocked(f.github.findPullRequestState).mockRejectedValueOnce(new Error("outage"));
   await expect(observeActivePullRequest(f)).rejects.toThrow("outage");
   expect(readActivePrArrivals(f.authority)).toHaveLength(1);
-  const stale = new ProjectRunAuthority(
-    f.project.id,
-    f.store,
-    2,
-    undefined,
-    undefined,
-    "card",
-  );
-  await expect(
-    observeActivePullRequest({ ...f, authority: stale }),
-  ).rejects.toThrow();
+  const stale = new ProjectRunAuthority(f.project.id, f.store, 2, undefined, undefined, "card");
+  await expect(observeActivePullRequest({ ...f, authority: stale })).rejects.toThrow();
   expect(readActivePrArrivals(f.authority)).toHaveLength(1);
 });
 
 it("does not persist mixed feedback when the PR changes during observation", async () => {
   const f = fixture();
   vi.mocked(f.github.findPullRequestState)
-    .mockResolvedValueOnce(
-      f.pr as Awaited<ReturnType<GitHubClient["findPullRequestState"]>>,
-    )
+    .mockResolvedValueOnce(f.pr as Awaited<ReturnType<GitHubClient["findPullRequestState"]>>)
     .mockResolvedValueOnce({ ...f.pr, state: "CLOSED" } as Awaited<
       ReturnType<GitHubClient["findPullRequestState"]>
     >);
@@ -244,18 +211,12 @@ it("reconciles interruption between durable observation and queue descriptor wit
     .mockImplementationOnce(() => {
       throw new Error("descriptor write interrupted");
     });
-  await expect(observeActivePullRequest(f)).rejects.toThrow(
-    "descriptor write interrupted",
-  );
+  await expect(observeActivePullRequest(f)).rejects.toThrow("descriptor write interrupted");
   interrupted.mockRestore();
   expect(readActivePrArrivals(f.authority)).toHaveLength(1);
   await observeActivePullRequest(f);
   await observeActivePullRequest(f);
-  const queue = new TaskMutationQueue(
-    f.project.contextRoot,
-    f.project,
-    f.authority,
-  );
+  const queue = new TaskMutationQueue(f.project.contextRoot, f.project, f.authority);
   expect(queue.list()).toHaveLength(1);
   expect(queue.list()[0]?.dispatchReady).toBe(false);
   expect(readActivePrArrivals(f.authority)).toHaveLength(1);

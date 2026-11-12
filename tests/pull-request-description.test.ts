@@ -42,16 +42,12 @@ describe("buildPullRequestDescriptionPrompt", () => {
     expect(prompt).toContain("Trello card URL: https://trello.example/card-1");
     expect(prompt).toContain("src/description.ts\ntests/description.test.ts");
     expect(prompt).toContain("Resulting commit SHA: abc123");
-    expect(prompt).toContain(
-      "Commit message:\nfeat(workflow): describe completed changes",
-    );
+    expect(prompt).toContain("Commit message:\nfeat(workflow): describe completed changes");
     expect(prompt).toContain(
       "Independently verified workflow evidence:\n- yarn validate passed with exit code 0.",
     );
     expect(prompt).toContain("Configured validation command:\n- yarn validate");
-    expect(prompt).toContain(
-      "Workflow outcomes:\n- Automated review result: Passed.",
-    );
+    expect(prompt).toContain("Workflow outcomes:\n- Automated review result: Passed.");
     expect(prompt).toContain("Return exactly one JSON object.");
     expect(prompt).toContain(
       "Do not include an introduction, explanation, Markdown, code fences, or any text before or after the JSON object.",
@@ -91,9 +87,7 @@ describe("buildPullRequestDescriptionPrompt", () => {
     expect(prompt).toContain(
       "Independently verified workflow evidence:\n- No independently verified validation or review details were supplied.",
     );
-    expect(prompt).toContain(
-      "Workflow outcomes:\n- Automated remediation result: Applied.",
-    );
+    expect(prompt).toContain("Workflow outcomes:\n- Automated remediation result: Applied.");
     expect(prompt).not.toContain(
       "Known validation or test results:\n- Automated remediation result: Applied.",
     );
@@ -170,25 +164,21 @@ describe("parsePullRequestDescription", () => {
       parsePullRequestDescription(
         JSON.stringify({
           summary: "s".repeat(MAX_PULL_REQUEST_DESCRIPTION_SUMMARY_LENGTH),
-          changes: Array.from(
-            { length: MAX_PULL_REQUEST_DESCRIPTION_CHANGES },
-            () => "c".repeat(MAX_PULL_REQUEST_DESCRIPTION_ITEM_LENGTH),
+          changes: Array.from({ length: MAX_PULL_REQUEST_DESCRIPTION_CHANGES }, () =>
+            "c".repeat(MAX_PULL_REQUEST_DESCRIPTION_ITEM_LENGTH),
           ),
-          validation: Array.from(
-            { length: MAX_PULL_REQUEST_DESCRIPTION_VALIDATION },
-            () => "v".repeat(MAX_PULL_REQUEST_DESCRIPTION_ITEM_LENGTH),
+          validation: Array.from({ length: MAX_PULL_REQUEST_DESCRIPTION_VALIDATION }, () =>
+            "v".repeat(MAX_PULL_REQUEST_DESCRIPTION_ITEM_LENGTH),
           ),
         }),
       ),
     ).toEqual({
       summary: "s".repeat(MAX_PULL_REQUEST_DESCRIPTION_SUMMARY_LENGTH),
-      changes: Array.from(
-        { length: MAX_PULL_REQUEST_DESCRIPTION_CHANGES },
-        () => "c".repeat(MAX_PULL_REQUEST_DESCRIPTION_ITEM_LENGTH),
+      changes: Array.from({ length: MAX_PULL_REQUEST_DESCRIPTION_CHANGES }, () =>
+        "c".repeat(MAX_PULL_REQUEST_DESCRIPTION_ITEM_LENGTH),
       ),
-      validation: Array.from(
-        { length: MAX_PULL_REQUEST_DESCRIPTION_VALIDATION },
-        () => "v".repeat(MAX_PULL_REQUEST_DESCRIPTION_ITEM_LENGTH),
+      validation: Array.from({ length: MAX_PULL_REQUEST_DESCRIPTION_VALIDATION }, () =>
+        "v".repeat(MAX_PULL_REQUEST_DESCRIPTION_ITEM_LENGTH),
       ),
     });
   });
@@ -201,22 +191,14 @@ describe("parsePullRequestDescription", () => {
       "not valid JSON",
     ],
     ["malformed fenced JSON", '```json\n{"summary":\n```', "not valid JSON"],
-    [
-      "fenced JSON with missing fields",
-      "```json\n{}\n```",
-      "missing required field",
-    ],
+    ["fenced JSON with missing fields", "```json\n{}\n```", "missing required field"],
     ["missing fields", '{"summary":"A summary"}', "missing required field"],
     [
       "missing validation information",
       '{"summary":"A summary","changes":[]}',
       'missing required field "validation"',
     ],
-    [
-      "blank summary",
-      '{"summary":" ","changes":[],"validation":[]}',
-      "summary must not be blank",
-    ],
+    ["blank summary", '{"summary":" ","changes":[],"validation":[]}', "summary must not be blank"],
     [
       "wrong array item type",
       '{"summary":"A summary","changes":[1],"validation":[]}',
@@ -240,10 +222,7 @@ describe("parsePullRequestDescription", () => {
       "too many changes",
       JSON.stringify({
         summary: "A summary",
-        changes: Array.from(
-          { length: MAX_PULL_REQUEST_DESCRIPTION_CHANGES + 1 },
-          () => "A change",
-        ),
+        changes: Array.from({ length: MAX_PULL_REQUEST_DESCRIPTION_CHANGES + 1 }, () => "A change"),
         validation: [],
       }),
       `changes must not contain more than ${MAX_PULL_REQUEST_DESCRIPTION_CHANGES} items`,

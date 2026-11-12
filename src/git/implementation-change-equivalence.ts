@@ -20,8 +20,7 @@ export function haveEquivalentImplementationChanges(
     for (const line of patch.split("\n")) {
       if (line.startsWith("diff --git ")) {
         const match = /^diff --git a\/(.+) b\/(.+)$/.exec(line);
-        if (match === null || match[1] === undefined || match[1] !== match[2])
-          return null;
+        if (match === null || match[1] === undefined || match[1] !== match[2]) return null;
         const fileChange: FileChange = {
           path: match[1],
           metadata: [],
@@ -31,34 +30,20 @@ export function haveEquivalentImplementationChanges(
         files.push(fileChange);
         continue;
       }
-      if (
-        line.startsWith("GIT binary patch") ||
-        line.startsWith("Binary files ")
-      )
-        return null;
+      if (line.startsWith("GIT binary patch") || line.startsWith("Binary files ")) return null;
       if (line.startsWith("@@")) {
         if (!/^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/.test(line)) return null;
         if (current === undefined) return null;
         current.hunks.push([]);
         continue;
       }
-      if (
-        line.startsWith("index ") ||
-        line.startsWith("--- ") ||
-        line.startsWith("+++ ")
-      )
-        continue;
-      if (line === "\\ No newline at end of file" || line.length === 0)
-        continue;
+      if (line.startsWith("index ") || line.startsWith("--- ") || line.startsWith("+++ ")) continue;
+      if (line === "\\ No newline at end of file" || line.length === 0) continue;
       if (current === undefined) {
         if (line.trim().length > 0) return null;
         continue;
       }
-      if (
-        line.startsWith("+") ||
-        line.startsWith("-") ||
-        line.startsWith(" ")
-      ) {
+      if (line.startsWith("+") || line.startsWith("-") || line.startsWith(" ")) {
         const hunk = current.hunks.at(-1);
         if (hunk === undefined) return null;
         hunk.push(line);
@@ -105,13 +90,10 @@ export function isCompletePullRequestCommitRange(
   ) {
     return false;
   }
-  const expected = new Set(
-    pullRequestCommitShas.map((sha) => sha.toLowerCase()),
-  );
+  const expected = new Set(pullRequestCommitShas.map((sha) => sha.toLowerCase()));
   return (
     expected.size === pullRequestCommitShas.length &&
     rangeCommitShas.every((sha) => expected.has(sha.toLowerCase())) &&
-    new Set(rangeCommitShas.map((sha) => sha.toLowerCase())).size ===
-      rangeCommitShas.length
+    new Set(rangeCommitShas.map((sha) => sha.toLowerCase())).size === rangeCommitShas.length
   );
 }

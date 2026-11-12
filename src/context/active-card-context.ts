@@ -5,10 +5,7 @@ function getActiveCardKey(projectId: string, cardId: string): string {
   return `${projectId}\u0000${cardId}`;
 }
 
-function incrementActiveContext(
-  contexts: Map<string, number>,
-  key: string,
-): () => void {
+function incrementActiveContext(contexts: Map<string, number>, key: string): () => void {
   contexts.set(key, (contexts.get(key) ?? 0) + 1);
   let released = false;
 
@@ -28,14 +25,8 @@ function incrementActiveContext(
   };
 }
 
-export function beginActiveCardContext(
-  projectId: string,
-  cardId: string,
-): () => void {
-  return incrementActiveContext(
-    activeCardContexts,
-    getActiveCardKey(projectId, cardId),
-  );
+export function beginActiveCardContext(projectId: string, cardId: string): () => void {
+  return incrementActiveContext(activeCardContexts, getActiveCardKey(projectId, cardId));
 }
 
 export function beginActiveProjectContext(projectId: string): () => void {
@@ -69,10 +60,7 @@ export async function withActiveProjectContext<T>(
   }
 }
 
-export function isActiveCardContext(
-  projectId: string,
-  cardId: string,
-): boolean {
+export function isActiveCardContext(projectId: string, cardId: string): boolean {
   return (
     activeProjectContexts.has(projectId) ||
     activeCardContexts.has(getActiveCardKey(projectId, cardId))

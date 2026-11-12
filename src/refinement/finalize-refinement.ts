@@ -7,10 +7,7 @@ import {
   type TrelloClient,
 } from "../trello/trello-client.js";
 
-import {
-  refinementResultSchema,
-  type RefinementResult,
-} from "./refinement-result.js";
+import { refinementResultSchema, type RefinementResult } from "./refinement-result.js";
 import {
   guardRefinementFields,
   refinementCardFields,
@@ -32,10 +29,7 @@ export {
   refinementMutationSnapshotKey,
 } from "./refinement-mutation-snapshot.js";
 
-function getClassificationLabelId(
-  project: ProjectConfig,
-  type: RefinementResult["type"],
-): string {
+function getClassificationLabelId(project: ProjectConfig, type: RefinementResult["type"]): string {
   switch (type) {
     case "feature":
       return project.trello.featureLabelId;
@@ -79,11 +73,7 @@ export async function finalizeRefinement(
         type: result.type,
         labels: [
           ...card.idLabels.filter(
-            (id) =>
-              ![
-                ...classificationLabelIds,
-                project.trello.refinementLabelId,
-              ].includes(id),
+            (id) => ![...classificationLabelIds, project.trello.refinementLabelId].includes(id),
           ),
           classificationLabelId,
         ],
@@ -93,10 +83,7 @@ export async function finalizeRefinement(
       refinementMutationSnapshotKey,
       refinementMutationSnapshotSchema.parse,
     );
-    if (
-      prior &&
-      JSON.stringify(prior.intended) !== JSON.stringify(snapshot.intended)
-    )
+    if (prior && JSON.stringify(prior.intended) !== JSON.stringify(snapshot.intended))
       throw new Error(
         "Refinement intended result changed; preserve original fields for reconciliation",
       );
@@ -105,10 +92,7 @@ export async function finalizeRefinement(
       const current = await trello.getCard(card.id);
       const after = await trello.getRefinementHistory(card.id);
       if (
-        !sameRefinementFields(
-          refinementCardFields(current),
-          snapshot.original,
-        ) ||
+        !sameRefinementFields(refinementCardFields(current), snapshot.original) ||
         history.actorId !== after.actorId ||
         JSON.stringify(history.actions) !== JSON.stringify(after.actions)
       )
@@ -126,23 +110,14 @@ export async function finalizeRefinement(
     // The guard preserves them, including partially updated cards, without guessing.
     await guardRefinementFields(trello, authority, "verify");
     const read = () =>
-      authority.read(
-        refinementMutationSnapshotKey,
-        refinementMutationSnapshotSchema.parse,
-      )!;
-    const restoring = ["restoring", "restored"].includes(
-      read().reconciliation!.mode ?? "applying",
-    );
+      authority.read(refinementMutationSnapshotKey, refinementMutationSnapshotSchema.parse)!;
+    const restoring = ["restoring", "restored"].includes(read().reconciliation!.mode ?? "applying");
     const desired = restoring ? read().original : read().intended;
     if (
       read().reconciliation!.verified.title !== desired.title ||
       read().reconciliation!.verified.description !== desired.description
     )
-      await trello.updateCardContent(
-        card.id,
-        desired.title,
-        desired.description,
-      );
+      await trello.updateCardContent(card.id, desired.title, desired.description);
     for (const labelId of new Set([
       ...classificationLabelIds,
       project.trello.refinementLabelId,

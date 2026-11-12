@@ -80,9 +80,7 @@ describe("buildTaskSessionReviewRepairPrompt", () => {
     expect(prompt).toContain("existing primary task session");
     expect(prompt).toContain(JSON.stringify(approvedPlan, null, 2));
     expect(prompt).toContain(JSON.stringify(review, null, 2));
-    expect(prompt).toContain(
-      "inspect the relevant implementation and existing tests",
-    );
+    expect(prompt).toContain("inspect the relevant implementation and existing tests");
     expect(prompt).toContain("Address every blocking finding");
     expect(prompt).toContain('status":"addressed"|"dismissed"');
     expect(prompt).toContain("substantive explanation");
@@ -91,9 +89,7 @@ describe("buildTaskSessionReviewRepairPrompt", () => {
     expect(prompt).toContain("4,000 characters");
     expect(prompt).toContain("material unsatisfied requested behavior");
     expect(prompt).toContain("Serious demonstrable defects may be addressed");
-    expect(prompt).toContain(
-      "Do not make changes solely for unrelated refactoring",
-    );
+    expect(prompt).toContain("Do not make changes solely for unrelated refactoring");
     expect(prompt).toContain("preserve the correct implementation");
     expect(prompt).toContain("do not focus only on the first");
     expect(prompt).toContain("underlying defect");

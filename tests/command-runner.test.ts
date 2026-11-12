@@ -107,20 +107,13 @@ describe("CommandRunner", () => {
     );
     temporaryDirectories.push(temporaryDirectory);
     const sessionLogPath = path.join(temporaryDirectory, "card.log");
-    const stdoutWrite = vi
-      .spyOn(process.stdout, "write")
-      .mockImplementation(() => true);
-    const stderrWrite = vi
-      .spyOn(process.stderr, "write")
-      .mockImplementation(() => true);
+    const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
     spawnMock.mockImplementationOnce(() => {
       queueMicrotask(() => {
         child.stdout.emit("data", Buffer.from("test suite output token-a\n"));
-        child.stderr.emit(
-          "data",
-          Buffer.from("application log output token-a\n"),
-        );
+        child.stderr.emit("data", Buffer.from("application log output token-a\n"));
         child.emit("close", 0);
       });
       return child;
@@ -148,12 +141,8 @@ describe("CommandRunner", () => {
 
   it("can capture private command output without writing it to process streams", async () => {
     const child = createFakeChild();
-    const stdoutWrite = vi
-      .spyOn(process.stdout, "write")
-      .mockImplementation(() => true);
-    const stderrWrite = vi
-      .spyOn(process.stderr, "write")
-      .mockImplementation(() => true);
+    const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     spawnMock.mockImplementationOnce(() => {
       queueMicrotask(() => {
         child.stdout.emit(
@@ -193,9 +182,7 @@ describe("CommandRunner", () => {
 
   it("summarizes verbose captured output without terminating the command", async () => {
     const child = createFakeChild();
-    const artifactDirectory = fs.mkdtempSync(
-      path.join(os.tmpdir(), "verbose-command-artifacts-"),
-    );
+    const artifactDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "verbose-command-artifacts-"));
     temporaryDirectories.push(artifactDirectory);
     const longOutput = `${"output token-a ".repeat(300)}\n`;
     const longErrorOutput = `${"warning token-a ".repeat(300)}\n`;
@@ -226,12 +213,12 @@ describe("CommandRunner", () => {
     const [executionId] = fs.readdirSync(artifactDirectory);
     expect(executionId).toBeDefined();
     const executionDirectory = path.join(artifactDirectory, executionId!);
-    expect(
-      fs.readFileSync(path.join(executionDirectory, "stdout.txt"), "utf8"),
-    ).toContain("output [REDACTED]");
-    expect(
-      fs.readFileSync(path.join(executionDirectory, "stderr.txt"), "utf8"),
-    ).toContain("warning [REDACTED]");
+    expect(fs.readFileSync(path.join(executionDirectory, "stdout.txt"), "utf8")).toContain(
+      "output [REDACTED]",
+    );
+    expect(fs.readFileSync(path.join(executionDirectory, "stderr.txt"), "utf8")).toContain(
+      "warning [REDACTED]",
+    );
   });
 
   it("returns complete Unicode output to machine-readable callers", async () => {
@@ -262,17 +249,11 @@ describe("CommandRunner", () => {
     const errorBytes = Buffer.from(expectedError);
     spawnMock.mockImplementationOnce(() => {
       queueMicrotask(() => {
-        for (
-          let index = 0;
-          index < Math.max(bytes.length, errorBytes.length);
-          index += 1
-        ) {
+        for (let index = 0; index < Math.max(bytes.length, errorBytes.length); index += 1) {
           const stdoutByte = bytes[index];
           const stderrByte = errorBytes[index];
-          if (stdoutByte !== undefined)
-            child.stdout.emit("data", Buffer.from([stdoutByte]));
-          if (stderrByte !== undefined)
-            child.stderr.emit("data", Buffer.from([stderrByte]));
+          if (stdoutByte !== undefined) child.stdout.emit("data", Buffer.from([stdoutByte]));
+          if (stderrByte !== undefined) child.stderr.emit("data", Buffer.from([stderrByte]));
         }
         child.emit("close", 0);
       });
@@ -311,9 +292,7 @@ describe("CommandRunner", () => {
 
   it("passes operation credentials to the child and redacts command output", async () => {
     const child = createFakeChild();
-    const stdoutWrite = vi
-      .spyOn(process.stdout, "write")
-      .mockImplementation(() => true);
+    const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
 
     spawnMock.mockImplementationOnce(() => {
       queueMicrotask(() => {
@@ -334,24 +313,19 @@ describe("CommandRunner", () => {
       secretValues: ["token-a"],
     });
 
-    expect(spawnMock).toHaveBeenCalledWith(
-      "gh repo clone owner/repository /repo",
-      {
-        cwd: "/worktree",
-        shell: true,
-        stdio: ["inherit", "pipe", "pipe"],
-        detached: process.platform !== "win32",
-        env: expect.objectContaining({ GH_TOKEN: "token-a" }),
-      },
-    );
+    expect(spawnMock).toHaveBeenCalledWith("gh repo clone owner/repository /repo", {
+      cwd: "/worktree",
+      shell: true,
+      stdio: ["inherit", "pipe", "pipe"],
+      detached: process.platform !== "win32",
+      env: expect.objectContaining({ GH_TOKEN: "token-a" }),
+    });
     expect(stdoutWrite).not.toHaveBeenCalled();
   });
 
   it("writes separately redacted stdout and stderr plus terminal execution evidence", async () => {
     const child = createFakeChild();
-    const artifactDirectory = fs.mkdtempSync(
-      path.join(os.tmpdir(), "process-artifacts-"),
-    );
+    const artifactDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "process-artifacts-"));
     temporaryDirectories.push(artifactDirectory);
     spawnMock.mockImplementationOnce(() => {
       queueMicrotask(() => {
@@ -374,29 +348,20 @@ describe("CommandRunner", () => {
     const [executionId] = fs.readdirSync(artifactDirectory);
     expect(executionId).toBeDefined();
     const directory = path.join(artifactDirectory, executionId!);
-    expect(fs.readFileSync(path.join(directory, "stdout.txt"), "utf8")).toBe(
-      "out [REDACTED]\n",
+    expect(fs.readFileSync(path.join(directory, "stdout.txt"), "utf8")).toBe("out [REDACTED]\n");
+    expect(fs.readFileSync(path.join(directory, "stderr.txt"), "utf8")).toBe("err [REDACTED]\n");
+    expect(fs.readFileSync(path.join(directory, "execution.json"), "utf8")).toContain(
+      '"status": "nonzero"',
     );
-    expect(fs.readFileSync(path.join(directory, "stderr.txt"), "utf8")).toBe(
-      "err [REDACTED]\n",
-    );
-    expect(
-      fs.readFileSync(path.join(directory, "execution.json"), "utf8"),
-    ).toContain('"status": "nonzero"');
   });
 
   it("rejects an artifact budget overflow even when output capture is disabled", async () => {
     const child = createFakeChild();
-    const artifactDirectory = fs.mkdtempSync(
-      path.join(os.tmpdir(), "process-evidence-budget-"),
-    );
+    const artifactDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "process-evidence-budget-"));
     temporaryDirectories.push(artifactDirectory);
     spawnMock.mockImplementationOnce(() => {
       queueMicrotask(() => {
-        child.stdout.emit(
-          "data",
-          Buffer.alloc(PROCESS_EVIDENCE_MAX_BYTES + 1, 120),
-        );
+        child.stdout.emit("data", Buffer.alloc(PROCESS_EVIDENCE_MAX_BYTES + 1, 120));
         child.emit("close", 0);
       });
       return child;
@@ -414,10 +379,7 @@ describe("CommandRunner", () => {
     const [executionId] = fs.readdirSync(artifactDirectory);
     expect(executionId).toBeDefined();
     const metadata = JSON.parse(
-      fs.readFileSync(
-        path.join(artifactDirectory, executionId!, "execution.json"),
-        "utf8",
-      ),
+      fs.readFileSync(path.join(artifactDirectory, executionId!, "execution.json"), "utf8"),
     ) as { status: string; exitCode: number };
     expect(metadata).toMatchObject({ status: "evidence-failure", exitCode: 0 });
   });
@@ -434,8 +396,7 @@ describe("CommandRunner", () => {
       command: "yarn validate",
       timeoutMilliseconds: 1_000,
     });
-    const rejection =
-      expect(request).rejects.toBeInstanceOf(CommandTimeoutError);
+    const rejection = expect(request).rejects.toBeInstanceOf(CommandTimeoutError);
 
     await vi.advanceTimersByTimeAsync(6_000);
 
@@ -469,25 +430,20 @@ describe("CommandRunner", () => {
       timeoutMilliseconds: 1_000,
       sessionLogPath,
     });
-    const rejection =
-      expect(request).rejects.toBeInstanceOf(CommandTimeoutError);
+    const rejection = expect(request).rejects.toBeInstanceOf(CommandTimeoutError);
 
     await vi.advanceTimersByTimeAsync(6_000);
 
     child.emit("close", null);
     await rejection;
-    expect(fs.readFileSync(sessionLogPath, "utf8")).toContain(
-      "timeout test output\n",
-    );
+    expect(fs.readFileSync(sessionLogPath, "utf8")).toContain("timeout test output\n");
 
     vi.useRealTimers();
   });
 
   it("terminates and settles when a child-output session-log append fails", async () => {
     const child = createFakeChild();
-    const directory = fs.mkdtempSync(
-      path.join(os.tmpdir(), "injected-session-log-failure-"),
-    );
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "injected-session-log-failure-"));
     temporaryDirectories.push(directory);
     const logDirectory = path.join(directory, "session");
     const logPath = path.join(logDirectory, "output.log");

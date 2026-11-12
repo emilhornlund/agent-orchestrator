@@ -13,9 +13,7 @@ function normalizeContextRoot(contextRoot: string): string {
   }
 
   if (!path.isAbsolute(contextRoot)) {
-    throw new Error(
-      `Invalid context root "${contextRoot}": must be an absolute path`,
-    );
+    throw new Error(`Invalid context root "${contextRoot}": must be an absolute path`);
   }
 
   return path.resolve(contextRoot);
@@ -25,23 +23,17 @@ function hasControlCharacter(value: string): boolean {
   return Array.from(value).some((character) => {
     const code = character.codePointAt(0);
 
-    return (
-      code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f))
-    );
+    return code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f));
   });
 }
 
 function validatePathComponent(component: string, description: string): void {
   if (typeof component !== "string" || component.trim().length === 0) {
-    throw new Error(
-      `Invalid ${description} "${component}": must be a non-blank path component`,
-    );
+    throw new Error(`Invalid ${description} "${component}": must be a non-blank path component`);
   }
 
   if (hasControlCharacter(component)) {
-    throw new Error(
-      `Invalid ${description} "${component}": control characters are not allowed`,
-    );
+    throw new Error(`Invalid ${description} "${component}": control characters are not allowed`);
   }
 
   if (
@@ -59,15 +51,9 @@ function validatePathComponent(component: string, description: string): void {
   }
 }
 
-function assertBelowRoot(
-  root: string,
-  candidate: string,
-  description: string,
-): void {
+function assertBelowRoot(root: string, candidate: string, description: string): void {
   if (candidate === root || !candidate.startsWith(`${root}${path.sep}`)) {
-    throw new Error(
-      `Refusing ${description} outside context root "${root}": ${candidate}`,
-    );
+    throw new Error(`Refusing ${description} outside context root "${root}": ${candidate}`);
   }
 }
 
@@ -75,10 +61,7 @@ function formatFilesystemError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function inspectExistingDirectoryPath(
-  targetPath: string,
-  description: string,
-): void {
+function inspectExistingDirectoryPath(targetPath: string, description: string): void {
   const parsedPath = path.parse(targetPath);
   let currentPath = parsedPath.root;
 
@@ -100,15 +83,11 @@ function inspectExistingDirectoryPath(
   }
 
   if (stat.isSymbolicLink()) {
-    throw new Error(
-      `Refusing symbolic-link ${description} path component "${currentPath}"`,
-    );
+    throw new Error(`Refusing symbolic-link ${description} path component "${currentPath}"`);
   }
 
   if (!stat.isDirectory()) {
-    throw new Error(
-      `Refusing non-directory ${description} path component "${currentPath}"`,
-    );
+    throw new Error(`Refusing non-directory ${description} path component "${currentPath}"`);
   }
 
   const relativePath = path.relative(parsedPath.root, targetPath);
@@ -126,23 +105,16 @@ function inspectExistingDirectoryPath(
     }
 
     if (stat.isSymbolicLink()) {
-      throw new Error(
-        `Refusing symbolic-link ${description} path component "${currentPath}"`,
-      );
+      throw new Error(`Refusing symbolic-link ${description} path component "${currentPath}"`);
     }
 
     if (!stat.isDirectory()) {
-      throw new Error(
-        `Refusing non-directory ${description} path component "${currentPath}"`,
-      );
+      throw new Error(`Refusing non-directory ${description} path component "${currentPath}"`);
     }
   }
 }
 
-function inspectExistingFilePath(
-  targetPath: string,
-  description: string,
-): void {
+function inspectExistingFilePath(targetPath: string, description: string): void {
   let stat: fs.Stats | undefined;
 
   try {
@@ -159,9 +131,7 @@ function inspectExistingFilePath(
   }
 
   if (stat.isSymbolicLink()) {
-    throw new Error(
-      `Refusing symbolic-link ${description} path "${targetPath}"`,
-    );
+    throw new Error(`Refusing symbolic-link ${description} path "${targetPath}"`);
   }
 
   if (!stat.isFile()) {
@@ -183,11 +153,7 @@ function buildCardContextPaths(
   const manifestPath = path.resolve(contextDirectory, "attachments.json");
 
   assertBelowRoot(normalizedRoot, contextDirectory, "card context path");
-  assertBelowRoot(
-    normalizedRoot,
-    attachmentsDirectory,
-    "attachments directory",
-  );
+  assertBelowRoot(normalizedRoot, attachmentsDirectory, "attachments directory");
   assertBelowRoot(normalizedRoot, manifestPath, "manifest path");
 
   return {
@@ -214,8 +180,7 @@ export function resolveCardContextDirectory(
   projectId: string,
   cardId: string,
 ): string {
-  return resolveCardContextPaths(contextRoot, projectId, cardId)
-    .contextDirectory;
+  return resolveCardContextPaths(contextRoot, projectId, cardId).contextDirectory;
 }
 
 export function resolveCardAttachmentsDirectory(
@@ -251,11 +216,7 @@ export function resolveCardAttachmentPath(
 ): string {
   validatePathComponent(filename, "attachment filename");
 
-  const attachmentsDirectory = resolveCardAttachmentsDirectory(
-    contextRoot,
-    projectId,
-    cardId,
-  );
+  const attachmentsDirectory = resolveCardAttachmentsDirectory(contextRoot, projectId, cardId);
   const attachmentPath = path.resolve(attachmentsDirectory, filename);
 
   assertBelowRoot(attachmentsDirectory, attachmentPath, "attachment path");
@@ -284,11 +245,7 @@ function ensureDirectoryPath(targetPath: string, description: string): void {
       try {
         fs.mkdirSync(currentPath);
       } catch (error) {
-        if (!(
-          error instanceof Error &&
-          "code" in error &&
-          error.code === "EEXIST"
-        )) {
+        if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) {
           throw new Error(
             `Unable to create ${description} directory "${currentPath}": ${formatFilesystemError(error)}`,
             { cause: error },
@@ -307,15 +264,11 @@ function ensureDirectoryPath(targetPath: string, description: string): void {
     }
 
     if (stat.isSymbolicLink()) {
-      throw new Error(
-        `Refusing symbolic-link ${description} path component "${currentPath}"`,
-      );
+      throw new Error(`Refusing symbolic-link ${description} path component "${currentPath}"`);
     }
 
     if (!stat.isDirectory()) {
-      throw new Error(
-        `Refusing non-directory ${description} path component "${currentPath}"`,
-      );
+      throw new Error(`Refusing non-directory ${description} path component "${currentPath}"`);
     }
   };
 

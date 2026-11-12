@@ -8,8 +8,7 @@ import { TaskExecutionStore } from "../src/task-session/task-execution-store.js"
 
 const roots: string[] = [];
 afterEach(() => {
-  for (const root of roots.splice(0))
-    fs.rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
 function fixture(mode: "outage" | "outage-once" | "crash", published = false) {
@@ -22,10 +21,7 @@ function fixture(mode: "outage" | "outage-once" | "crash", published = false) {
   fs.mkdirSync(bin);
   fs.writeFileSync(path.join(cwd, "primary-mode"), mode);
   fs.copyFileSync(
-    path.join(
-      process.cwd(),
-      "tests/fixtures/scripted-opencode-primary-outage.mjs",
-    ),
+    path.join(process.cwd(), "tests/fixtures/scripted-opencode-primary-outage.mjs"),
     path.join(bin, "opencode"),
   );
   fs.chmodSync(path.join(bin, "opencode"), 0o755);
@@ -66,20 +62,13 @@ function fixture(mode: "outage" | "outage-once" | "crash", published = false) {
 }
 
 function readRecord(root: string, project: object) {
-  return new TaskExecutionStore(
-    path.join(root, "state"),
-    project as ProjectConfig,
-  ).read("card")!;
+  return new TaskExecutionStore(path.join(root, "state"), project as ProjectConfig).read("card")!;
 }
 
 function launchParent(root: string, env: NodeJS.ProcessEnv, now?: number) {
   const child = spawnSync(
     process.execPath,
-    [
-      "--import",
-      "tsx",
-      path.join(process.cwd(), "tests/fixtures/primary-outage-parent.ts"),
-    ],
+    ["--import", "tsx", path.join(process.cwd(), "tests/fixtures/primary-outage-parent.ts")],
     {
       cwd: process.cwd(),
       encoding: "utf8",
@@ -92,8 +81,7 @@ function launchParent(root: string, env: NodeJS.ProcessEnv, now?: number) {
     },
   );
   if (child.error) throw child.error;
-  if (child.status !== 0)
-    throw new Error(`Fresh parent failed (${child.status}): ${child.stderr}`);
+  if (child.status !== 0) throw new Error(`Fresh parent failed (${child.status}): ${child.stderr}`);
   return JSON.parse(child.stdout.trim().split("\n").at(-1)!) as {
     status: string;
     retryAt?: string;
@@ -120,10 +108,7 @@ describe("scripted OpenCode primary outage recovery", () => {
       [
         "--import",
         "tsx",
-        path.join(
-          process.cwd(),
-          "tests/fixtures/primary-outage-crash-gap-parent.ts",
-        ),
+        path.join(process.cwd(), "tests/fixtures/primary-outage-crash-gap-parent.ts"),
       ],
       {
         cwd: process.cwd(),
@@ -145,8 +130,7 @@ describe("scripted OpenCode primary outage recovery", () => {
     });
     const ready = await new Promise<boolean>((resolve, reject) => {
       const timeout = setTimeout(
-        () =>
-          reject(new Error(`adapter did not persist outage result: ${stderr}`)),
+        () => reject(new Error(`adapter did not persist outage result: ${stderr}`)),
         15_000,
       );
       parent.once("error", (error) => {
@@ -203,10 +187,7 @@ describe("scripted OpenCode primary outage recovery", () => {
         [
           "--import",
           "tsx",
-          path.join(
-            process.cwd(),
-            "tests/fixtures/primary-outage-crash-gap-parent.ts",
-          ),
+          path.join(process.cwd(), "tests/fixtures/primary-outage-crash-gap-parent.ts"),
         ],
         {
           cwd: process.cwd(),
@@ -219,8 +200,7 @@ describe("scripted OpenCode primary outage recovery", () => {
           },
         },
       );
-      if (result.status !== 0)
-        throw new Error(`Fresh parent failed: ${result.stderr}`);
+      if (result.status !== 0) throw new Error(`Fresh parent failed: ${result.stderr}`);
       return JSON.parse(result.stdout.trim().split("\n").at(-1)!) as {
         status: string;
         entry: Record<string, unknown>;
@@ -248,10 +228,7 @@ describe("scripted OpenCode primary outage recovery", () => {
       dependencyOutages: 1,
     });
     expect(
-      fs
-        .readFileSync(path.join(f.cwd, "primary-cli-calls.jsonl"), "utf8")
-        .trim()
-        .split("\n"),
+      fs.readFileSync(path.join(f.cwd, "primary-cli-calls.jsonl"), "utf8").trim().split("\n"),
     ).toHaveLength(2);
   }, 30_000);
 
@@ -268,10 +245,8 @@ describe("scripted OpenCode primary outage recovery", () => {
     });
     const calls = () =>
       fs.existsSync(path.join(f.cwd, "primary-cli-calls.jsonl"))
-        ? fs
-            .readFileSync(path.join(f.cwd, "primary-cli-calls.jsonl"), "utf8")
-            .trim()
-            .split("\n").length
+        ? fs.readFileSync(path.join(f.cwd, "primary-cli-calls.jsonl"), "utf8").trim().split("\n")
+            .length
         : 0;
     expect(calls()).toBe(1);
 
@@ -280,9 +255,7 @@ describe("scripted OpenCode primary outage recovery", () => {
       const blocked = launchParent(f.root, f.parentEnvironment, retryAt - 1);
       expect(blocked.status).toBe("waiting");
       expect(calls()).toBe(window);
-      expect(
-        readRecord(f.root, f.project).primaryOperations?.primary?.executions,
-      ).toBe(window);
+      expect(readRecord(f.root, f.project).primaryOperations?.primary?.executions).toBe(window);
       outcome = launchParent(f.root, f.parentEnvironment, retryAt);
       expect(outcome.status).toBe("waiting");
       expect(calls()).toBe(window + 1);
@@ -299,9 +272,7 @@ describe("scripted OpenCode primary outage recovery", () => {
     outcome = launchParent(f.root, f.parentEnvironment, lastRetryAt - 1);
     expect(outcome.status).toBe("waiting");
     expect(calls()).toBe(5);
-    expect(
-      readRecord(f.root, f.project).primaryOperations?.primary?.executions,
-    ).toBe(5);
+    expect(readRecord(f.root, f.project).primaryOperations?.primary?.executions).toBe(5);
     outcome = launchParent(f.root, f.parentEnvironment, lastRetryAt);
     expect(outcome.status).toBe("completed");
     expect(calls()).toBe(6);
@@ -312,9 +283,9 @@ describe("scripted OpenCode primary outage recovery", () => {
       .map((line) => JSON.parse(line) as string[]);
     expect(callArgs).toHaveLength(6);
     expect(callArgs.every((args) => args.includes("ses_primary"))).toBe(true);
-    expect(
-      fs.readFileSync(path.join(f.cwd, "primary-cli-result.txt"), "utf8"),
-    ).toContain("continued from same session");
+    expect(fs.readFileSync(path.join(f.cwd, "primary-cli-result.txt"), "utf8")).toContain(
+      "continued from same session",
+    );
   }, 30_000);
 
   it.each([false, true])(
@@ -324,19 +295,13 @@ describe("scripted OpenCode primary outage recovery", () => {
       const outcome = launchParent(f.root, f.parentEnvironment);
       expect(outcome).toMatchObject({
         status: "exhausted",
-        disposition: published
-          ? "published-blockage"
-          : "prepublication-failure",
+        disposition: published ? "published-blockage" : "prepublication-failure",
         executions: 3,
       });
       expect(
-        fs
-          .readFileSync(path.join(f.cwd, "primary-cli-calls.jsonl"), "utf8")
-          .trim()
-          .split("\n"),
+        fs.readFileSync(path.join(f.cwd, "primary-cli-calls.jsonl"), "utf8").trim().split("\n"),
       ).toHaveLength(3);
-      const operation = readRecord(f.root, f.project).primaryOperations
-        ?.primary;
+      const operation = readRecord(f.root, f.project).primaryOperations?.primary;
       expect(operation).toMatchObject({
         failureExecutions: 3,
         accountedExecution: 3,

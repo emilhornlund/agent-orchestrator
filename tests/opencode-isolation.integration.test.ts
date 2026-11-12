@@ -7,8 +7,7 @@ import { createPublicationFixture } from "./support/initial-publication-fixture.
 
 const roots: string[] = [];
 afterEach(() => {
-  for (const root of roots.splice(0))
-    fs.rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
 it("confines the actual writable OpenCode child and its descendants to task content and session state", async () => {
@@ -63,9 +62,9 @@ console.log('isolated');\n`,
   );
   expect(result.exitCode, result.errorOutput).toBe(0);
   expect(result.output).toContain("isolated");
-  expect(
-    fs.readFileSync(path.join(f.worktreePath, "task-output"), "utf8"),
-  ).toBe("meaningful output");
+  expect(fs.readFileSync(path.join(f.worktreePath, "task-output"), "utf8")).toBe(
+    "meaningful output",
+  );
   expect(fs.existsSync(protectedPaths[0]!)).toBe(false);
   expect(await f.git.getCurrentBranch(f.worktreePath)).toBe("agent/card");
 });

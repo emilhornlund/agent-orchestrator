@@ -2,10 +2,7 @@ import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
 import { describe, expect, it, vi } from "vitest";
-import {
-  CommandRunner,
-  type RunCommand,
-} from "../src/process/command-runner.js";
+import { CommandRunner, type RunCommand } from "../src/process/command-runner.js";
 import {
   inspectPrimaryOpenCodeSession,
   OpenCodeSessionListError,
@@ -52,9 +49,7 @@ describe("inspectPrimaryOpenCodeSession", () => {
 
     run.mockResolvedValueOnce({
       exitCode: 0,
-      output: JSON.stringify([
-        { id: "ses_primary", directory: "/tmp/other-worktree" },
-      ]),
+      output: JSON.stringify([{ id: "ses_primary", directory: "/tmp/other-worktree" }]),
     });
     await expect(
       inspectPrimaryOpenCodeSession({
@@ -103,9 +98,7 @@ describe("inspectPrimaryOpenCodeSession", () => {
   });
 
   it("keeps malformed real child output private while attaching process artifact references", async () => {
-    const root = fs.mkdtempSync(
-      path.join(os.tmpdir(), "session-list-evidence-"),
-    );
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "session-list-evidence-"));
     const bin = path.join(root, "bin");
     fs.mkdirSync(bin);
     const marker = "SESSION_JSON_RAW_CANARY_7C52";
@@ -141,10 +134,7 @@ describe("inspectPrimaryOpenCodeSession", () => {
       expect((failure as Error).message).not.toContain(marker);
       expect((failure as Error).cause).toBeUndefined();
       const error = failure as OpenCodeSessionListError;
-      const stdout = fs.readFileSync(
-        path.join(root, error.stdoutArtifactReference!),
-        "utf8",
-      );
+      const stdout = fs.readFileSync(path.join(root, error.stdoutArtifactReference!), "utf8");
       expect(stdout).toContain(marker);
       expect((failure as Error).message).toContain("valid JSON");
     } finally {

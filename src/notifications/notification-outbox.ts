@@ -44,11 +44,7 @@ export function notificationTriggerObserver(
     // Legacy unbound triggers are retained, never upgraded using unrelated card
     // position/history. Only the original attempt's concrete verified effect counts.
     if (!trigger.binding) return false;
-    const run = readNotificationAttempt(
-      root,
-      trigger.binding.attemptId,
-      assertHeld,
-    );
+    const run = readNotificationAttempt(root, trigger.binding.attemptId, assertHeld);
     if (
       run.projectId !== projectId ||
       run.cardId !== trigger.cardId ||
@@ -61,22 +57,16 @@ export function notificationTriggerObserver(
       (run.lifecycle !== "failed" || run.terminalSync !== "verified")
     )
       return false;
-    const op = run.pendingOperations.find(
-      (entry) => entry.id === trigger.binding!.operationId,
-    );
+    const op = run.pendingOperations.find((entry) => entry.id === trigger.binding!.operationId);
     if (
       op?.status !== "completed" ||
       op.mutation?.intent.kind !== "trello-move" ||
-      op.mutation.intent.target !==
-        `trello:${trigger.boardId}:${trigger.cardId}` ||
+      op.mutation.intent.target !== `trello:${trigger.boardId}:${trigger.cardId}` ||
       op.mutation.intent.payloadId !== trigger.binding.payloadId ||
-      op.mutation.executionFence.generation !==
-        trigger.binding.executionGeneration
+      op.mutation.executionFence.generation !== trigger.binding.executionGeneration
     )
       return false;
-    const observed = op.mutation.observations.find(
-      (entry) => entry.outcome === "verified",
-    );
+    const observed = op.mutation.observations.find((entry) => entry.outcome === "verified");
     if (!observed) return false;
     const payload = readRunArtifact(run, op.mutation.intent.payloadId);
     const expected = {
@@ -84,10 +74,7 @@ export function notificationTriggerObserver(
       args: {
         cardId: trigger.cardId,
         listId: trigger.listId,
-        options:
-          trigger.dueComplete === undefined
-            ? {}
-            : { dueComplete: trigger.dueComplete },
+        options: trigger.dueComplete === undefined ? {} : { dueComplete: trigger.dueComplete },
       },
     };
     if (JSON.stringify(payload) !== JSON.stringify(expected)) return false;
@@ -102,10 +89,7 @@ export function notificationTriggerObserver(
         }),
       })
       .parse(readRunArtifact(run, observed.evidence.artifactId));
-    if (
-      observation.fields.id !== trigger.cardId ||
-      observation.fields.idList !== trigger.listId
-    )
+    if (observation.fields.id !== trigger.cardId || observation.fields.idList !== trigger.listId)
       return false;
     if (trigger.binding.refinementHash) {
       const snapshot = refinementMutationSnapshotSchema.parse(
@@ -114,8 +98,7 @@ export function notificationTriggerObserver(
       if (
         run.taskKind !== "refinement" ||
         snapshot.cardId !== trigger.cardId ||
-        hash(JSON.stringify(snapshot.intended)) !==
-          trigger.binding.refinementHash
+        hash(JSON.stringify(snapshot.intended)) !== trigger.binding.refinementHash
       )
         return false;
       if (
@@ -129,11 +112,7 @@ export function notificationTriggerObserver(
     return true;
   };
 }
-function readNotificationAttempt(
-  root: string,
-  attemptId: string,
-  assertHeld: () => void,
-) {
+function readNotificationAttempt(root: string, attemptId: string, assertHeld: () => void) {
   assertHeld();
   const file = path.join(root, "attempts", `${attemptId}.json`);
   const stat = fs.lstatSync(file);
@@ -149,10 +128,7 @@ function readNotificationAttempt(
     assertHeld,
   })!.read()!;
 }
-function readRunArtifact(
-  run: ReturnType<typeof readNotificationAttempt>,
-  id: string,
-): unknown {
+function readRunArtifact(run: ReturnType<typeof readNotificationAttempt>, id: string): unknown {
   const ref = run.artifacts.find((entry) => entry.id === id);
   if (!ref) throw new Error("Notification evidence missing");
   return JSON.parse(fs.readFileSync(ref.path, "utf8")) as unknown;
@@ -163,13 +139,7 @@ export const notificationObligationSchema = z.strictObject({
   id: z.string().regex(/^[a-f0-9]{64}$/u),
   projectId: z.string().min(1),
   eventKey: z.string().min(1),
-  event: z.enum([
-    "humanReview",
-    "failed",
-    "refinementComplete",
-    "done",
-    "attentionRequired",
-  ]),
+  event: z.enum(["humanReview", "failed", "refinementComplete", "done", "attentionRequired"]),
   payloadHash: z.string().regex(/^[a-f0-9]{64}$/u),
   targetHash: z
     .string()
@@ -180,9 +150,7 @@ export const notificationObligationSchema = z.strictObject({
   createdAt: z.string().datetime(),
   trigger: triggerSchema.optional(),
 });
-export type NotificationObligation = z.infer<
-  typeof notificationObligationSchema
->;
+export type NotificationObligation = z.infer<typeof notificationObligationSchema>;
 const recordSchema = notificationObligationSchema.extend({
   revision: z.number().int().nonnegative().safe(),
   dispatches: z.array(
@@ -277,10 +245,7 @@ function hash(value: string): string {
 }
 function safeDirectory(directory: string): void {
   let current = path.parse(directory).root;
-  for (const segment of directory
-    .slice(current.length)
-    .split(path.sep)
-    .filter(Boolean)) {
+  for (const segment of directory.slice(current.length).split(path.sep).filter(Boolean)) {
     current = path.join(current, segment);
     if (!fs.existsSync(current)) {
       fs.mkdirSync(current, { mode: 0o700 });
@@ -310,9 +275,7 @@ export class NotificationOutbox {
     readonly projectId: string,
     private readonly assertHeld: () => void,
     private readonly clock: () => number = Date.now,
-    private readonly observeTrigger?: (
-      trigger: NotificationTrigger,
-    ) => Promise<boolean>,
+    private readonly observeTrigger?: (trigger: NotificationTrigger) => Promise<boolean>,
   ) {
     if (!path.isAbsolute(root))
       throw new Error("Notification storage must be external and absolute");
@@ -324,8 +287,7 @@ export class NotificationOutbox {
   static current(projectId: string): NotificationOutbox | undefined {
     const scoped = context.getStore();
     if (scoped) {
-      if (scoped.projectId !== projectId)
-        throw new Error("Notification project scope mismatch");
+      if (scoped.projectId !== projectId) throw new Error("Notification project scope mismatch");
       return scoped;
     }
     const authority = ProjectRunAuthority.current(projectId);
@@ -335,10 +297,8 @@ export class NotificationOutbox {
           projectId,
           () => authority.assertHeld(),
           Date.now,
-          notificationTriggerObserver(
-            authority.store.storageRoot,
-            projectId,
-            () => authority.assertHeld(),
+          notificationTriggerObserver(authority.store.storageRoot, projectId, () =>
+            authority.assertHeld(),
           ),
         )
       : undefined;
@@ -347,9 +307,7 @@ export class NotificationOutbox {
     const stat = fs.lstatSync(file);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 1024 * 1024)
       throw new Error("Unsafe notification record");
-    const record = recordSchema.parse(
-      JSON.parse(fs.readFileSync(file, "utf8")),
-    );
+    const record = recordSchema.parse(JSON.parse(fs.readFileSync(file, "utf8")));
     if (
       record.projectId !== this.projectId ||
       path.basename(file) !== `${record.id}.json` ||
@@ -357,9 +315,7 @@ export class NotificationOutbox {
       record.payloadHash !== hash(JSON.stringify(record.message)) ||
       record.messageId !== `<${record.id}@agent-orchestrator.invalid>` ||
       (record.trigger !== undefined && record.dispatches.length > 0) ||
-      record.dispatches
-        .slice(0, -1)
-        .some((entry) => entry.outcome !== "known-not-delivered")
+      record.dispatches.slice(0, -1).some((entry) => entry.outcome !== "known-not-delivered")
     )
       throw new Error("Notification identity mismatch");
     return record;
@@ -409,8 +365,7 @@ export class NotificationOutbox {
     safeDirectory(this.directory);
     notificationObligationSchema.parse(obligation);
     const { id } = obligation;
-    if (obligation.projectId !== this.projectId)
-      throw new Error("Notification project mismatch");
+    if (obligation.projectId !== this.projectId) throw new Error("Notification project mismatch");
     const file = path.join(this.directory, `${id}.json`);
     if (fs.existsSync(file)) {
       // Identity names the observed event, not a pre-send delivery claim. Later
@@ -460,15 +415,9 @@ export class NotificationOutbox {
     const attempts = path.join(this.root, "attempts");
     if (fs.existsSync(attempts)) {
       safeDirectory(attempts);
-      for (const name of fs
-        .readdirSync(attempts)
-        .filter((entry) => entry.endsWith(".json"))) {
+      for (const name of fs.readdirSync(attempts).filter((entry) => entry.endsWith(".json"))) {
         try {
-          const run = readNotificationAttempt(
-            this.root,
-            name.slice(0, -5),
-            this.assertHeld,
-          );
+          const run = readNotificationAttempt(this.root, name.slice(0, -5), this.assertHeld);
           if (run.projectId !== this.projectId) continue;
           // Validate the whole source's event set before deriving any delivery
           // record from it. An invalid source is retained, not partially trusted.
@@ -497,18 +446,11 @@ export class NotificationOutbox {
           (notifier.isEventEnabled?.(entry.event) ?? true),
       )
       .sort(
-        (a, b) =>
-          Date.parse(a.retryAt ?? a.createdAt) -
-          Date.parse(b.retryAt ?? b.createdAt),
+        (a, b) => Date.parse(a.retryAt ?? a.createdAt) - Date.parse(b.retryAt ?? b.createdAt),
       )) {
-      const record = this.read(
-        path.join(this.directory, `${candidate.id}.json`),
-      );
+      const record = this.read(path.join(this.directory, `${candidate.id}.json`));
       const last = record.dispatches.at(-1);
-      if (
-        record.targetHash !== null &&
-        record.targetHash !== hash(notifier.deliveryTarget ?? "")
-      ) {
+      if (record.targetHash !== null && record.targetHash !== hash(notifier.deliveryTarget ?? "")) {
         report(
           `Notification ${record.id}: configured transport/recipient identity changed; preserved without dispatch`,
         );
@@ -519,9 +461,7 @@ export class NotificationOutbox {
       if (actionable++ >= 100) break;
       this.assertHeld();
       if (record.trigger) {
-        record.retryAt = new Date(
-          this.clock() + NOTIFICATION_RECHECK_MS,
-        ).toISOString();
+        record.retryAt = new Date(this.clock() + NOTIFICATION_RECHECK_MS).toISOString();
         this.write(record);
         let verified: boolean | undefined;
         try {
@@ -544,12 +484,9 @@ export class NotificationOutbox {
         this.write(record);
       }
       if (last?.outcome === "ambiguous") {
-        record.retryAt = new Date(
-          this.clock() + NOTIFICATION_RECHECK_MS,
-        ).toISOString();
+        record.retryAt = new Date(this.clock() + NOTIFICATION_RECHECK_MS).toISOString();
         this.write(record);
-        let observed:
-          "confirmed" | "known-not-delivered" | "ambiguous" | undefined;
+        let observed: "confirmed" | "known-not-delivered" | "ambiguous" | undefined;
         try {
           observed = await notifier.lookupDelivery?.(record.messageId);
         } catch {
@@ -568,9 +505,7 @@ export class NotificationOutbox {
             `Notification ${record.id}: SMTP acceptance uncertain; no automatic resend; inspect provider using ${record.messageId}`,
           );
         }
-        record.retryAt = new Date(
-          this.clock() + NOTIFICATION_RECHECK_MS,
-        ).toISOString();
+        record.retryAt = new Date(this.clock() + NOTIFICATION_RECHECK_MS).toISOString();
         this.write(record);
         continue;
       }
@@ -579,9 +514,7 @@ export class NotificationOutbox {
         outcome: "ambiguous",
         evidence: "Dispatch checkpoint; acceptance unknown",
       });
-      record.retryAt = new Date(
-        this.clock() + NOTIFICATION_RECHECK_MS,
-      ).toISOString();
+      record.retryAt = new Date(this.clock() + NOTIFICATION_RECHECK_MS).toISOString();
       this.write(record);
       try {
         const receipt = await notifier.send({
@@ -593,9 +526,7 @@ export class NotificationOutbox {
         record.dispatches.at(-1)!.evidence =
           "Transport confirmed relay acceptance (not recipient receipt)";
         if (receipt) {
-          record.dispatches.at(-1)!.providerId = sanitizeControlledText(
-            receipt.providerId,
-          );
+          record.dispatches.at(-1)!.providerId = sanitizeControlledText(receipt.providerId);
           if (receipt.partial) {
             record.dispatches.at(-1)!.evidence =
               "Partial recipient acceptance; automatic resend suppressed to avoid duplicating accepted recipients";
@@ -607,16 +538,12 @@ export class NotificationOutbox {
       } catch (error) {
         this.assertHeld();
         record.dispatches.at(-1)!.outcome =
-          error instanceof NotificationNotDeliveredError
-            ? "known-not-delivered"
-            : "ambiguous";
+          error instanceof NotificationNotDeliveredError ? "known-not-delivered" : "ambiguous";
         record.dispatches.at(-1)!.evidence =
           error instanceof NotificationNotDeliveredError
             ? "Transport proved rejection before acceptance"
             : "Transport did not establish acceptance or non-delivery";
-        report(
-          `Notification ${record.id}: ${record.dispatches.at(-1)!.outcome}`,
-        );
+        report(`Notification ${record.id}: ${record.dispatches.at(-1)!.outcome}`);
       }
       this.write(record);
     }
@@ -632,11 +559,7 @@ export function drainNotifications(
 ): void {
   if (!notifier) return;
   try {
-    NotificationOutbox.current(projectId)?.start(
-      notifier,
-      report,
-      observeTrigger,
-    );
+    NotificationOutbox.current(projectId)?.start(notifier, report, observeTrigger);
   } catch {
     report(
       "Notification delivery/storage unavailable; workflow is unchanged; preserved outbox requires inspection",

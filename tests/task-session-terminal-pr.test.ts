@@ -94,9 +94,7 @@ describe("task-session terminal PR reconciliation", () => {
       errorOutput: "",
       sessionId: "session-1",
     }));
-    const claimedBoundary = new Error(
-      "Claimed task reached attachment preparation",
-    );
+    const claimedBoundary = new Error("Claimed task reached attachment preparation");
     const prepareAttachmentContext = vi.fn(async () => {
       throw claimedBoundary;
     });
@@ -107,11 +105,9 @@ describe("task-session terminal PR reconciliation", () => {
         git: {
           fetch,
           branchExists: vi.fn(async () => false),
-          addWorktreeWithNewBranch: vi.fn(
-            async (_repositoryPath: string, worktreePath: string) => {
-              fs.mkdirSync(worktreePath, { recursive: true });
-            },
-          ),
+          addWorktreeWithNewBranch: vi.fn(async (_repositoryPath: string, worktreePath: string) => {
+            fs.mkdirSync(worktreePath, { recursive: true });
+          }),
         } as unknown as GitClient,
         github: {} as GitHubClient,
         openCode: new OpenCodeClient(implementationRun),
@@ -142,36 +138,23 @@ describe("task-session terminal PR reconciliation", () => {
     currentList = "ready";
     await poll();
     await poll(); // Simulate a restart/poll while the project queue is occupied.
-    expect(
-      queue.list().filter((event) => event.cardId === card.id),
-    ).toHaveLength(2);
-    expect(
-      queue.list().find((event) => event.eventId.endsWith(":attempt:1")),
-    ).toMatchObject({
-      eventId: expect.stringMatching(
-        /^implementation:reentry-card:.*:attempt:1$/,
-      ),
+    expect(queue.list().filter((event) => event.cardId === card.id)).toHaveLength(2);
+    expect(queue.list().find((event) => event.eventId.endsWith(":attempt:1"))).toMatchObject({
+      eventId: expect.stringMatching(/^implementation:reentry-card:.*:attempt:1$/),
       status: "queued",
     });
 
     currentList = "backlog";
     await poll();
-    expect(
-      queue.list().find((event) => event.eventId.endsWith(":attempt:1"))
-        ?.status,
-    ).toBe("retired");
+    expect(queue.list().find((event) => event.eventId.endsWith(":attempt:1"))?.status).toBe(
+      "retired",
+    );
     currentList = "ready";
     await poll();
     await poll();
-    expect(
-      queue.list().filter((event) => event.cardId === card.id),
-    ).toHaveLength(3);
-    expect(
-      queue.list().find((event) => event.eventId.endsWith(":attempt:2")),
-    ).toMatchObject({
-      eventId: expect.stringMatching(
-        /^implementation:reentry-card:.*:attempt:2$/,
-      ),
+    expect(queue.list().filter((event) => event.cardId === card.id)).toHaveLength(3);
+    expect(queue.list().find((event) => event.eventId.endsWith(":attempt:2"))).toMatchObject({
+      eventId: expect.stringMatching(/^implementation:reentry-card:.*:attempt:2$/),
       status: "queued",
     });
 
@@ -180,23 +163,15 @@ describe("task-session terminal PR reconciliation", () => {
     currentList = "ready";
     await poll();
     await poll();
-    expect(
-      queue.list().filter((event) => event.cardId === card.id),
-    ).toHaveLength(4);
+    expect(queue.list().filter((event) => event.cardId === card.id)).toHaveLength(4);
     expect(
       queue
         .list()
         .filter((event) => event.cardId === card.id)
-        .filter((event) =>
-          ["queued", "active", "failed"].includes(event.status),
-        ),
+        .filter((event) => ["queued", "active", "failed"].includes(event.status)),
     ).toHaveLength(1);
-    expect(
-      queue.list().find((event) => event.eventId.endsWith(":attempt:3")),
-    ).toMatchObject({
-      eventId: expect.stringMatching(
-        /^implementation:reentry-card:.*:attempt:3$/,
-      ),
+    expect(queue.list().find((event) => event.eventId.endsWith(":attempt:3"))).toMatchObject({
+      eventId: expect.stringMatching(/^implementation:reentry-card:.*:attempt:3$/),
       status: "queued",
     });
 
@@ -206,27 +181,16 @@ describe("task-session terminal PR reconciliation", () => {
     expect(prepareAttachmentContext).toHaveBeenCalledOnce();
     expect(implementationRun).not.toHaveBeenCalled();
     expect(currentList).toBe("working");
+    expect(queue.list().filter((event) => event.cardId === card.id)).toHaveLength(4);
     expect(
-      queue.list().filter((event) => event.cardId === card.id),
-    ).toHaveLength(4);
-    expect(
-      queue
-        .list()
-        .find((event) =>
-          event.eventId.startsWith("implementation:reentry-card:"),
-        )?.status,
+      queue.list().find((event) => event.eventId.startsWith("implementation:reentry-card:"))
+        ?.status,
     ).toBe("retired");
-    expect(
-      queue.list().find((event) => event.eventId.endsWith(":attempt:3")),
-    ).toMatchObject({
-      eventId: expect.stringMatching(
-        /^implementation:reentry-card:.*:attempt:3$/,
-      ),
+    expect(queue.list().find((event) => event.eventId.endsWith(":attempt:3"))).toMatchObject({
+      eventId: expect.stringMatching(/^implementation:reentry-card:.*:attempt:3$/),
       status: "failed",
     });
-    expect(
-      new TaskExecutionStore(contextRoot, project).read(card.id),
-    ).not.toBeNull();
+    expect(new TaskExecutionStore(contextRoot, project).read(card.id)).not.toBeNull();
   });
 
   it("retires a persisted orphan implementation before recovering a queued merged PR", async () => {
@@ -341,11 +305,7 @@ describe("task-session terminal PR reconciliation", () => {
       enqueuedAt: "2026-10-27T09:00:00.000Z",
     });
     queue.claimNext();
-    const queuePath = path.join(
-      contextRoot,
-      "task-mutation-queues",
-      `${project.id}.json`,
-    );
+    const queuePath = path.join(contextRoot, "task-mutation-queues", `${project.id}.json`);
     const persistedQueue = JSON.parse(fs.readFileSync(queuePath, "utf8")) as {
       events: Array<{
         eventId: string;
@@ -383,12 +343,8 @@ describe("task-session terminal PR reconciliation", () => {
 
     await poll();
 
-    expect(
-      queue.list().find((item) => item.cardId === "orphan-card")?.status,
-    ).toBe("retired");
-    expect(
-      queue.list().find((item) => item.kind === "terminal-pr")?.status,
-    ).toBe("completed");
+    expect(queue.list().find((item) => item.cardId === "orphan-card")?.status).toBe("retired");
+    expect(queue.list().find((item) => item.kind === "terminal-pr")?.status).toBe("completed");
     expect(currentList).toBe(project.trello.doneListId);
     expect(trello.moveCard).toHaveBeenCalledTimes(1);
     expect(taskStore.read(card.id)?.phase).toBe("done");
@@ -532,9 +488,7 @@ describe("task-session terminal PR reconciliation", () => {
         String(message).includes("Deferred merged PR cleanup"),
       ),
     ).toHaveLength(1);
-    expect(
-      queue.list().find((item) => item.kind === "terminal-pr")?.status,
-    ).toBe("queued");
+    expect(queue.list().find((item) => item.kind === "terminal-pr")?.status).toBe("queued");
 
     queue.complete(owner!.eventId);
     await poll();
@@ -557,9 +511,7 @@ describe("task-session terminal PR reconciliation", () => {
   ])(
     "moves a $state PR card to $destination without consulting CI",
     async ({ state, destination, mergedAt }) => {
-      root = fs.mkdtempSync(
-        path.join(os.tmpdir(), "terminal-task-session-pr-"),
-      );
+      root = fs.mkdtempSync(path.join(os.tmpdir(), "terminal-task-session-pr-"));
       const repositoryPath = path.join(root, "repo");
       const worktreeRoot = path.join(root, "worktrees");
       const contextRoot = path.join(root, "state");
@@ -693,9 +645,7 @@ describe("task-session terminal PR reconciliation", () => {
       const lifecycleEvent = vi.spyOn(Logger.prototype, "event");
 
       if (state === "MERGED") {
-        await expect(poll()).rejects.toThrow(
-          "simulated interruption during terminal cleanup",
-        );
+        await expect(poll()).rejects.toThrow("simulated interruption during terminal cleanup");
         expect(currentList).toBe(project.trello.doneListId);
       }
       await poll();
@@ -706,9 +656,7 @@ describe("task-session terminal PR reconciliation", () => {
           ? "Merged pull request transitioned card to Done: https://github.com/owner/repo/pull/7"
           : "Closed pull request returned card to Backlog: https://github.com/owner/repo/pull/7";
       expect(
-        lifecycleEvent.mock.calls.filter(
-          ([message]) => message === destinationEvent,
-        ),
+        lifecycleEvent.mock.calls.filter(([message]) => message === destinationEvent),
       ).toHaveLength(1);
 
       expect(currentList).toBe(
@@ -716,9 +664,7 @@ describe("task-session terminal PR reconciliation", () => {
       );
       expect(trello.moveCard).toHaveBeenCalledWith(
         card.id,
-        destination === "done"
-          ? project.trello.doneListId
-          : project.trello.backlogListId,
+        destination === "done" ? project.trello.doneListId : project.trello.backlogListId,
         ...(destination === "done" ? [{ dueComplete: true }] : []),
       );
       expect(github.getCiObservations).not.toHaveBeenCalled();
@@ -728,9 +674,7 @@ describe("task-session terminal PR reconciliation", () => {
         expect(github.isAncestorCommit).toHaveBeenCalled();
       }
       if (state === "MERGED") {
-        expect(
-          new TaskExecutionStore(contextRoot, project).read(card.id)?.phase,
-        ).toBe("done");
+        expect(new TaskExecutionStore(contextRoot, project).read(card.id)?.phase).toBe("done");
       }
     },
   );

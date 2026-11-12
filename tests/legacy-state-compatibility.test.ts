@@ -44,9 +44,7 @@ describe("legacy task-state compatibility", () => {
         project.id,
         `${fixture.record.cardId}.json`,
       );
-      const sourceBytes = Buffer.from(
-        `${JSON.stringify(fixture.record, null, 2)}\n`,
-      );
+      const sourceBytes = Buffer.from(`${JSON.stringify(fixture.record, null, 2)}\n`);
       fs.writeFileSync(sourcePath, sourceBytes);
       const integrationId = JSON.stringify({
         trelloBoardId: "board",
@@ -82,8 +80,7 @@ describe("legacy task-state compatibility", () => {
         pinned,
         lease,
         store: new RunStore(storageRoot, "unused", pinned, lease),
-        storeForAttempt: (attemptId) =>
-          new RunStore(storageRoot, attemptId, pinned, lease),
+        storeForAttempt: (attemptId) => new RunStore(storageRoot, attemptId, pinned, lease),
         registry,
         now: new Date("2026-11-01T00:00:00.000Z"),
       });
@@ -114,18 +111,13 @@ describe("legacy task-state compatibility", () => {
       expect(registry.read()?.attemptId).toBe(migrated.record.attemptId);
       expect(fs.readFileSync(sourcePath)).toEqual(sourceBytes);
       const snapshotRef = migrated.record.artifacts.find(
-        (item) =>
-          item.mediaType ===
-          "application/vnd.agent-orchestrator.legacy-snapshot+json",
+        (item) => item.mediaType === "application/vnd.agent-orchestrator.legacy-snapshot+json",
       )!;
-      const snapshot = JSON.parse(
-        fs.readFileSync(snapshotRef.path, "utf8"),
-      ) as { sources: { bytesBase64: string; sha256: string }[] };
+      const snapshot = JSON.parse(fs.readFileSync(snapshotRef.path, "utf8")) as {
+        sources: { bytesBase64: string; sha256: string }[];
+      };
       expect(snapshot.sources).toHaveLength(1);
-      const importedBytes = Buffer.from(
-        snapshot.sources[0]!.bytesBase64,
-        "base64",
-      );
+      const importedBytes = Buffer.from(snapshot.sources[0]!.bytesBase64, "base64");
       expect(importedBytes).toEqual(sourceBytes);
       expect(createHash("sha256").update(importedBytes).digest("hex")).toBe(
         snapshot.sources[0]!.sha256,
@@ -139,24 +131,15 @@ describe("legacy task-state compatibility", () => {
   });
 
   it("preserves unsupported source versions and refuses migration before publishing authority", () => {
-    const root = fs.mkdtempSync(
-      path.join(os.tmpdir(), "state-upgrade-unsupported-"),
-    );
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "state-upgrade-unsupported-"));
     try {
       const runtimeRoot = path.join(root, "runtime");
       const storageRoot = path.join(root, "state");
       const projectId = fixture.record.projectId;
       const task = { ...fixture.record, version: 99 };
-      const taskDirectory = path.join(
-        runtimeRoot,
-        "task-executions",
-        projectId,
-      );
+      const taskDirectory = path.join(runtimeRoot, "task-executions", projectId);
       fs.mkdirSync(taskDirectory, { recursive: true });
-      const sourcePath = path.join(
-        taskDirectory,
-        `${fixture.record.cardId}.json`,
-      );
+      const sourcePath = path.join(taskDirectory, `${fixture.record.cardId}.json`);
       const original = Buffer.from(JSON.stringify(task));
       fs.writeFileSync(sourcePath, original);
       const project = {
@@ -200,14 +183,13 @@ describe("legacy task-state compatibility", () => {
           lease,
           store: new RunStore(storageRoot, "unused", pinned, lease),
           registry,
-          storeForAttempt: (attemptId) =>
-            new RunStore(storageRoot, attemptId, pinned, lease),
+          storeForAttempt: (attemptId) => new RunStore(storageRoot, attemptId, pinned, lease),
         }),
       ).toThrow(/Legacy project migration blocked/);
       expect(fs.readFileSync(sourcePath)).toEqual(original);
-      expect(
-        createHash("sha256").update(fs.readFileSync(sourcePath)).digest("hex"),
-      ).toBe(createHash("sha256").update(original).digest("hex"));
+      expect(createHash("sha256").update(fs.readFileSync(sourcePath)).digest("hex")).toBe(
+        createHash("sha256").update(original).digest("hex"),
+      );
       expect(registry.read()).toBeNull();
       expect(fs.existsSync(path.join(storageRoot, "attempts"))).toBe(false);
     } finally {

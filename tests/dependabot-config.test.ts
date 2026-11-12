@@ -26,9 +26,7 @@ function asRecord(value: unknown, label: string): Record<string, unknown> {
 }
 
 function parseDependabotConfig(): DependabotConfig {
-  const config = parse(
-    readFileSync(resolve(process.cwd(), ".github", "dependabot.yml"), "utf8"),
-  );
+  const config = parse(readFileSync(resolve(process.cwd(), ".github", "dependabot.yml"), "utf8"));
   const record = asRecord(config, "Dependabot configuration");
 
   return {

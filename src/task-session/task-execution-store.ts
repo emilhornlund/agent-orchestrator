@@ -4,15 +4,9 @@ import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
 
 import type { ProjectConfig } from "../config/config.js";
-import {
-  parseTaskExecutionRecord,
-  type TaskExecutionRecord,
-} from "./task-execution-record.js";
+import { parseTaskExecutionRecord, type TaskExecutionRecord } from "./task-execution-record.js";
 import { ProjectRunAuthority } from "./project-run-authority.js";
-import {
-  PROCESS_CAPTURE_MAX_BYTES,
-  getProcessRuntime,
-} from "../process/process-runtime.js";
+import { PROCESS_CAPTURE_MAX_BYTES, getProcessRuntime } from "../process/process-runtime.js";
 import { redactSecrets } from "../security/redact-secrets.js";
 
 export interface PrimaryResultArtifactReference {
@@ -23,8 +17,7 @@ export interface PrimaryResultArtifactReference {
 
 function validatePrimaryResultId(id: string): void {
   assertSafePathComponent(id, "primary result ID");
-  if (Buffer.byteLength(id, "utf8") > 1024)
-    throw new Error("Primary result ID exceeds 1024 bytes");
+  if (Buffer.byteLength(id, "utf8") > 1024) throw new Error("Primary result ID exceeds 1024 bytes");
 }
 
 function fsyncDirectory(directory: string): void {
@@ -38,8 +31,7 @@ function fsyncDirectory(directory: string): void {
 
 function redactStructured(value: unknown, secrets: readonly string[]): unknown {
   if (typeof value === "string") return redactSecrets(value, secrets);
-  if (Array.isArray(value))
-    return value.map((item) => redactStructured(item, secrets));
+  if (Array.isArray(value)) return value.map((item) => redactStructured(item, secrets));
   if (value !== null && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value).map(([key, item]) => [
@@ -62,9 +54,7 @@ export class TaskExecutionRecordConflictError extends Error {
 
 export class TaskExecutionStoreBusyError extends Error {
   constructor(filePath: string) {
-    super(
-      `Task execution record is being updated by another writer: ${filePath}`,
-    );
+    super(`Task execution record is being updated by another writer: ${filePath}`);
     this.name = "TaskExecutionStoreBusyError";
   }
 }
@@ -74,9 +64,7 @@ function isPathWithin(parent: string, candidate: string): boolean {
 
   return (
     relative === "" ||
-    (relative !== ".." &&
-      !relative.startsWith(`..${path.sep}`) &&
-      !path.isAbsolute(relative))
+    (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
   );
 }
 
@@ -97,19 +85,14 @@ function assertSafePathComponent(value: string, label: string): void {
     Array.from(value).some((character) => {
       const code = character.codePointAt(0);
 
-      return (
-        code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f))
-      );
+      return code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f));
     })
   ) {
     throw new Error(`Invalid ${label} for task execution storage: ${value}`);
   }
 }
 
-function assertStorageRoot(
-  rootDirectory: string,
-  project: ProjectConfig,
-): string {
+function assertStorageRoot(rootDirectory: string, project: ProjectConfig): string {
   if (!path.isAbsolute(rootDirectory)) {
     throw new Error("Task execution storage root must be an absolute path");
   }
@@ -118,10 +101,7 @@ function assertStorageRoot(
   const repositoryPath = path.resolve(project.repository.path);
   const worktreeRoot = path.resolve(project.repository.worktreeRoot);
 
-  if (
-    pathsOverlap(resolvedRoot, repositoryPath) ||
-    pathsOverlap(resolvedRoot, worktreeRoot)
-  ) {
+  if (pathsOverlap(resolvedRoot, repositoryPath) || pathsOverlap(resolvedRoot, worktreeRoot)) {
     throw new Error(
       "Task execution storage root must not overlap the configured repository or worktree root",
     );
@@ -136,9 +116,7 @@ function assertDirectoryPath(directoryPath: string, create: boolean): boolean {
   const parsedPath = path.parse(directoryPath);
   let currentPath = parsedPath.root;
 
-  for (const component of path
-    .relative(parsedPath.root, directoryPath)
-    .split(path.sep)) {
+  for (const component of path.relative(parsedPath.root, directoryPath).split(path.sep)) {
     if (component.length === 0) {
       continue;
     }
@@ -174,9 +152,7 @@ function assertDirectoryPath(directoryPath: string, create: boolean): boolean {
     }
 
     if (stats.isSymbolicLink() || !stats.isDirectory()) {
-      throw new Error(
-        `Unsafe task execution storage directory: ${currentPath}`,
-      );
+      throw new Error(`Unsafe task execution storage directory: ${currentPath}`);
     }
   }
 
@@ -242,17 +218,10 @@ export class TaskExecutionStore {
   private readonly authority: ProjectRunAuthority | undefined;
   private readonly primaryResultDirectory: string;
 
-  constructor(
-    rootDirectory: string,
-    project: ProjectConfig,
-    authority?: ProjectRunAuthority,
-  ) {
+  constructor(rootDirectory: string, project: ProjectConfig, authority?: ProjectRunAuthority) {
     const root = assertStorageRoot(rootDirectory, project);
     this.directoryPath = path.join(root, "task-executions", project.id);
-    this.primaryResultDirectory = path.join(
-      this.directoryPath,
-      "primary-results",
-    );
+    this.primaryResultDirectory = path.join(this.directoryPath, "primary-results");
     this.authority = authority ?? ProjectRunAuthority.current(project.id);
   }
 
@@ -263,14 +232,8 @@ export class TaskExecutionStore {
 
   read(cardId: string): TaskExecutionRecord | null {
     if (this.authority !== undefined) {
-      const value = this.authority.read(
-        `task-execution-${cardId}`,
-        parseTaskExecutionRecord,
-      );
-      if (
-        value &&
-        (value.projectId !== this.projectId || value.cardId !== cardId)
-      )
+      const value = this.authority.read(`task-execution-${cardId}`, parseTaskExecutionRecord);
+      if (value && (value.projectId !== this.projectId || value.cardId !== cardId))
         throw new Error("Task execution projection identity mismatch");
       return value;
     }
@@ -348,15 +311,11 @@ export class TaskExecutionStore {
     nextRecordInput: TaskExecutionRecord,
     terminal?: {
       event: "merged" | "closed-unmerged" | "failed";
-      evidence: NonNullable<
-        import("./run-record.js").RunRecord["terminalEvidence"]
-      >;
+      evidence: NonNullable<import("./run-record.js").RunRecord["terminalEvidence"]>;
     },
   ): TaskExecutionRecord {
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) {
-      throw new Error(
-        "Expected task execution record revision must be positive",
-      );
+      throw new Error("Expected task execution record revision must be positive");
     }
 
     const nextRecord = parseTaskExecutionRecord(nextRecordInput);
@@ -366,8 +325,7 @@ export class TaskExecutionStore {
         key: `task-execution-${cardId}`,
         initial: null,
         operation: (value) => {
-          const current =
-            value === null ? null : parseTaskExecutionRecord(value);
+          const current = value === null ? null : parseTaskExecutionRecord(value);
           if (current === null || current.revision !== expectedRevision)
             throw new TaskExecutionRecordConflictError(
               "Task execution projection revision conflict",
@@ -388,9 +346,7 @@ export class TaskExecutionStore {
     }
 
     if (terminal !== undefined)
-      throw new Error(
-        "Verified terminal transitions require canonical RunStore authority",
-      );
+      throw new Error("Verified terminal transitions require canonical RunStore authority");
 
     const filePath = this.getRecordPath(cardId);
 
@@ -419,10 +375,7 @@ export class TaskExecutionStore {
 
       const currentRecord = readRecordFile(filePath, this.projectId, cardId);
 
-      if (
-        currentRecord === null ||
-        currentRecord.revision !== expectedRevision
-      ) {
+      if (currentRecord === null || currentRecord.revision !== expectedRevision) {
         throw new TaskExecutionRecordConflictError(
           `Task execution record revision conflict for ${filePath}: expected ${expectedRevision}, found ${currentRecord?.revision ?? "missing"}`,
         );
@@ -455,9 +408,7 @@ export class TaskExecutionStore {
       ...current,
       humanReviewNotificationCommitShas: [...notifiedCommitShas, commitSha],
       revision: current.revision + 1,
-      updatedAt: new Date(
-        Math.max(Date.now(), Date.parse(current.updatedAt) + 1),
-      ).toISOString(),
+      updatedAt: new Date(Math.max(Date.now(), Date.parse(current.updatedAt) + 1)).toISOString(),
     });
     return true;
   }
@@ -466,27 +417,17 @@ export class TaskExecutionStore {
     return path.basename(this.directoryPath);
   }
 
-  writePrimaryResultArtifact(
-    id: string,
-    result: unknown,
-  ): PrimaryResultArtifactReference {
+  writePrimaryResultArtifact(id: string, result: unknown): PrimaryResultArtifactReference {
     validatePrimaryResultId(id);
     const bytes = Buffer.from(
-      JSON.stringify(
-        redactStructured(result, getProcessRuntime().secretValues),
-      ),
+      JSON.stringify(redactStructured(result, getProcessRuntime().secretValues)),
       "utf8",
     );
     if (bytes.byteLength > PROCESS_CAPTURE_MAX_BYTES)
-      throw new Error(
-        `Primary result exceeds ${PROCESS_CAPTURE_MAX_BYTES}-byte limit`,
-      );
+      throw new Error(`Primary result exceeds ${PROCESS_CAPTURE_MAX_BYTES}-byte limit`);
     const digest = createHash("sha256").update(bytes).digest("hex");
     if (this.authority) {
-      const artifact = this.authority.store.writeArtifact(
-        bytes,
-        "application/json",
-      );
+      const artifact = this.authority.store.writeArtifact(bytes, "application/json");
       return {
         reference: artifact.id as `sha256:${string}`,
         path: artifact.path,
@@ -503,10 +444,7 @@ export class TaskExecutionStore {
       throw new Error("Unsafe primary result artifact directory");
     const target = path.join(this.primaryResultDirectory, `sha256-${digest}`);
     if (!fs.existsSync(target)) {
-      const temp = path.join(
-        this.primaryResultDirectory,
-        `.${randomUUID()}.tmp`,
-      );
+      const temp = path.join(this.primaryResultDirectory, `.${randomUUID()}.tmp`);
       const fd = fs.openSync(temp, "wx", 0o600);
       try {
         fs.writeFileSync(fd, bytes);
@@ -537,9 +475,7 @@ export class TaskExecutionStore {
     };
   }
 
-  readPrimaryResultArtifact(
-    ref: PrimaryResultArtifactReference | string,
-  ): unknown {
+  readPrimaryResultArtifact(ref: PrimaryResultArtifactReference | string): unknown {
     const reference = typeof ref === "string" ? ref : ref.reference;
     if (!/^sha256:[a-f0-9]{64}$/.test(reference))
       throw new Error("Invalid primary result artifact reference");
@@ -547,9 +483,7 @@ export class TaskExecutionStore {
     let filePath: string;
     if (this.authority)
       return redactStructured(
-        JSON.parse(
-          this.authority.store.readArtifact(reference).toString("utf8"),
-        ) as unknown,
+        JSON.parse(this.authority.store.readArtifact(reference).toString("utf8")) as unknown,
         getProcessRuntime().secretValues,
       );
     else {
@@ -557,14 +491,10 @@ export class TaskExecutionStore {
       if (!assertDirectoryPath(this.primaryResultDirectory, false))
         throw new Error("Primary result artifact is missing");
     }
-    const fd = fs.openSync(
-      filePath,
-      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
-    );
+    const fd = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
     try {
       const size = fs.fstatSync(fd).size;
-      if (size > PROCESS_CAPTURE_MAX_BYTES)
-        throw new Error("Unsafe primary result artifact");
+      if (size > PROCESS_CAPTURE_MAX_BYTES) throw new Error("Unsafe primary result artifact");
       const bytes = Buffer.alloc(size);
       let offset = 0;
       while (offset < size) {
@@ -591,12 +521,7 @@ export class TaskExecutionStore {
     assertSafePathComponent(executionId, "process execution ID");
     if (this.authority === undefined) return null;
     const run = this.authority.store.read();
-    if (
-      !run ||
-      run.cardId !== cardId ||
-      run.pinned.projectId !== this.projectId
-    )
-      return null;
+    if (!run || run.cardId !== cardId || run.pinned.projectId !== this.projectId) return null;
     const directory = path.join(
       run.pinned.storageRoot,
       "artifacts",
@@ -628,12 +553,7 @@ export class TaskExecutionStore {
   processExecutionDirectory(cardId: string): string | undefined {
     if (this.authority === undefined) return undefined;
     const run = this.authority.store.read();
-    if (
-      !run ||
-      run.cardId !== cardId ||
-      run.pinned.projectId !== this.projectId
-    )
-      return undefined;
+    if (!run || run.cardId !== cardId || run.pinned.projectId !== this.projectId) return undefined;
     return path.join(
       run.pinned.storageRoot,
       "artifacts",
@@ -643,11 +563,7 @@ export class TaskExecutionStore {
     );
   }
 
-  private validateFallbackArtifact(
-    filePath: string,
-    digest: string,
-    expectedBytes: number,
-  ): void {
+  private validateFallbackArtifact(filePath: string, digest: string, expectedBytes: number): void {
     const stats = fs.lstatSync(filePath);
     if (
       !stats.isFile() ||
@@ -688,10 +604,7 @@ export class TaskExecutionStore {
     }
   }
 
-  private writeTemporaryRecord(
-    filePath: string,
-    record: TaskExecutionRecord,
-  ): string {
+  private writeTemporaryRecord(filePath: string, record: TaskExecutionRecord): string {
     const temporaryPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
     const descriptor = fs.openSync(temporaryPath, "wx", 0o600);
 

@@ -58,9 +58,7 @@ describe("OpenCodeClient", () => {
       "/worktree",
       "prompt",
     ]);
-    expect(
-      buildOpenCodeArguments({ ...common, model: "provider/model" }),
-    ).toEqual([
+    expect(buildOpenCodeArguments({ ...common, model: "provider/model" })).toEqual([
       "run",
       "--auto",
       "--model",
@@ -178,10 +176,7 @@ describe("OpenCodeClient", () => {
         sessionID: "ses_created-123",
       }),
     ],
-    [
-      "invalid session identifier",
-      JSON.stringify({ type: "text", sessionID: "invalid session" }),
-    ],
+    ["invalid session identifier", JSON.stringify({ type: "text", sessionID: "invalid session" })],
   ])("rejects %s structured session output", (_description, output) => {
     expect(() => parseOpenCodeSessionId(output)).toThrow();
   });
@@ -281,9 +276,7 @@ describe("OpenCodeClient", () => {
         captureSessionId: true,
       }),
     ).resolves.toEqual({ ...result, sessionId: "ses_created-123" });
-    expect(runOpenCode).toHaveBeenCalledWith(
-      expect.objectContaining({ captureSessionId: true }),
-    );
+    expect(runOpenCode).toHaveBeenCalledWith(expect.objectContaining({ captureSessionId: true }));
   });
 
   it("preserves process output when session capture fails", async () => {
@@ -292,9 +285,7 @@ describe("OpenCodeClient", () => {
       output: "OpenCode emitted no session event",
       errorOutput: "diagnostic from stderr",
     };
-    const client = new OpenCodeClient(
-      vi.fn<RunOpenCode>().mockResolvedValue(result),
-    );
+    const client = new OpenCodeClient(vi.fn<RunOpenCode>().mockResolvedValue(result));
 
     await expect(
       client.run({

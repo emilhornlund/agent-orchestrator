@@ -1,7 +1,4 @@
-import type {
-  CiCheckObservation,
-  FailedCheckDiagnostic,
-} from "../github/github-client.js";
+import type { CiCheckObservation, FailedCheckDiagnostic } from "../github/github-client.js";
 import type { CiCheckEvaluation } from "../github/evaluate-ci-checks.js";
 import type { TaskExecutionRecord } from "./task-execution-record.js";
 import { canResumeCiReviewRepair } from "./can-resume-ci-review-repair.js";
@@ -73,9 +70,7 @@ function updateRecord(
     ...record,
     ...update,
     revision: record.revision + 1,
-    updatedAt: new Date(
-      Math.max(Date.now(), Date.parse(record.updatedAt) + 1),
-    ).toISOString(),
+    updatedAt: new Date(Math.max(Date.now(), Date.parse(record.updatedAt) + 1)).toISOString(),
   });
 }
 
@@ -123,9 +118,7 @@ export async function runTaskSessionCiRepairs(
       enqueuedAt: record.updatedAt,
     })
   )
-    throw new TaskSessionCiRepairError(
-      "CI review recovery lacks its completed owning correction",
-    );
+    throw new TaskSessionCiRepairError("CI review recovery lacks its completed owning correction");
   // An episode belongs to the durable task operation, not a mutable commit SHA.
   // Publishing a repair changes headSha but must not reset its correction budget.
   const cycleId =
@@ -138,18 +131,14 @@ export async function runTaskSessionCiRepairs(
       ? (options.maxAttempts ?? MAX_CI_REPAIR_ATTEMPTS)
       : (record.ciRepair.maxAttempts ?? MAX_CI_REPAIR_ATTEMPTS);
   if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 0)
-    throw new TaskSessionCiRepairError(
-      "CI correction limit must be a nonnegative safe integer",
-    );
+    throw new TaskSessionCiRepairError("CI correction limit must be a nonnegative safe integer");
   const episode = {
     cycleId,
     maxAttempts,
     initiatingEventId:
       record.ciRepair === undefined
-        ? (record.feedbackRemediation?.operationId ??
-          `${options.operationKey}:initial-publication`)
-        : (record.ciRepair.initiatingEventId ??
-          `${options.operationKey}:initial-publication`),
+        ? (record.feedbackRemediation?.operationId ?? `${options.operationKey}:initial-publication`)
+        : (record.ciRepair.initiatingEventId ?? `${options.operationKey}:initial-publication`),
   };
   if (record.ciRepair?.cycleId !== cycleId) {
     record = updateRecord(options.store, record, {
@@ -168,14 +157,13 @@ export async function runTaskSessionCiRepairs(
         throw new TaskSessionCiRepairError(
           "Reserved CI repair lacks persisted diagnostics; preserving the reservation",
         );
-      const storedDiagnostics: unknown =
-        options.store.readPrimaryResultArtifact({
-          reference: active.diagnosticsArtifact.reference as `sha256:${string}`,
-          bytes: active.diagnosticsArtifact.bytes,
-          ...(active.diagnosticsArtifact.path === undefined
-            ? {}
-            : { path: active.diagnosticsArtifact.path }),
-        });
+      const storedDiagnostics: unknown = options.store.readPrimaryResultArtifact({
+        reference: active.diagnosticsArtifact.reference as `sha256:${string}`,
+        bytes: active.diagnosticsArtifact.bytes,
+        ...(active.diagnosticsArtifact.path === undefined
+          ? {}
+          : { path: active.diagnosticsArtifact.path }),
+      });
       if (
         !Array.isArray(storedDiagnostics) ||
         !storedDiagnostics.every(
@@ -202,9 +190,7 @@ export async function runTaskSessionCiRepairs(
     } else {
       const evaluation = await options.observeChecks(headSha);
       if (evaluation.expectedHeadSha !== headSha)
-        throw new TaskSessionCiRepairError(
-          "Complete CI evaluation belongs to a different PR head",
-        );
+        throw new TaskSessionCiRepairError("Complete CI evaluation belongs to a different PR head");
       if (evaluation.status === "passed") {
         record = ownerRecord(options, record.pullRequest?.headSha);
         updateRecord(options.store, record, {
@@ -275,9 +261,7 @@ export async function runTaskSessionCiRepairs(
       const afterPrimary = options.store.read(options.cardId);
       const reservation = afterPrimary?.ciRepair?.activePrimaryOperation;
       if (!afterPrimary || reservation?.operationId !== operationId)
-        throw new TaskSessionCiRepairError(
-          "CI primary reservation changed after correction",
-        );
+        throw new TaskSessionCiRepairError("CI primary reservation changed after correction");
       const noChange =
         reservation.sourceIdentity !== undefined &&
         options.getSourceIdentity !== undefined &&
@@ -314,9 +298,7 @@ export async function runTaskSessionCiRepairs(
         !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(headSha) ||
         headSha === record.ciRepair?.headSha
       ) {
-        throw new Error(
-          "CI repair publication did not produce a new valid PR head",
-        );
+        throw new Error("CI repair publication did not produce a new valid PR head");
       }
       const latest = options.store.read(options.cardId);
       if (
@@ -344,10 +326,7 @@ export async function runTaskSessionCiRepairs(
         });
       }
       const afterCheckpoint = options.store.read(options.cardId);
-      if (
-        afterCheckpoint?.ciRepair?.activePrimaryOperation?.operationId ===
-        operationId
-      ) {
+      if (afterCheckpoint?.ciRepair?.activePrimaryOperation?.operationId === operationId) {
         record = updateRecord(options.store, afterCheckpoint, {
           ciRepair: {
             ...episode,

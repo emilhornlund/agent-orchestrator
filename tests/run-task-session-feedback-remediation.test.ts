@@ -4,10 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
-import {
-  OpenCodeClient,
-  type RunOpenCode,
-} from "../src/opencode/opencode-client.js";
+import { OpenCodeClient, type RunOpenCode } from "../src/opencode/opencode-client.js";
 import { runTaskSessionFeedbackRemediation } from "../src/task-session/run-task-session-feedback-remediation.js";
 import { FeedbackLedgerStore } from "../src/task-session/feedback-ledger-store.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
@@ -45,15 +42,9 @@ function fixture(options: { includePlan?: boolean } = {}) {
     idLabels: [],
     url: "https://trello.example/card",
   };
-  const taskRecordStore = new TaskExecutionStore(
-    path.join(root, "state"),
-    project,
-  );
+  const taskRecordStore = new TaskExecutionStore(path.join(root, "state"), project);
   const planStore = new TaskPlanStore(path.join(root, "state"), project);
-  const feedbackLedgerStore = new FeedbackLedgerStore(
-    path.join(root, "state"),
-    project,
-  );
+  const feedbackLedgerStore = new FeedbackLedgerStore(path.join(root, "state"), project);
   const expectedBranch = "agent/card";
   const operationKey = "operation";
   const expectedPrimarySessionId = "primary-session";
@@ -81,9 +72,7 @@ function fixture(options: { includePlan?: boolean } = {}) {
     version: 1,
     projectId: project.id,
     cardId: card.id,
-    requirements: [
-      { id: "REQ-1", text: "Fix feature", verification: "Test the feature" },
-    ],
+    requirements: [{ id: "REQ-1", text: "Fix feature", verification: "Test the feature" }],
     steps: [
       {
         id: "STEP-1",
@@ -123,8 +112,7 @@ function fixture(options: { includePlan?: boolean } = {}) {
     getHeadSha: vi.fn(async () => "b".repeat(40)),
     getHeadTrackedFiles: vi.fn(async () => ["source.ts"]),
     getIndexEntries: vi.fn(
-      async () =>
-        "100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\tsource.ts\0",
+      async () => "100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\tsource.ts\0",
     ),
     getUntrackedFiles: vi.fn(async () => []),
   };
@@ -166,15 +154,9 @@ describe("runTaskSessionFeedbackRemediation", () => {
     });
 
     expect(runOpenCode).toHaveBeenCalledOnce();
-    expect(runOpenCode.mock.calls[0]?.[0].prompt).toContain(
-      "No usable plan was available",
-    );
-    expect(runOpenCode.mock.calls[0]?.[0].prompt).toContain(
-      "Original task description:",
-    );
-    expect(runOpenCode.mock.calls[0]?.[0].prompt).toContain(
-      "Handle the empty case.",
-    );
+    expect(runOpenCode.mock.calls[0]?.[0].prompt).toContain("No usable plan was available");
+    expect(runOpenCode.mock.calls[0]?.[0].prompt).toContain("Original task description:");
+    expect(runOpenCode.mock.calls[0]?.[0].prompt).toContain("Handle the empty case.");
   });
 
   it("resumes the exact primary session with all pending items and preserves no-op status", async () => {
@@ -191,25 +173,17 @@ describe("runTaskSessionFeedbackRemediation", () => {
     expect(result.status).toBe("no-op");
     expect(result.remainingActionableFeedback).toBe(1);
     expect(runOpenCode.mock.calls[0]?.[0].sessionId).toBe("primary-session");
-    expect(
-      f.taskRecordStore.read("card")?.primaryOperations?.["feedback-op-1"]?.id,
-    ).toBe("feedback-op-1");
-    expect(
-      f.taskRecordStore.read("card")?.primaryOperations?.["feedback-op-1"],
-    ).toMatchObject({
+    expect(f.taskRecordStore.read("card")?.primaryOperations?.["feedback-op-1"]?.id).toBe(
+      "feedback-op-1",
+    );
+    expect(f.taskRecordStore.read("card")?.primaryOperations?.["feedback-op-1"]).toMatchObject({
       activity: "feedback-remediation",
       executions: 1,
       status: "completed",
     });
-    expect(runOpenCode.mock.calls[0]?.[0].prompt).toContain(
-      "Handle the empty case.",
-    );
-    expect(f.taskRecordStore.read("card")?.feedbackRemediation?.status).toBe(
-      "no-op",
-    );
-    expect(f.feedbackLedgerStore.read("card")?.entries[0]?.status).toBe(
-      "escalated",
-    );
+    expect(runOpenCode.mock.calls[0]?.[0].prompt).toContain("Handle the empty case.");
+    expect(f.taskRecordStore.read("card")?.feedbackRemediation?.status).toBe("no-op");
+    expect(f.feedbackLedgerStore.read("card")?.entries[0]?.status).toBe("escalated");
     const retained = f.feedbackLedgerStore.read("card")!;
     const refreshed = reconcileFeedbackRound({
       store: f.feedbackLedgerStore,
@@ -242,10 +216,7 @@ describe("runTaskSessionFeedbackRemediation", () => {
   it("detects a source edit and leaves new feedback items in the ledger", async () => {
     const f = fixture();
     const runOpenCode = vi.fn<RunOpenCode>().mockImplementation(async () => {
-      fs.writeFileSync(
-        path.join(f.base.worktreePath, "source.ts"),
-        "changed\n",
-      );
+      fs.writeFileSync(path.join(f.base.worktreePath, "source.ts"), "changed\n");
       f.feedbackLedgerStore.mergeIncoming("card", [
         {
           ...f.feedbackLedgerStore.read("card")!.entries[0]!,

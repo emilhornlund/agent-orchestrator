@@ -1,18 +1,9 @@
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
-import {
-  buildChildEnvironment,
-  type ChildProcessFamily,
-} from "./child-environment.js";
+import { buildChildEnvironment, type ChildProcessFamily } from "./child-environment.js";
 
-import {
-  appendSessionLog,
-  appendSessionSection,
-} from "../logging/session-log.js";
-import {
-  createSecretRedactor,
-  redactSecrets,
-} from "../security/redact-secrets.js";
+import { appendSessionLog, appendSessionSection } from "../logging/session-log.js";
+import { createSecretRedactor, redactSecrets } from "../security/redact-secrets.js";
 import {
   MAX_EXTERNAL_DIAGNOSTIC_LENGTH,
   presentExternalDiagnostic,
@@ -48,8 +39,7 @@ function signalProcessTree(
   try {
     process.kill(-childPid, signal);
   } catch (error) {
-    const code =
-      error instanceof Error && "code" in error ? error.code : undefined;
+    const code = error instanceof Error && "code" in error ? error.code : undefined;
 
     if (code !== "ESRCH") {
       killChild(signal);
@@ -98,9 +88,7 @@ export interface CommandRunResult {
   stdoutArtifactReference?: string;
 }
 
-export type RunCommand = (
-  options: CommandRunOptions,
-) => Promise<CommandRunResult>;
+export type RunCommand = (options: CommandRunOptions) => Promise<CommandRunResult>;
 
 export class CommandRunAbortedError extends Error {
   constructor() {
@@ -143,19 +131,14 @@ const defaultRunCommand: RunCommand = async ({
   new Promise((resolve, reject) => {
     const runtime = getProcessRuntime();
     const effectiveSignal =
-      signal === undefined ||
-      runtime.signal === undefined ||
-      signal === runtime.signal
+      signal === undefined || runtime.signal === undefined || signal === runtime.signal
         ? (signal ?? runtime.signal)
         : AbortSignal.any([signal, runtime.signal]);
     const effectiveTimeout =
       timeoutMilliseconds ??
       (getGitHubOperationProject()?.opencode.timeoutMinutes ??
         runtime.operationTimeoutMilliseconds / 60_000) * 60_000;
-    const effectiveSecretValues = [
-      ...(secretValues ?? []),
-      ...runtime.secretValues,
-    ];
+    const effectiveSecretValues = [...(secretValues ?? []), ...runtime.secretValues];
     if (effectiveSignal?.aborted) {
       reject(new CommandRunAbortedError());
       return;
@@ -174,16 +157,13 @@ const defaultRunCommand: RunCommand = async ({
     }
 
     const projectId = ProjectRunAuthority.currentProjectId();
-    const authority = projectId
-      ? ProjectRunAuthority.current(projectId)
-      : undefined;
+    const authority = projectId ? ProjectRunAuthority.current(projectId) : undefined;
     const record = authority?.store.read();
     const taskArtifactDirectory =
       record && projectId
         ? `${record.pinned.storageRoot}/artifacts/${encodeURIComponent(projectId)}/${encodeURIComponent(record.cardId)}/${encodeURIComponent(record.attemptId)}`
         : undefined;
-    const artifactDirectoryOverride =
-      artifactDirectory ?? taskArtifactDirectory;
+    const artifactDirectoryOverride = artifactDirectory ?? taskArtifactDirectory;
     const execution = beginProcessEvidence(
       command,
       cwd,
@@ -234,9 +214,7 @@ const defaultRunCommand: RunCommand = async ({
         return appendBoundedOutput(current ?? "", text, stream, limit);
       } catch (error) {
         captureFailure =
-          error instanceof Error
-            ? error
-            : new ProcessOutputLimitError(stream, limit);
+          error instanceof Error ? error : new ProcessOutputLimitError(stream, limit);
         terminate();
         return current;
       }
@@ -258,8 +236,7 @@ const defaultRunCommand: RunCommand = async ({
         try {
           appendSessionLog(sessionLogPath, text);
         } catch (error) {
-          captureFailure =
-            error instanceof Error ? error : new Error(String(error));
+          captureFailure = error instanceof Error ? error : new Error(String(error));
           terminate();
         }
       } else if (suppressOutput === true) {
@@ -275,21 +252,15 @@ const defaultRunCommand: RunCommand = async ({
       }
 
       outputFlushed = true;
-      const stdout =
-        stdoutRedactor.push(stdoutDecoder.end()) + stdoutRedactor.flush();
-      const stderr =
-        stderrRedactor.push(stderrDecoder.end()) + stderrRedactor.flush();
+      const stdout = stdoutRedactor.push(stdoutDecoder.end()) + stdoutRedactor.flush();
+      const stderr = stderrRedactor.push(stderrDecoder.end()) + stderrRedactor.flush();
       writeOutput(stdout, process.stdout);
       writeOutput(stderr, process.stderr);
       capturedOutput = capture(stdout, capturedOutput, "stdout");
       capturedErrorOutput = capture(stderr, capturedErrorOutput, "stderr");
     }
 
-    function settle(
-      status: string,
-      exitCode?: number,
-      signalName?: NodeJS.Signals,
-    ): void {
+    function settle(status: string, exitCode?: number, signalName?: NodeJS.Signals): void {
       settled = true;
 
       if (timeout !== undefined) {
@@ -303,9 +274,7 @@ const defaultRunCommand: RunCommand = async ({
       effectiveSignal?.removeEventListener("abort", handleAbort);
       try {
         execution.finish(
-          (captureFailure ?? execution.failure) !== undefined
-            ? "evidence-failure"
-            : status,
+          (captureFailure ?? execution.failure) !== undefined ? "evidence-failure" : status,
           {
             pid: child.pid,
             ...(exitCode === undefined ? {} : { exitCode }),
@@ -341,9 +310,7 @@ const defaultRunCommand: RunCommand = async ({
             flushOutput();
             settle(timedOut ? "timeout" : "interrupted");
             reject(
-              timedOut
-                ? new CommandTimeoutError(effectiveTimeout)
-                : new CommandRunAbortedError(),
+              timedOut ? new CommandTimeoutError(effectiveTimeout) : new CommandRunAbortedError(),
             );
           } catch (error) {
             if (settled) return;
@@ -412,9 +379,7 @@ const defaultRunCommand: RunCommand = async ({
       }
 
       try {
-        await drainProcessGroup(child.pid, (signalName) =>
-          child.kill(signalName),
-        );
+        await drainProcessGroup(child.pid, (signalName) => child.kill(signalName));
       } catch (error) {
         if (settled) return;
         flushOutput();
@@ -504,9 +469,7 @@ const defaultRunCommand: RunCommand = async ({
       captureFailure =
         error instanceof Error
           ? error
-          : new ProcessEvidenceError(
-              "Could not persist child process identity",
-            );
+          : new ProcessEvidenceError("Could not persist child process identity");
       terminate();
     }
   });
@@ -524,18 +487,13 @@ export class CommandRunner {
         ? options
         : { ...options, signal: lifecycleSignal };
     const projectId = ProjectRunAuthority.currentProjectId();
-    const authority =
-      projectId === undefined
-        ? undefined
-        : ProjectRunAuthority.current(projectId);
+    const authority = projectId === undefined ? undefined : ProjectRunAuthority.current(projectId);
     return withTaskExecutionActivity(authority, async () => {
       assertNoTerminalPr(authority, true);
       const result =
         projectId === undefined
           ? await this.runCommand(effectiveOptions)
-          : await ProjectRunAuthority.dispatch(projectId, () =>
-              this.runCommand(effectiveOptions),
-            );
+          : await ProjectRunAuthority.dispatch(projectId, () => this.runCommand(effectiveOptions));
       assertNoTerminalPr(authority);
       return result;
     });

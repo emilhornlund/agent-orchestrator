@@ -2,10 +2,7 @@ import { createHash } from "node:crypto";
 import type { TaskExecutionRecord } from "./task-execution-record.js";
 
 /** A verified human retry can reuse a head, but not a completed queue identity. */
-export function ciRepairEventId(
-  record: TaskExecutionRecord,
-  headSha: string,
-): string {
+export function ciRepairEventId(record: TaskExecutionRecord, headSha: string): string {
   const legacy = `ci-repair:${record.cardId}:${headSha}`;
   const trigger =
     record.ciRepair !== undefined

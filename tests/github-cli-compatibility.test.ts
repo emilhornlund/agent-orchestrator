@@ -18,14 +18,10 @@ function helpOutput(): string {
   ).join(" ");
 }
 
-function supportedRun(): ReturnType<
-  typeof vi.fn<RunGitHubCliCompatibilityCommand>
-> {
+function supportedRun(): ReturnType<typeof vi.fn<RunGitHubCliCompatibilityCommand>> {
   return vi
     .fn<RunGitHubCliCompatibilityCommand>()
-    .mockResolvedValueOnce(
-      "gh version 2.40.0 (2026-01-01)\nhttps://github.com/cli/cli",
-    )
+    .mockResolvedValueOnce("gh version 2.40.0 (2026-01-01)\nhttps://github.com/cli/cli")
     .mockImplementationOnce(async () => helpOutput())
     .mockImplementationOnce(async () => helpOutput())
     .mockImplementationOnce(async () => helpOutput())
@@ -36,28 +32,18 @@ function supportedRun(): ReturnType<
 describe("validateGitHubCliCompatibility", () => {
   it("accepts a supported gh version and all required capabilities", async () => {
     expect(
-      GITHUB_CLI_COMMAND_CAPABILITIES.some((capability) =>
-        capability.name.includes("pr merge"),
-      ),
+      GITHUB_CLI_COMMAND_CAPABILITIES.some((capability) => capability.name.includes("pr merge")),
     ).toBe(false);
     const run = supportedRun();
 
-    await expect(validateGitHubCliCompatibility(run, [])).resolves.toBe(
-      undefined,
-    );
-    expect(run).toHaveBeenCalledTimes(
-      1 + GITHUB_CLI_COMMAND_CAPABILITIES.length,
-    );
+    await expect(validateGitHubCliCompatibility(run, [])).resolves.toBe(undefined);
+    expect(run).toHaveBeenCalledTimes(1 + GITHUB_CLI_COMMAND_CAPABILITIES.length);
   });
 
   it("rejects a too-old gh version before checking commands", async () => {
-    const run = vi
-      .fn<RunGitHubCliCompatibilityCommand>()
-      .mockResolvedValue("gh version 2.39.0");
+    const run = vi.fn<RunGitHubCliCompatibilityCommand>().mockResolvedValue("gh version 2.39.0");
 
-    await expect(
-      validateGitHubCliCompatibility(run, [project]),
-    ).rejects.toThrow(
+    await expect(validateGitHubCliCompatibility(run, [project])).rejects.toThrow(
       new GitHubCliCompatibilityError(
         "installed gh version 2.39.0 is unsupported; Agent Orchestrator requires gh 2.40.0 or newer",
       ),
@@ -70,9 +56,7 @@ describe("validateGitHubCliCompatibility", () => {
       .fn<RunGitHubCliCompatibilityCommand>()
       .mockResolvedValue("GitHub CLI is installed");
 
-    await expect(
-      validateGitHubCliCompatibility(run, [project]),
-    ).rejects.toThrow(
+    await expect(validateGitHubCliCompatibility(run, [project])).rejects.toThrow(
       'gh --version returned malformed output; expected a line like "gh version 2.40.0"',
     );
     expect(run).toHaveBeenCalledTimes(1);
@@ -83,9 +67,9 @@ describe("validateGitHubCliCompatibility", () => {
       .fn<RunGitHubCliCompatibilityCommand>()
       .mockRejectedValue(new Error("spawn gh ENOENT"));
 
-    await expect(
-      validateGitHubCliCompatibility(run, [project]),
-    ).rejects.toThrow("gh version output is unavailable: spawn gh ENOENT");
+    await expect(validateGitHubCliCompatibility(run, [project])).rejects.toThrow(
+      "gh version output is unavailable: spawn gh ENOENT",
+    );
     expect(run).toHaveBeenCalledTimes(1);
   });
 
@@ -98,18 +82,14 @@ describe("validateGitHubCliCompatibility", () => {
       .mockResolvedValueOnce("")
       .mockResolvedValueOnce("");
 
-    await expect(
-      validateGitHubCliCompatibility(run, [project]),
-    ).rejects.toThrow("gh pr list is missing required options");
+    await expect(validateGitHubCliCompatibility(run, [project])).rejects.toThrow(
+      "gh pr list is missing required options",
+    );
   });
 
   it("does not probe repository authentication while checking executable compatibility", async () => {
     const run = supportedRun();
-    await expect(validateGitHubCliCompatibility(run, [project])).resolves.toBe(
-      undefined,
-    );
-    expect(run.mock.calls.some((call) => call[0].includes("--repo"))).toBe(
-      false,
-    );
+    await expect(validateGitHubCliCompatibility(run, [project])).resolves.toBe(undefined);
+    expect(run.mock.calls.some((call) => call[0].includes("--repo"))).toBe(false);
   });
 });

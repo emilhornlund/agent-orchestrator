@@ -27,12 +27,7 @@ function queueFor(projectId: string) {
   fs.mkdirSync(project.repository.worktreeRoot, { recursive: true });
   return new TaskMutationQueue(path.join(workspace, "state"), project);
 }
-const task = (
-  projectId: string,
-  eventId: string,
-  cardId: string,
-  enqueuedAt: string,
-) => ({
+const task = (projectId: string, eventId: string, cardId: string, enqueuedAt: string) => ({
   projectId,
   eventId,
   cardId,
@@ -60,9 +55,7 @@ describe("TaskMutationQueue", () => {
       ...task("project-a", "ci", "card", "2026-10-24T09:01:00.000Z"),
       kind: "ci-repair",
     });
-    queue.enqueue(
-      task("project-a", "human", "card", "2026-10-24T09:02:00.000Z"),
-    );
+    queue.enqueue(task("project-a", "human", "card", "2026-10-24T09:02:00.000Z"));
     const restarted = queueFor("project-a");
     expect(restarted.claimForRecovery("maintenance")).toBeNull();
     expect(restarted.claimForRecovery("ci")).toBeNull();
@@ -98,9 +91,7 @@ describe("TaskMutationQueue", () => {
 
   it("preserves descriptors when invalid prerequisites or unsafe retirement are refused", () => {
     const queue = queueFor("project-a");
-    queue.enqueue(
-      task("project-a", "human", "card", "2026-10-24T09:00:00.000Z"),
-    );
+    queue.enqueue(task("project-a", "human", "card", "2026-10-24T09:00:00.000Z"));
     expect(() =>
       queue.enqueue({
         ...task("project-a", "invalid", "card", "2026-10-24T09:01:00.000Z"),
@@ -109,9 +100,7 @@ describe("TaskMutationQueue", () => {
     ).toThrow();
     expect(queue.list()).toHaveLength(1);
     queue.claimNext();
-    expect(() => queue.retireSupersededObservation("human")).toThrow(
-      "never-started",
-    );
+    expect(() => queue.retireSupersededObservation("human")).toThrow("never-started");
     queue.complete("human");
     queue.enqueue({
       ...task("project-a", "old-ci", "card", "2026-10-24T09:02:00.000Z"),
@@ -126,16 +115,10 @@ describe("TaskMutationQueue", () => {
 
   it("deduplicates events and claims at most one deterministic project mutation", () => {
     const queue = queueFor("project-a");
-    queue.enqueue(
-      task("project-a", "later", "card-b", "2026-10-24T09:02:00.000Z"),
-    );
-    queue.enqueue(
-      task("project-a", "earlier", "card-a", "2026-10-24T09:01:00.000Z"),
-    );
+    queue.enqueue(task("project-a", "later", "card-b", "2026-10-24T09:02:00.000Z"));
+    queue.enqueue(task("project-a", "earlier", "card-a", "2026-10-24T09:01:00.000Z"));
     expect(
-      queue.enqueue(
-        task("project-a", "earlier", "card-a", "2026-10-24T09:03:00.000Z"),
-      ).status,
+      queue.enqueue(task("project-a", "earlier", "card-a", "2026-10-24T09:03:00.000Z")).status,
     ).toBe("queued");
     expect(queue.claimNext()?.eventId).toBe("earlier");
     expect(queue.claimNext()).toBeNull();
@@ -145,33 +128,23 @@ describe("TaskMutationQueue", () => {
 
   it("persists active ownership across restart and does not silently release failures", () => {
     const queue = queueFor("project-a");
-    queue.enqueue(
-      task("project-a", "one", "card-one", "2026-10-24T09:00:00.000Z"),
-    );
-    queue.enqueue(
-      task("project-a", "two", "card-two", "2026-10-24T09:01:00.000Z"),
-    );
+    queue.enqueue(task("project-a", "one", "card-one", "2026-10-24T09:00:00.000Z"));
+    queue.enqueue(task("project-a", "two", "card-two", "2026-10-24T09:01:00.000Z"));
     queue.claimNext();
     queue.fail("one");
     const restarted = queueFor("project-a");
     expect(restarted.getActive()?.eventId).toBe("one");
     expect(restarted.claimNext()).toBeNull();
-    expect(() => restarted.complete("two")).toThrow(
-      TaskMutationQueueConflictError,
-    );
+    expect(() => restarted.complete("two")).toThrow(TaskMutationQueueConflictError);
     restarted.requeueAfterVerifiedRecovery("one");
     expect(restarted.claimNext()?.eventId).toBe("one");
   });
 
   it("reclaims the verified recovery event ahead of queued work", () => {
     const queue = queueFor("project-a");
-    queue.enqueue(
-      task("project-a", "first", "card-one", "2026-10-24T09:01:00.000Z"),
-    );
+    queue.enqueue(task("project-a", "first", "card-one", "2026-10-24T09:01:00.000Z"));
     queue.claimNext();
-    queue.enqueue(
-      task("project-a", "second", "card-two", "2026-10-24T09:00:00.000Z"),
-    );
+    queue.enqueue(task("project-a", "second", "card-two", "2026-10-24T09:00:00.000Z"));
     queue.fail("first");
 
     const restarted = queueFor("project-a");
@@ -188,12 +161,7 @@ describe("TaskMutationQueue", () => {
   it("reclaims a released completed-task owner from a fresh queue instance", () => {
     const queue = queueFor("project-a");
     queue.enqueue(
-      task(
-        "project-a",
-        "complete-after-restart",
-        "card-one",
-        "2026-10-24T09:00:00.000Z",
-      ),
+      task("project-a", "complete-after-restart", "card-one", "2026-10-24T09:00:00.000Z"),
     );
     queue.claimNext();
     queue.releaseForRecovery("complete-after-restart");
@@ -210,12 +178,8 @@ describe("TaskMutationQueue", () => {
 
   it("does not steal a different active event during restart recovery", () => {
     const queue = queueFor("project-a");
-    queue.enqueue(
-      task("project-a", "first", "card-one", "2026-10-24T09:00:00.000Z"),
-    );
-    queue.enqueue(
-      task("project-a", "second", "card-two", "2026-10-24T09:01:00.000Z"),
-    );
+    queue.enqueue(task("project-a", "first", "card-one", "2026-10-24T09:00:00.000Z"));
+    queue.enqueue(task("project-a", "second", "card-two", "2026-10-24T09:01:00.000Z"));
     queue.claimNext();
 
     expect(queue.claimForRecovery("second")).toBeNull();
@@ -224,32 +188,21 @@ describe("TaskMutationQueue", () => {
 
   it("prevents a second polling owner from resuming the same active mutation", () => {
     const owner = queueFor("project-a");
-    owner.enqueue(
-      task("project-a", "active", "card-one", "2026-10-24T09:00:00.000Z"),
-    );
+    owner.enqueue(task("project-a", "active", "card-one", "2026-10-24T09:00:00.000Z"));
     expect(owner.claimNext()?.status).toBe("active");
     expect(owner.ownsActive("active")).toBe(true);
 
     const contender = queueFor("project-a");
     expect(contender.claimForRecovery("active")).toBeNull();
     expect(contender.ownsActive("active")).toBe(false);
-    expect(() => contender.fail("active")).toThrow(
-      TaskMutationQueueConflictError,
-    );
+    expect(() => contender.fail("active")).toThrow(TaskMutationQueueConflictError);
     expect(owner.getActive()?.status).toBe("active");
   });
 
   it("reclaims a persisted active event only after its process owner is gone", () => {
     const queue = queueFor("project-a");
-    queue.enqueue(
-      task("project-a", "orphaned", "card-one", "2026-10-24T09:00:00.000Z"),
-    );
-    const statePath = path.join(
-      root!,
-      "state",
-      "task-mutation-queues",
-      "project-a.json",
-    );
+    queue.enqueue(task("project-a", "orphaned", "card-one", "2026-10-24T09:00:00.000Z"));
+    const statePath = path.join(root!, "state", "task-mutation-queues", "project-a.json");
     const persisted = JSON.parse(fs.readFileSync(statePath, "utf8")) as {
       activeEventId: string | null;
       events: Array<{
@@ -275,17 +228,10 @@ describe("TaskMutationQueue", () => {
 
   it("reclaims a stale owner whose PID was reused by the restarted process", () => {
     const original = queueFor("project-a");
-    original.enqueue(
-      task("project-a", "reused-pid", "card-one", "2026-10-24T09:00:00.000Z"),
-    );
+    original.enqueue(task("project-a", "reused-pid", "card-one", "2026-10-24T09:00:00.000Z"));
     original.claimNext();
 
-    const statePath = path.join(
-      root!,
-      "state",
-      "task-mutation-queues",
-      "project-a.json",
-    );
+    const statePath = path.join(root!, "state", "task-mutation-queues", "project-a.json");
     const persisted = JSON.parse(fs.readFileSync(statePath, "utf8")) as {
       events: Array<{
         ownerToken?: string;
@@ -311,18 +257,12 @@ describe("TaskMutationQueue", () => {
   it("keeps independent project queues isolated and rejects reused event identities", () => {
     const first = queueFor("project-a");
     const second = queueFor("project-b");
-    first.enqueue(
-      task("project-a", "same", "card-a", "2026-10-24T09:00:00.000Z"),
-    );
-    second.enqueue(
-      task("project-b", "same", "card-b", "2026-10-24T09:00:00.000Z"),
-    );
+    first.enqueue(task("project-a", "same", "card-a", "2026-10-24T09:00:00.000Z"));
+    second.enqueue(task("project-b", "same", "card-b", "2026-10-24T09:00:00.000Z"));
     expect(first.claimNext()?.cardId).toBe("card-a");
     expect(second.claimNext()?.cardId).toBe("card-b");
     expect(() =>
-      first.enqueue(
-        task("project-a", "same", "other-card", "2026-10-24T09:00:00.000Z"),
-      ),
+      first.enqueue(task("project-a", "same", "other-card", "2026-10-24T09:00:00.000Z")),
     ).toThrow("reused");
   });
 
@@ -337,12 +277,7 @@ describe("TaskMutationQueue", () => {
     expect(queue.retireOrphanedReadyEvent("stale").status).toBe("retired");
     expect(queue.getActive()).toBeNull();
     queue.enqueue({
-      ...task(
-        "project-a",
-        "terminal",
-        "merged-card",
-        "2026-10-24T09:01:00.000Z",
-      ),
+      ...task("project-a", "terminal", "merged-card", "2026-10-24T09:01:00.000Z"),
       kind: "terminal-pr",
     });
     expect(queue.claimForRecovery("terminal")?.eventId).toBe("terminal");
@@ -352,31 +287,19 @@ describe("TaskMutationQueue", () => {
   it("retires queued orphan events without disturbing another active owner", () => {
     const queue = queueFor("project-a");
     queue.enqueue({
-      ...task(
-        "project-a",
-        "current",
-        "current-card",
-        "2026-10-24T09:00:00.000Z",
-      ),
+      ...task("project-a", "current", "current-card", "2026-10-24T09:00:00.000Z"),
       kind: "implementation",
     });
     queue.claimNext();
     queue.enqueue({
-      ...task(
-        "project-a",
-        "orphan",
-        "removed-card",
-        "2026-10-24T09:01:00.000Z",
-      ),
+      ...task("project-a", "orphan", "removed-card", "2026-10-24T09:01:00.000Z"),
       kind: "implementation",
     });
     expect(queue.retireOrphanedReadyEvent("orphan").status).toBe("retired");
     expect(queue.getActive()?.eventId).toBe("current");
     expect(() => queue.retireOrphanedReadyEvent("current")).not.toThrow();
     expect(queue.getActive()).toBeNull();
-    expect(() => queue.retireOrphanedReadyEvent("orphan")).toThrow(
-      TaskMutationQueueConflictError,
-    );
+    expect(() => queue.retireOrphanedReadyEvent("orphan")).toThrow(TaskMutationQueueConflictError);
   });
 
   it("does not retire failed mutations requiring explicit recovery", () => {
@@ -387,9 +310,7 @@ describe("TaskMutationQueue", () => {
     });
     queue.claimNext();
     queue.fail("failed");
-    expect(() => queue.retireOrphanedReadyEvent("failed")).toThrow(
-      TaskMutationQueueConflictError,
-    );
+    expect(() => queue.retireOrphanedReadyEvent("failed")).toThrow(TaskMutationQueueConflictError);
     expect(queue.getActive()?.eventId).toBe("failed");
   });
 
@@ -402,13 +323,9 @@ describe("TaskMutationQueue", () => {
     queue.retireOrphanedReadyEvent("retire-me");
 
     const restarted = queueFor("project-a");
-    expect(restarted.list()).toMatchObject([
-      { eventId: "retire-me", status: "retired" },
-    ]);
+    expect(restarted.list()).toMatchObject([{ eventId: "retire-me", status: "retired" }]);
     expect(restarted.claimNext()).toBeNull();
-    expect(() => restarted.complete("retire-me")).toThrow(
-      TaskMutationQueueConflictError,
-    );
+    expect(() => restarted.complete("retire-me")).toThrow(TaskMutationQueueConflictError);
   });
 
   it("preserves legacy completed production identities without assuming retirement", () => {
@@ -421,41 +338,28 @@ describe("TaskMutationQueue", () => {
         eventId,
         operationKey: `task-session:${cardId}:${eventId.split(":")[2]}`,
         kind: "implementation",
-        enqueuedAt: new Date(
-          Date.parse("2026-10-27T00:00:00.000Z") + index,
-        ).toISOString(),
+        enqueuedAt: new Date(Date.parse("2026-10-27T00:00:00.000Z") + index).toISOString(),
       });
       queue.claimNext();
       queue.complete(eventId);
     }
     const restarted = queueFor("project-a");
-    expect(restarted.list().map((event) => event.eventId)).toEqual(
-      legacyProductionRetirements,
-    );
-    expect(
-      restarted.list().every((event) => event.status === "completed"),
-    ).toBe(true);
+    expect(restarted.list().map((event) => event.eventId)).toEqual(legacyProductionRetirements);
+    expect(restarted.list().every((event) => event.status === "completed")).toBe(true);
   });
 
   it("requires an explicit attestation and an unowned queue to recover legacy completion", () => {
     const queue = queueFor("project-a");
     queue.enqueue({
-      ...task(
-        "project-a",
-        "legacy-completed",
-        "card-one",
-        "2026-10-24T09:00:00.000Z",
-      ),
+      ...task("project-a", "legacy-completed", "card-one", "2026-10-24T09:00:00.000Z"),
       kind: "implementation",
     });
     queue.claimNext();
     queue.complete("legacy-completed");
-    expect(() =>
-      queue.retireLegacyCompletedEvent("legacy-completed", false),
-    ).toThrow(TaskMutationQueueConflictError);
-    expect(
-      queue.retireLegacyCompletedEvent("legacy-completed", true),
-    ).toMatchObject({
+    expect(() => queue.retireLegacyCompletedEvent("legacy-completed", false)).toThrow(
+      TaskMutationQueueConflictError,
+    );
+    expect(queue.retireLegacyCompletedEvent("legacy-completed", true)).toMatchObject({
       status: "retired",
       retirementReason: "operator-confirmed-never-started",
     });

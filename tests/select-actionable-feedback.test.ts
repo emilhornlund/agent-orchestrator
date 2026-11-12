@@ -6,9 +6,7 @@ import type {
 import { selectActionableFeedback } from "../src/task-session/select-actionable-feedback.js";
 
 const head = "a".repeat(40);
-const review = (
-  overrides: Partial<PullRequestReview> = {},
-): PullRequestReview => ({
+const review = (overrides: Partial<PullRequestReview> = {}): PullRequestReview => ({
   id: 10,
   body: "Please fix the current implementation.",
   author: "reviewer",
@@ -41,10 +39,7 @@ const review = (
   ],
   ...overrides,
 });
-const conversation = (
-  id: number,
-  author = "reviewer",
-): PullRequestConversationComment => ({
+const conversation = (id: number, author = "reviewer"): PullRequestConversationComment => ({
   id,
   author,
   createdAt: "2026-10-24T09:00:00.000Z",
@@ -60,10 +55,7 @@ describe("selectActionableFeedback", () => {
       reviews: [review()],
       conversationComments: [],
     });
-    expect(selection.actionable.map(({ key }) => key)).toEqual([
-      "review:10",
-      "inline-comment:100",
-    ]);
+    expect(selection.actionable.map(({ key }) => key)).toEqual(["review:10", "inline-comment:100"]);
     expect(selection.actionable[1]).toMatchObject({
       reviewId: "10",
       threadId: "thread-1",
@@ -95,9 +87,7 @@ describe("selectActionableFeedback", () => {
       reviews: [carried, stale],
       conversationComments: [],
     });
-    expect(result.actionable.map(({ key }) => key)).toEqual([
-      "inline-comment:110",
-    ]);
+    expect(result.actionable.map(({ key }) => key)).toEqual(["inline-comment:110"]);
     expect(result.attentionNeeded).toHaveLength(2);
   });
 
@@ -106,16 +96,10 @@ describe("selectActionableFeedback", () => {
       currentHeadSha: head,
       botAuthor: "agent[bot]",
       reviews: [],
-      conversationComments: [
-        conversation(1),
-        conversation(2, "agent[bot]"),
-        conversation(3),
-      ],
+      conversationComments: [conversation(1), conversation(2, "agent[bot]"), conversation(3)],
       conversationClassifications: { "conversation-comment:3": "actionable" },
     });
-    expect(result.actionable.map(({ key }) => key)).toEqual([
-      "conversation-comment:3",
-    ]);
+    expect(result.actionable.map(({ key }) => key)).toEqual(["conversation-comment:3"]);
     expect(result.discussion.map(({ id }) => id)).toEqual([1]);
     expect(result.attentionNeeded.map(({ feedbackId }) => feedbackId)).toEqual([
       "conversation-comment:1",

@@ -24,10 +24,7 @@ await outbox.drain(
   {
     send: async (message) => {
       if (barrier === "dispatch") await stop();
-      fs.appendFileSync(
-        path.join(root, "sink.jsonl"),
-        `${JSON.stringify(message)}\n`,
-      );
+      fs.appendFileSync(path.join(root, "sink.jsonl"), `${JSON.stringify(message)}\n`);
       if (barrier === "acceptance" || barrier === "response") await stop();
     },
   },

@@ -11,9 +11,7 @@ const millisecondsPerDay = 24 * 60 * 60 * 1_000;
 
 describe("run history and retention survive process restart", () => {
   it("reconstructs transitions independently and retains active Human Review evidence", () => {
-    const root = fs.mkdtempSync(
-      path.join(os.tmpdir(), "process-history-restart-"),
-    );
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "process-history-restart-"));
     try {
       const runtimeRoot = path.join(root, "runtime");
       const activeLog = path.join(
@@ -261,17 +259,13 @@ describe("run history and retention survive process restart", () => {
         activeLogExists: true,
         expiredLogExists: false,
       });
-      expect(afterRestart.loggerFilesBeforeRetention).toContain(
-        path.basename(loggerFile),
-      );
+      expect(afterRestart.loggerFilesBeforeRetention).toContain(path.basename(loggerFile));
       expect(afterRestart.loggerFileExistsAfterRetention).toBe(true);
+      expect(afterRestart.resourceReferences.map((reference) => reference.path)).toContain(
+        activeLog,
+      );
       expect(
-        afterRestart.resourceReferences.map((reference) => reference.path),
-      ).toContain(activeLog);
-      expect(
-        afterRestart.timeline
-          .map((event) => event.transition ?? event.kind)
-          .filter(Boolean),
+        afterRestart.timeline.map((event) => event.transition ?? event.kind).filter(Boolean),
       ).toEqual([
         "attempt-created",
         "claim",
@@ -286,29 +280,20 @@ describe("run history and retention survive process restart", () => {
           .map((event) => event.revision)
           .filter((revision) => revision !== undefined),
       ).toEqual([1, 2, 3, 4, 5, 6, 7]);
-      for (const event of afterRestart.timeline.filter(
-        (entry) => entry.attemptId !== undefined,
-      )) {
+      for (const event of afterRestart.timeline.filter((entry) => entry.attemptId !== undefined)) {
         expect(event.attemptId).toBe("attempt-history-restart");
         expect(Date.parse(event.timestamp)).not.toBeNaN();
         expect(Date.parse(event.startedAt)).not.toBeNaN();
         expect(event.elapsedMilliseconds).toBeGreaterThanOrEqual(0);
       }
-      const loggerFiles = fs.readdirSync(
-        path.join(runtimeRoot, "orchestrator-logs"),
-      );
+      const loggerFiles = fs.readdirSync(path.join(runtimeRoot, "orchestrator-logs"));
       expect(loggerFiles).toContain(path.basename(loggerFile));
       expect(
-        fs.readFileSync(
-          path.join(runtimeRoot, "orchestrator-logs", loggerFiles[0]!),
-          "utf8",
-        ),
+        fs.readFileSync(path.join(runtimeRoot, "orchestrator-logs", loggerFiles[0]!), "utf8"),
       ).toContain("restart recovery inspected active Human Review state");
-      expect(
-        afterRestart.timeline.filter(
-          (event) => event.type === "workflow-diagnostic",
-        ),
-      ).toEqual([]);
+      expect(afterRestart.timeline.filter((event) => event.type === "workflow-diagnostic")).toEqual(
+        [],
+      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

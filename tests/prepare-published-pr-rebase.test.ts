@@ -93,15 +93,11 @@ describe("published history protection (real Git repository)", () => {
     ).rejects.toThrow("Force-with-lease pushes are disabled");
 
     expect(history).toHaveLength(commandsBefore);
-    expect(history.flat().join(" ")).not.toMatch(
-      /(?:rebase|reset|clean|--force)/,
-    );
+    expect(history.flat().join(" ")).not.toMatch(/(?:rebase|reset|clean|--force)/);
     expect(git(source, "show-ref")).toBe(refsBefore);
     expect(git(source, "count-objects", "-v")).toBe(objectsBefore);
     expect(git(worktree, "status", "--porcelain=v1")).toBe(statusBefore);
     expect(git(worktree, "rev-parse", "HEAD")).toBe(taskHead);
-    expect(fs.readFileSync(path.join(worktree, "unshipped.txt"), "utf8")).toBe(
-      "keep me\n",
-    );
+    expect(fs.readFileSync(path.join(worktree, "unshipped.txt"), "utf8")).toBe("keep me\n");
   });
 });

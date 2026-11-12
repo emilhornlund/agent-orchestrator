@@ -56,54 +56,43 @@ function write(authority: ProjectRunAuthority, value: CapacityRecord): void {
   );
 }
 
-function stopped(
-  authority: ProjectRunAuthority,
-  record: CapacityRecord,
-): boolean {
+function stopped(authority: ProjectRunAuthority, record: CapacityRecord): boolean {
   // Dispatch binds every nested execution before spawning. No binding is durable
   // evidence of no dispatch through this capacity reservation, not PID absence.
-  return (record.executions ?? []).every(
-    ({ executionId, metadataPath, cwd, command }) => {
-      const root = path.resolve(authority.store.storageRoot);
-      const relative = path.relative(root, metadataPath);
-      if (
-        path.isAbsolute(relative) ||
-        relative === ".." ||
-        relative.startsWith(`..${path.sep}`)
-      )
-        return false;
-      try {
-        let current = root;
-        if (fs.realpathSync(root) !== root) return false;
-        for (const part of relative.split(path.sep)) {
-          current = path.join(current, part);
-          if (fs.lstatSync(current).isSymbolicLink()) return false;
-        }
-        const stat = fs.lstatSync(metadataPath);
-        if (!stat.isFile() || stat.size > 64 * 1024) return false;
-        const evidence: unknown = JSON.parse(
-          fs.readFileSync(metadataPath, "utf8"),
-        );
-        const expected = { executionId, cwd, command };
-        return (
-          isVerifiedStoppedExecution(evidence, expected) ||
-          isVerifiedSuccessfulExecution(evidence, expected) ||
-          (typeof evidence === "object" &&
-            evidence !== null &&
-            "executionId" in evidence &&
-            evidence.executionId === executionId &&
-            "status" in evidence &&
-            evidence.status === "not-dispatched" &&
-            "cwd" in evidence &&
-            evidence.cwd === cwd &&
-            "command" in evidence &&
-            evidence.command === command)
-        );
-      } catch {
-        return false;
+  return (record.executions ?? []).every(({ executionId, metadataPath, cwd, command }) => {
+    const root = path.resolve(authority.store.storageRoot);
+    const relative = path.relative(root, metadataPath);
+    if (path.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${path.sep}`))
+      return false;
+    try {
+      let current = root;
+      if (fs.realpathSync(root) !== root) return false;
+      for (const part of relative.split(path.sep)) {
+        current = path.join(current, part);
+        if (fs.lstatSync(current).isSymbolicLink()) return false;
       }
-    },
-  );
+      const stat = fs.lstatSync(metadataPath);
+      if (!stat.isFile() || stat.size > 64 * 1024) return false;
+      const evidence: unknown = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
+      const expected = { executionId, cwd, command };
+      return (
+        isVerifiedStoppedExecution(evidence, expected) ||
+        isVerifiedSuccessfulExecution(evidence, expected) ||
+        (typeof evidence === "object" &&
+          evidence !== null &&
+          "executionId" in evidence &&
+          evidence.executionId === executionId &&
+          "status" in evidence &&
+          evidence.status === "not-dispatched" &&
+          "cwd" in evidence &&
+          evidence.cwd === cwd &&
+          "command" in evidence &&
+          evidence.command === command)
+      );
+    } catch {
+      return false;
+    }
+  });
 }
 
 interface Waiter {
@@ -154,10 +143,7 @@ export class AiExecutionCapacity {
     }
   }
 
-  async runInScope<T>(
-    signal: AbortSignal,
-    operation: () => Promise<T>,
-  ): Promise<T> {
+  async runInScope<T>(signal: AbortSignal, operation: () => Promise<T>): Promise<T> {
     const timer = setInterval(() => {
       if (!signal.aborted) this.pump();
     }, this.recheckMs);
@@ -176,8 +162,7 @@ export class AiExecutionCapacity {
   ): Promise<T> {
     const attemptId = authority.attemptScopeKey;
     this.known.set(attemptId, authority);
-    if (signal.aborted || shutdown.aborted)
-      throw new AiCapacityCancelledError();
+    if (signal.aborted || shutdown.aborted) throw new AiCapacityCancelledError();
     const nested = held.getStore();
     if (
       nested?.capacity === this &&
@@ -247,8 +232,7 @@ export class AiExecutionCapacity {
       this.pump();
     });
     try {
-      if (signal.aborted || shutdown.aborted)
-        throw new AiCapacityCancelledError();
+      if (signal.aborted || shutdown.aborted) throw new AiCapacityCancelledError();
       return await held.run(
         { capacity: this, attemptId, token: this.liveTokens.get(attemptId)! },
         operation,
@@ -274,14 +258,8 @@ export class AiExecutionCapacity {
     command: string,
   ): void {
     const record = read(authority);
-    if (
-      !record ||
-      record.state !== "active" ||
-      !this.active.has(authority.attemptScopeKey)
-    )
-      throw new Error(
-        "AI process cannot dispatch without its project execution slot",
-      );
+    if (!record || record.state !== "active" || !this.active.has(authority.attemptScopeKey))
+      throw new Error("AI process cannot dispatch without its project execution slot");
     write(authority, {
       ...record,
       executions: [
@@ -332,9 +310,7 @@ export class AiExecutionCapacity {
           (a, b) =>
             a.record.sequence - b.record.sequence ||
             a.record.requestedAt.localeCompare(b.record.requestedAt) ||
-            a.authority.attemptScopeKey.localeCompare(
-              b.authority.attemptScopeKey,
-            ),
+            a.authority.attemptScopeKey.localeCompare(b.authority.attemptScopeKey),
         );
       const first = candidates[0];
       if (!first) return;
@@ -352,11 +328,7 @@ export class AiExecutionCapacity {
         this.liveTokens.set(next.authority.attemptScopeKey, Symbol("ai-slot"));
         next.resolve();
       } catch (error) {
-        next.reject(
-          error instanceof Error
-            ? error
-            : new Error("AI capacity ownership changed"),
-        );
+        next.reject(error instanceof Error ? error : new Error("AI capacity ownership changed"));
       }
     }
   }
@@ -369,17 +341,9 @@ export async function withAiExecutionCapacity<T>(
   const current = scope.getStore();
   if (!current) return operation();
   const projectId = ProjectRunAuthority.currentProjectId();
-  const authority = projectId
-    ? ProjectRunAuthority.current(projectId)
-    : undefined;
-  if (!authority)
-    throw new Error("Configured AI capacity requires canonical task ownership");
-  return current.capacity.run(
-    authority,
-    signal ?? current.signal,
-    current.signal,
-    operation,
-  );
+  const authority = projectId ? ProjectRunAuthority.current(projectId) : undefined;
+  if (!authority) throw new Error("Configured AI capacity requires canonical task ownership");
+  return current.capacity.run(authority, signal ?? current.signal, current.signal, operation);
 }
 
 export function hasAiExecutionCapacity(): boolean {
@@ -394,10 +358,7 @@ export function bindAiCapacityExecution(
   const current = scope.getStore();
   if (!current) return;
   const projectId = ProjectRunAuthority.currentProjectId();
-  const authority = projectId
-    ? ProjectRunAuthority.current(projectId)
-    : undefined;
-  if (!authority)
-    throw new Error("AI execution evidence has no canonical task authority");
+  const authority = projectId ? ProjectRunAuthority.current(projectId) : undefined;
+  if (!authority) throw new Error("AI execution evidence has no canonical task authority");
   current.capacity.bindExecution(authority, evidence, cwd, command);
 }

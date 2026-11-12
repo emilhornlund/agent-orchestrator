@@ -11,7 +11,8 @@ body:
     id: reproduction-steps
     attributes:
       label: Reproduction steps
-      description: Provide the smallest set of steps and configuration needed to reproduce the problem.
+      description:
+        Provide the smallest set of steps and configuration needed to reproduce the problem.
       placeholder: |
         1. Configure ...
         2. Run ...
@@ -66,5 +67,7 @@ body:
     id: diagnostics
     attributes:
       label: Sanitized diagnostics
-      description: Share relevant sanitized logs, stack traces, or configuration details. Remove credentials, tokens, and other sensitive data.
+      description:
+        Share relevant sanitized logs, stack traces, or configuration details. Remove credentials,
+        tokens, and other sensitive data.
       render: shell

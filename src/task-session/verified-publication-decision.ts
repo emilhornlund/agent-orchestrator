@@ -32,9 +32,7 @@ export function decideVerifiedPublication(
   } else if (input.validation !== null) {
     if (input.validationCommand === undefined) {
       if (input.validation.status !== "skipped")
-        reasons.push(
-          "Unconfigured validation evidence conflicts with configuration",
-        );
+        reasons.push("Unconfigured validation evidence conflicts with configuration");
     } else if (
       input.validation.status !== "passed" ||
       input.validation.exitCode !== 0 ||
@@ -56,9 +54,7 @@ export function decideVerifiedPublication(
 
   if (input.coverageCommand === undefined) {
     if (input.coverage !== null && input.coverage.status !== "skipped")
-      reasons.push(
-        "Unconfigured coverage evidence conflicts with configuration",
-      );
+      reasons.push("Unconfigured coverage evidence conflicts with configuration");
   } else if (input.coverage === null) {
     reasons.push("Configured coverage evidence is missing");
   } else {

@@ -13,10 +13,7 @@ const JWT_ISSUED_AT_OFFSET_SECONDS = 60;
 const INSTALLATION_TOKEN_REFRESH_WINDOW_MILLISECONDS = 5 * 60 * 1_000;
 
 export type GitHubAppOperation =
-  | "configuration"
-  | "private key read"
-  | "JWT generation"
-  | "installation token exchange";
+  "configuration" | "private key read" | "JWT generation" | "installation token exchange";
 
 export class GitHubAppConfigurationError extends Error {
   readonly operation: GitHubAppOperation = "configuration";
@@ -41,9 +38,7 @@ export class GitHubAppNetworkError extends Error {
   readonly operation = "installation token exchange" as const;
 
   constructor() {
-    super(
-      "GitHub App installation token exchange failed during the network request",
-    );
+    super("GitHub App installation token exchange failed during the network request");
     this.name = "GitHubAppNetworkError";
   }
 }
@@ -59,17 +54,12 @@ export class GitHubAppApiError extends Error {
   }
 }
 
-export type ReadGitHubAppPrivateKey = (
-  privateKeyPath: string,
-) => Promise<string>;
+export type ReadGitHubAppPrivateKey = (privateKeyPath: string) => Promise<string>;
 export type SignGitHubAppJwt = (
   signingInput: string,
   privateKey: ReturnType<typeof createPrivateKey>,
 ) => Buffer;
-export type RequestGitHubAppToken = (
-  input: string,
-  init: RequestInit,
-) => Promise<Response>;
+export type RequestGitHubAppToken = (input: string, init: RequestInit) => Promise<Response>;
 
 export interface GitHubAppAuthenticatorOptions {
   readPrivateKey?: ReadGitHubAppPrivateKey;
@@ -99,9 +89,7 @@ function validateGithubAppConfig(
   }
 }
 
-function validateGithubRepository(
-  repository: string | undefined,
-): asserts repository is string {
+function validateGithubRepository(repository: string | undefined): asserts repository is string {
   if (
     typeof repository !== "string" ||
     repository.trim().length === 0 ||
@@ -158,9 +146,7 @@ interface InstallationTokenResponse {
   readonly expiresAtMilliseconds: number;
 }
 
-function parseTokenResponse(
-  value: unknown,
-): InstallationTokenResponse | undefined {
+function parseTokenResponse(value: unknown): InstallationTokenResponse | undefined {
   if (
     typeof value !== "object" ||
     value === null ||
@@ -186,16 +172,10 @@ function parseTokenResponse(
   };
 }
 
-const defaultRequest: RequestGitHubAppToken = (input, init) =>
-  globalThis.fetch(input, init);
+const defaultRequest: RequestGitHubAppToken = (input, init) => globalThis.fetch(input, init);
 
-async function readProtectedPrivateKey(
-  privateKeyPath: string,
-): Promise<string> {
-  const handle = await open(
-    privateKeyPath,
-    constants.O_RDONLY | constants.O_NOFOLLOW,
-  );
+async function readProtectedPrivateKey(privateKeyPath: string): Promise<string> {
+  const handle = await open(privateKeyPath, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const info = await handle.stat();
     if (!info.isFile() || (info.mode & 0o077) !== 0) {
@@ -215,10 +195,7 @@ export class GitHubAppAuthenticator {
   private readonly signJwt: SignGitHubAppJwt;
   private readonly request: RequestGitHubAppToken;
   private readonly now: () => number;
-  private readonly installationTokens = new Map<
-    string,
-    CachedInstallationToken
-  >();
+  private readonly installationTokens = new Map<string, CachedInstallationToken>();
   private readonly pendingExchanges = new Map<string, Promise<string>>();
 
   constructor(options: GitHubAppAuthenticatorOptions = {}) {
@@ -248,8 +225,7 @@ export class GitHubAppAuthenticator {
     if (
       cachedToken !== undefined &&
       nowMilliseconds <
-        cachedToken.expiresAtMilliseconds -
-          INSTALLATION_TOKEN_REFRESH_WINDOW_MILLISECONDS
+        cachedToken.expiresAtMilliseconds - INSTALLATION_TOKEN_REFRESH_WINDOW_MILLISECONDS
     ) {
       return cachedToken.token;
     }
@@ -293,12 +269,7 @@ export class GitHubAppAuthenticator {
     let jwt: string;
 
     try {
-      jwt = createGitHubAppJwt(
-        githubApp.appId,
-        privateKeyPem,
-        nowMilliseconds,
-        this.signJwt,
-      );
+      jwt = createGitHubAppJwt(githubApp.appId, privateKeyPem, nowMilliseconds, this.signJwt);
     } catch {
       throw new GitHubAppCredentialError("JWT generation");
     }

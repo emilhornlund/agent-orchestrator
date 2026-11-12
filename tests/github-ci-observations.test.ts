@@ -4,10 +4,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  GitHubClient,
-  type RunGitHubCommand,
-} from "../src/github/github-client.js";
+import { GitHubClient, type RunGitHubCommand } from "../src/github/github-client.js";
 import { establishCiCheckExpectations } from "../src/github/ci-check-expectations.js";
 import { evaluateCiChecks } from "../src/github/evaluate-ci-checks.js";
 
@@ -26,9 +23,7 @@ const headSha = "a".repeat(40);
 /** Serve the fixture documents through the exact-revision GitHub contents API. */
 function withWorkflowApi(command: RunGitHubCommand): RunGitHubCommand {
   return async (cwd, args, ...rest) => {
-    const endpoint = args.find((arg) =>
-      arg.includes("/contents/.github/workflows"),
-    );
+    const endpoint = args.find((arg) => arg.includes("/contents/.github/workflows"));
     if (!endpoint) return command(cwd, args, ...rest);
     expect(endpoint).toContain(`ref=${headSha}`);
     const directory = path.join(cwd, ".github", "workflows");
@@ -64,8 +59,7 @@ describe("GitHubClient.getCiObservations", () => {
       const documents: Record<string, string> =
         scenario === "static-new-check"
           ? {
-              "ci.yml":
-                "on: [pull_request]\njobs:\n  Build: {}\n  RequiredNewCheck: {}\n",
+              "ci.yml": "on: [pull_request]\njobs:\n  Build: {}\n  RequiredNewCheck: {}\n",
             }
           : scenario === "undiscovered-workflow"
             ? { "first.yml": dynamic, "second.yml": dynamic }
@@ -88,8 +82,7 @@ describe("GitHubClient.getCiObservations", () => {
             },
           ]);
         if (endpoint.includes("/statuses?")) return JSON.stringify([[]]);
-        if (endpoint.includes("/protection/"))
-          throw new Error("HTTP 404: not found");
+        if (endpoint.includes("/protection/")) throw new Error("HTTP 404: not found");
         if (endpoint.includes("/contents/")) {
           expect(endpoint).toContain(`ref=${headSha}`);
           if (endpoint.includes("/workflows?"))
@@ -100,9 +93,7 @@ describe("GitHubClient.getCiObservations", () => {
                 type: "file",
               })),
             );
-          const name = decodeURIComponent(
-            endpoint.split("?")[0]!.split("/").at(-1)!,
-          );
+          const name = decodeURIComponent(endpoint.split("?")[0]!.split("/").at(-1)!);
           return JSON.stringify({
             encoding: "base64",
             content: Buffer.from(documents[name]!).toString("base64"),
@@ -138,9 +129,7 @@ describe("GitHubClient.getCiObservations", () => {
         if (endpoint.includes("/actions/runs/2/jobs?"))
           return JSON.stringify([
             {
-              jobs: [
-                { name: "Build", status: "completed", conclusion: "success" },
-              ],
+              jobs: [{ name: "Build", status: "completed", conclusion: "success" }],
             },
           ]);
         throw new Error(`Unexpected query: ${endpoint}`);
@@ -152,18 +141,14 @@ describe("GitHubClient.getCiObservations", () => {
         headSha,
         pullRequestNumber: 7,
       });
-      const expectations = establishCiCheckExpectations(
-        observation.expectationSources,
-      );
+      const expectations = establishCiCheckExpectations(observation.expectationSources);
       const evaluated = evaluateCiChecks({
         expectedHeadSha: headSha,
         observedHeadSha: observation.headSha,
         checks: observation.checks,
         expectations,
       });
-      expect(JSON.stringify(observation.expectationSources)).not.toContain(
-        "OldCheckoutCheck",
-      );
+      expect(JSON.stringify(observation.expectationSources)).not.toContain("OldCheckoutCheck");
       if (scenario === "static-new-check")
         expect(evaluated).toMatchObject({
           status: "waiting",
@@ -180,9 +165,7 @@ describe("GitHubClient.getCiObservations", () => {
       } else {
         expect(evaluated.status).toBe("passed");
         expect(
-          command.mock.calls.some(([, args]) =>
-            args.some((arg) => arg.includes("/runs/1/jobs")),
-          ),
+          command.mock.calls.some(([, args]) => args.some((arg) => arg.includes("/runs/1/jobs"))),
         ).toBe(false);
       }
     },
@@ -291,9 +274,7 @@ describe("GitHubClient.getCiObservations", () => {
           ],
         ]);
       }
-      if (
-        args.some((arg) => arg.includes("/protection/required_status_checks"))
-      ) {
+      if (args.some((arg) => arg.includes("/protection/required_status_checks"))) {
         return JSON.stringify({
           contexts: ["Build"],
           checks: [{ context: "Tests", app_id: 42 }],
@@ -323,17 +304,13 @@ describe("GitHubClient.getCiObservations", () => {
     );
     expect(
       observation.checks.filter(
-        (check) =>
-          check.source === "commit-status" &&
-          check.context === "External / security",
+        (check) => check.source === "commit-status" && check.context === "External / security",
       ),
     ).toHaveLength(2);
     expect(
       observation.checks
         .filter((check) => check.source === "check-run")
-        .map((check) =>
-          check.source === "check-run" ? check.conclusion : null,
-        ),
+        .map((check) => (check.source === "check-run" ? check.conclusion : null)),
     ).toContain("skipped");
     expect(observation.checks).toContainEqual(
       expect.objectContaining({
@@ -372,8 +349,7 @@ describe("GitHubClient.getCiObservations", () => {
           },
         ]);
       }
-      if (args.some((arg) => arg.includes("/statuses?")))
-        return JSON.stringify([[]]);
+      if (args.some((arg) => arg.includes("/statuses?"))) return JSON.stringify([[]]);
       return JSON.stringify({ contexts: [], checks: [] });
     });
     const github = new GitHubClient(withWorkflowApi(command));
@@ -428,8 +404,7 @@ describe("GitHubClient.getCiObservations", () => {
     const command = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
       if (args.some((arg) => arg.includes("/check-runs?")))
         return JSON.stringify([{ total_count: 0, check_runs: [] }]);
-      if (args.some((arg) => arg.includes("/statuses?")))
-        return JSON.stringify([[]]);
+      if (args.some((arg) => arg.includes("/statuses?"))) return JSON.stringify([[]]);
       throw new Error("HTTP 403: resource not accessible by integration");
     });
     const github = new GitHubClient(withWorkflowApi(command));
@@ -460,9 +435,7 @@ describe("GitHubClient.getCiObservations", () => {
       }
       throw new Error("HTTP 404: branch protection not found");
     });
-    const result = await new GitHubClient(
-      withWorkflowApi(command),
-    ).getCiObservations({
+    const result = await new GitHubClient(withWorkflowApi(command)).getCiObservations({
       cwd,
       repository: "owner/repo",
       defaultBranch: "main",
@@ -484,11 +457,8 @@ describe("GitHubClient.getCiObservations", () => {
     const command = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
       if (args.some((arg) => arg.includes("/check-runs?")))
         return JSON.stringify([{ total_count: 0, check_runs: [] }]);
-      if (args.some((arg) => arg.includes("/statuses?")))
-        return JSON.stringify([[]]);
-      if (
-        args.some((arg) => arg.includes("/protection/required_status_checks"))
-      )
+      if (args.some((arg) => arg.includes("/statuses?"))) return JSON.stringify([[]]);
+      if (args.some((arg) => arg.includes("/protection/required_status_checks")))
         throw new Error("HTTP 404: not found");
       if (args.some((arg) => arg.includes("/actions/runs?")))
         return JSON.stringify([
@@ -537,9 +507,7 @@ describe("GitHubClient.getCiObservations", () => {
       throw new Error(`Unexpected GitHub query: ${args.join(" ")}`);
     });
 
-    const result = await new GitHubClient(
-      withWorkflowApi(command),
-    ).getCiObservations({
+    const result = await new GitHubClient(withWorkflowApi(command)).getCiObservations({
       cwd,
       repository: "owner/repo",
       defaultBranch: "main",
@@ -551,11 +519,7 @@ describe("GitHubClient.getCiObservations", () => {
       expect.objectContaining({
         sourceId: `workflow-runs:pull-request:7:${headSha}`,
         complete: true,
-        checkNames: [
-          "CI / test (ubuntu, 20)",
-          "CI / test (ubuntu, 22)",
-          "CI / reusable / build",
-        ],
+        checkNames: ["CI / test (ubuntu, 20)", "CI / test (ubuntu, 22)", "CI / reusable / build"],
       }),
     );
   });
@@ -571,11 +535,8 @@ describe("GitHubClient.getCiObservations", () => {
     const command = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
       if (args.some((arg) => arg.includes("/check-runs?")))
         return JSON.stringify([{ total_count: 0, check_runs: [] }]);
-      if (args.some((arg) => arg.includes("/statuses?")))
-        return JSON.stringify([[]]);
-      if (
-        args.some((arg) => arg.includes("/protection/required_status_checks"))
-      )
+      if (args.some((arg) => arg.includes("/statuses?"))) return JSON.stringify([[]]);
+      if (args.some((arg) => arg.includes("/protection/required_status_checks")))
         throw new Error("HTTP 404: not found");
       if (args.some((arg) => arg.includes("/actions/runs?")))
         return JSON.stringify([
@@ -596,9 +557,7 @@ describe("GitHubClient.getCiObservations", () => {
       throw new Error(`Unexpected GitHub query: ${args.join(" ")}`);
     });
 
-    const result = await new GitHubClient(
-      withWorkflowApi(command),
-    ).getCiObservations({
+    const result = await new GitHubClient(withWorkflowApi(command)).getCiObservations({
       cwd,
       repository: "owner/repo",
       defaultBranch: "main",
@@ -630,11 +589,8 @@ describe("GitHubClient.getCiObservations", () => {
     const command = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
       if (args.some((arg) => arg.includes("/check-runs?")))
         return JSON.stringify([{ total_count: 0, check_runs: [] }]);
-      if (args.some((arg) => arg.includes("/statuses?")))
-        return JSON.stringify([[]]);
-      if (
-        args.some((arg) => arg.includes("/protection/required_status_checks"))
-      )
+      if (args.some((arg) => arg.includes("/statuses?"))) return JSON.stringify([[]]);
+      if (args.some((arg) => arg.includes("/protection/required_status_checks")))
         throw new Error("HTTP 404: not found");
       if (args.some((arg) => arg.includes("/actions/runs?")))
         return JSON.stringify([
@@ -673,9 +629,7 @@ describe("GitHubClient.getCiObservations", () => {
       throw new Error(`Unexpected GitHub query: ${args.join(" ")}`);
     });
 
-    const result = await new GitHubClient(
-      withWorkflowApi(command),
-    ).getCiObservations({
+    const result = await new GitHubClient(withWorkflowApi(command)).getCiObservations({
       cwd,
       repository: "owner/repo",
       defaultBranch: "main",
@@ -709,11 +663,8 @@ describe("GitHubClient.getCiObservations", () => {
     const command = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
       if (args.some((arg) => arg.includes("/check-runs?")))
         return JSON.stringify([{ total_count: 0, check_runs: [] }]);
-      if (args.some((arg) => arg.includes("/statuses?")))
-        return JSON.stringify([[]]);
-      if (
-        args.some((arg) => arg.includes("/protection/required_status_checks"))
-      )
+      if (args.some((arg) => arg.includes("/statuses?"))) return JSON.stringify([[]]);
+      if (args.some((arg) => arg.includes("/protection/required_status_checks")))
         throw new Error("HTTP 404: not found");
       if (args.some((arg) => arg.includes("/actions/runs?")))
         return JSON.stringify([
@@ -734,9 +685,7 @@ describe("GitHubClient.getCiObservations", () => {
       throw new Error(`Unexpected GitHub query: ${args.join(" ")}`);
     });
 
-    const result = await new GitHubClient(
-      withWorkflowApi(command),
-    ).getCiObservations({
+    const result = await new GitHubClient(withWorkflowApi(command)).getCiObservations({
       cwd,
       repository: "owner/repo",
       defaultBranch: "main",
@@ -745,13 +694,9 @@ describe("GitHubClient.getCiObservations", () => {
     });
 
     expect(
-      result.expectationSources.some((source) =>
-        source.sourceId.startsWith("workflow-runs:"),
-      ),
+      result.expectationSources.some((source) => source.sourceId.startsWith("workflow-runs:")),
     ).toBe(false);
-    expect(result.expectationSources.some((source) => !source.complete)).toBe(
-      true,
-    );
+    expect(result.expectationSources.some((source) => !source.complete)).toBe(true);
     expect(
       command.mock.calls.some(([, args]) =>
         args.some((arg) => arg.includes("/actions/runs/103/jobs")),

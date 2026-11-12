@@ -40,21 +40,16 @@ describe("TrelloClient", () => {
     {},
     [{ id: "comment-1", type: "commentCard", data: {} }],
     [{ id: "comment-1", type: "updateCard", data: { text: "not a comment" } }],
-  ])(
-    "rejects malformed comment readback rather than reporting absence: %j",
-    async (body) => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValue(
-        new Response(JSON.stringify(body), { status: 200 }),
-      );
-      const client = new TrelloClient({
-        apiKey: "test-key",
-        token: "test-token",
-      });
-      await expect(client.getCardComments("card-1")).rejects.toBeInstanceOf(
-        ZodError,
-      );
-    },
-  );
+  ])("rejects malformed comment readback rather than reporting absence: %j", async (body) => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(body), { status: 200 }),
+    );
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+    await expect(client.getCardComments("card-1")).rejects.toBeInstanceOf(ZodError);
+  });
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -314,9 +309,7 @@ describe("TrelloClient", () => {
       token: "test-token",
     });
 
-    await expect(client.getCards("ready-list")).rejects.toThrow(
-      "Must be a valid date",
-    );
+    await expect(client.getCards("ready-list")).rejects.toThrow("Must be a valid date");
   });
 
   it("gets card attachment metadata in Trello order", async () => {
@@ -398,19 +391,17 @@ describe("TrelloClient", () => {
 
   it("honors an attachment metadata request abort signal", async () => {
     const controller = new AbortController();
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation(async (_input, init) => {
-        await new Promise<never>((_resolve, reject) => {
-          init?.signal?.addEventListener(
-            "abort",
-            () => reject(new DOMException("Aborted", "AbortError")),
-            { once: true },
-          );
-        });
-
-        throw new Error("unreachable");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      await new Promise<never>((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("Aborted", "AbortError")),
+          { once: true },
+        );
       });
+
+      throw new Error("unreachable");
+    });
     const client = new TrelloClient({
       apiKey: "test-key",
       token: "test-token",
@@ -426,9 +417,7 @@ describe("TrelloClient", () => {
   it("downloads uploaded attachments with Trello authentication", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
-      .mockResolvedValue(
-        new Response(new Uint8Array([1, 2, 3]), { status: 200 }),
-      );
+      .mockResolvedValue(new Response(new Uint8Array([1, 2, 3]), { status: 200 }));
     const client = new TrelloClient({
       apiKey: "test-key",
       token: "test-token",
@@ -442,14 +431,10 @@ describe("TrelloClient", () => {
       isUpload: true,
     };
 
-    await expect(
-      client.downloadCardAttachment(attachment),
-    ).resolves.toBeInstanceOf(Response);
+    await expect(client.downloadCardAttachment(attachment)).resolves.toBeInstanceOf(Response);
 
     const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
-    expect(url.pathname).toBe(
-      "/1/cards/card-1/attachments/attachment-file/download/design.pdf",
-    );
+    expect(url.pathname).toBe("/1/cards/card-1/attachments/attachment-file/download/design.pdf");
     expect(url.searchParams.get("key")).toBe("test-key");
     expect(url.searchParams.get("token")).toBe("test-token");
   });
@@ -617,9 +602,7 @@ describe("TrelloClient", () => {
   });
 
   it("propagates attachment response JSON parsing failures", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response("not-json", { status: 200 }),
-    );
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("not-json", { status: 200 }));
 
     const client = new TrelloClient({
       apiKey: "test-key",
@@ -678,9 +661,7 @@ describe("TrelloClient", () => {
       token: "test-token",
     });
 
-    await expect(
-      client.getLatestListTransition("card-1", "working-list"),
-    ).resolves.toEqual({
+    await expect(client.getLatestListTransition("card-1", "working-list")).resolves.toEqual({
       id: "action-new",
       date: "2026-08-30T10:00:00.000Z",
       listBeforeId: "ready-list",
@@ -711,9 +692,7 @@ describe("TrelloClient", () => {
       token: "test-token",
     });
 
-    await expect(
-      client.getLatestListTransition("card-1", "working-list"),
-    ).resolves.toBeNull();
+    await expect(client.getLatestListTransition("card-1", "working-list")).resolves.toBeNull();
   });
 
   it("does not use an incomplete list transition as older evidence", async () => {
@@ -746,9 +725,7 @@ describe("TrelloClient", () => {
       token: "test-token",
     });
 
-    await expect(
-      client.getLatestListTransition("card-1", "working-list"),
-    ).resolves.toBeNull();
+    await expect(client.getLatestListTransition("card-1", "working-list")).resolves.toBeNull();
   });
 
   it("rejects malformed action-history timestamps", async () => {
@@ -842,27 +819,23 @@ describe("TrelloClient", () => {
       timeoutMilliseconds: 30_000,
     });
 
-    await expect(client.getBoard("board-1")).rejects.toThrow(
-      "Trello request aborted",
-    );
+    await expect(client.getBoard("board-1")).rejects.toThrow("Trello request aborted");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("converts an in-flight shutdown abort into a typed request error", async () => {
     const controller = new AbortController();
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation(async (_input, init) => {
-        await new Promise<never>((_resolve, reject) => {
-          init?.signal?.addEventListener(
-            "abort",
-            () => reject(new DOMException("Aborted", "AbortError")),
-            { once: true },
-          );
-        });
-
-        throw new Error("unreachable");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      await new Promise<never>((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("Aborted", "AbortError")),
+          { once: true },
+        );
       });
+
+      throw new Error("unreachable");
+    });
 
     const client = new TrelloClient({
       apiKey: "test-key",
@@ -1005,9 +978,7 @@ describe("TrelloClient", () => {
     );
 
     expect(card.name).toBe("Add inventory support");
-    expect(card.desc).toBe(
-      "# Add inventory support\n\n## Description\n\nAdd inventory support.",
-    );
+    expect(card.desc).toBe("# Add inventory support\n\n## Description\n\nAdd inventory support.");
 
     expect(fetchMock).toHaveBeenCalledOnce();
 
@@ -1065,9 +1036,7 @@ describe("TrelloClient", () => {
 
     expect(String(requestUrl).length).toBeLessThan(8_000);
     expect(url.searchParams.get("desc")).toBeNull();
-    expect(requestOptions?.body).toBe(
-      JSON.stringify({ name: "Refined task", desc: description }),
-    );
+    expect(requestOptions?.body).toBe(JSON.stringify({ name: "Refined task", desc: description }));
   });
 
   it("preserves operational identifiers and legitimate token-like content", async () => {
@@ -1105,8 +1074,7 @@ describe("TrelloClient", () => {
   });
 
   it("redacts a registered PEM canary from outbound card content, not selectors or auth", async () => {
-    const pem =
-      "-----BEGIN PRIVATE KEY-----\nsynthetic-pem-canary\n-----END PRIVATE KEY-----";
+    const pem = "-----BEGIN PRIVATE KEY-----\nsynthetic-pem-canary\n-----END PRIVATE KEY-----";
     registerProcessSecrets([pem]);
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
@@ -1270,23 +1238,13 @@ describe("TrelloClient", () => {
   );
 
   it.each([
-    [
-      "card move",
-      (client: TrelloClient) => client.moveCard("card-1", "working-list"),
-    ],
+    ["card move", (client: TrelloClient) => client.moveCard("card-1", "working-list")],
     [
       "card content update",
-      (client: TrelloClient) =>
-        client.updateCardContent("card-1", "Title", "Description"),
+      (client: TrelloClient) => client.updateCardContent("card-1", "Title", "Description"),
     ],
-    [
-      "label update",
-      (client: TrelloClient) => client.addLabel("card-1", "label-1"),
-    ],
-    [
-      "comment",
-      (client: TrelloClient) => client.addComment("card-1", "Comment"),
-    ],
+    ["label update", (client: TrelloClient) => client.addLabel("card-1", "label-1")],
+    ["comment", (client: TrelloClient) => client.addComment("card-1", "Comment")],
   ] as const)(
     "preserves the Trello operation for retryable %s failures",
     async (operation, invoke) => {
@@ -1310,9 +1268,7 @@ describe("TrelloClient", () => {
   it("classifies attachment metadata and download failures independently", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
-      .mockResolvedValue(
-        new Response(null, { status: 503, statusText: "Unavailable" }),
-      );
+      .mockResolvedValue(new Response(null, { status: 503, statusText: "Unavailable" }));
     const client = new TrelloClient({
       apiKey: "test-key",
       token: "test-token",
@@ -1330,9 +1286,7 @@ describe("TrelloClient", () => {
       operation: "attachment metadata",
       retryable: true,
     });
-    await expect(
-      client.downloadCardAttachment(attachment),
-    ).rejects.toMatchObject({
+    await expect(client.downloadCardAttachment(attachment)).rejects.toMatchObject({
       operation: "attachment download",
       retryable: true,
     });
@@ -1352,9 +1306,7 @@ describe("TrelloClient", () => {
       token: "test-token",
     });
 
-    const error = await client
-      .getCards("ready-list")
-      .catch((failure: unknown) => failure);
+    const error = await client.getCards("ready-list").catch((failure: unknown) => failure);
 
     expect(error).toMatchObject({
       name: "TrelloRequestError",
@@ -1368,19 +1320,17 @@ describe("TrelloClient", () => {
   });
 
   it("classifies request timeouts as retryable but not shutdown cancellation", async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation(async (_input, init) => {
-        await new Promise<never>((_resolve, reject) => {
-          init?.signal?.addEventListener(
-            "abort",
-            () => reject(new DOMException("Timed out", "TimeoutError")),
-            { once: true },
-          );
-        });
-
-        throw new Error("unreachable");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      await new Promise<never>((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("Timed out", "TimeoutError")),
+          { once: true },
+        );
       });
+
+      throw new Error("unreachable");
+    });
     const client = new TrelloClient({
       apiKey: "test-key",
       token: "test-token",
@@ -1396,23 +1346,18 @@ describe("TrelloClient", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
-  it.each([401, 403, 404])(
-    "does not classify HTTP %s as retryable",
-    async (status) => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValue(
-        new Response(null, { status, statusText: "Permanent failure" }),
-      );
+  it.each([401, 403, 404])("does not classify HTTP %s as retryable", async (status) => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, { status, statusText: "Permanent failure" }),
+    );
 
-      const client = new TrelloClient({
-        apiKey: "test-key",
-        token: "test-token",
-      });
-      const error = await client
-        .getBoard("board-1")
-        .catch((failure: unknown) => failure);
+    const client = new TrelloClient({
+      apiKey: "test-key",
+      token: "test-token",
+    });
+    const error = await client.getBoard("board-1").catch((failure: unknown) => failure);
 
-      expect(error).toBeInstanceOf(TrelloRequestError);
-      expect(isRetryableTrelloError(error)).toBe(false);
-    },
-  );
+    expect(error).toBeInstanceOf(TrelloRequestError);
+    expect(isRetryableTrelloError(error)).toBe(false);
+  });
 });

@@ -10,10 +10,7 @@ import {
 } from "../src/coordination/project-ownership.js";
 import { GitHubClient } from "../src/github/github-client.js";
 import { OpenCodeClient } from "../src/opencode/opencode-client.js";
-import {
-  CommandRunInterruptedError,
-  CommandRunner,
-} from "../src/process/command-runner.js";
+import { CommandRunInterruptedError, CommandRunner } from "../src/process/command-runner.js";
 import {
   configureProcessRuntime,
   withTaskProcessArtifacts,
@@ -26,18 +23,10 @@ import { execFileSync } from "node:child_process";
 import { configureLoggerRuntime, Logger } from "../src/logging/logger.js";
 
 type Family = "git" | "gh" | "opencode" | "command";
-type Case =
-  "nonzero" | "crash" | "partial" | "timeout" | "abort" | "spawn-failure";
+type Case = "nonzero" | "crash" | "partial" | "timeout" | "abort" | "spawn-failure";
 
 const families: Family[] = ["git", "gh", "opencode", "command"];
-const cases: Case[] = [
-  "nonzero",
-  "crash",
-  "partial",
-  "timeout",
-  "abort",
-  "spawn-failure",
-];
+const cases: Case[] = ["nonzero", "crash", "partial", "timeout", "abort", "spawn-failure"];
 
 function executableScript(family: Family, scenario: Case): string {
   const outMarker = `RAW_OUT_${family}_${scenario}`;
@@ -65,13 +54,11 @@ function executableScript(family: Family, scenario: Case): string {
     `const write${stream === "stdout" ? "Out" : "Err"}=(value)=>new Promise(resolve=>process.${stream}.write(value,resolve)); const ${stream}Writes=${JSON.stringify(chunks)}.map(write${stream === "stdout" ? "Out" : "Err"});`;
   let afterWrite: string;
   if (scenario === "nonzero") afterWrite = "process.exit(9);";
-  else if (scenario === "crash")
-    afterWrite = 'process.kill(process.pid,"SIGTERM");';
+  else if (scenario === "crash") afterWrite = 'process.kill(process.pid,"SIGTERM");';
   else if (scenario === "abort")
     afterWrite = `process.on("SIGTERM",()=>process.exit(0)); setTimeout(()=>{process.stdout.write("LATE_OUT_${family}_abort");process.stderr.write("LATE_ERR_${family}_abort")},1500); setInterval(()=>{},30_000);`;
   else if (scenario === "timeout")
-    afterWrite =
-      'process.on("SIGTERM",()=>process.exit(0)); setInterval(()=>{},30_000);';
+    afterWrite = 'process.on("SIGTERM",()=>process.exit(0)); setInterval(()=>{},30_000);';
   else afterWrite = "process.exit(0);";
   return `#!${process.execPath}\n${emit("stdout", stdoutChunks)} ${emit("stderr", stderrChunks)} Promise.all([...stdoutWrites,...stderrWrites]).then(()=>{${afterWrite}});\n`;
 }
@@ -99,16 +86,10 @@ describe("production child adapter outcome matrix", () => {
       signal: new AbortController().signal,
       operationTimeoutMilliseconds: 120_000,
     });
-    for (const root of roots.splice(0))
-      fs.rmSync(root, { recursive: true, force: true });
+    for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
   });
 
-  async function run(
-    family: Family,
-    scenario: Case,
-    root: string,
-    retainCommandShell = false,
-  ) {
+  async function run(family: Family, scenario: Case, root: string, retainCommandShell = false) {
     const runtimeRoot = path.join(root, "runtime");
     const binaries = path.join(root, "bin");
     fs.mkdirSync(binaries, { recursive: true });
@@ -174,8 +155,7 @@ describe("production child adapter outcome matrix", () => {
         });
       },
     );
-    if (scenario === "abort")
-      setTimeout(() => abort.abort("matrix-abort"), 200);
+    if (scenario === "abort") setTimeout(() => abort.abort("matrix-abort"), 200);
     const artifactRoot =
       family === "command"
         ? artifactDirectory
@@ -196,10 +176,7 @@ describe("production child adapter outcome matrix", () => {
     const executionDirectory = path.join(artifactRoot, entries[0]!);
     return {
       metadata: JSON.parse(
-        fs.readFileSync(
-          path.join(executionDirectory, "execution.json"),
-          "utf8",
-        ),
+        fs.readFileSync(path.join(executionDirectory, "execution.json"), "utf8"),
       ) as {
         executionId: string;
         status: string;
@@ -207,26 +184,15 @@ describe("production child adapter outcome matrix", () => {
         signal?: string;
         pid?: number;
       },
-      stdout: fs.readFileSync(
-        path.join(executionDirectory, "stdout.txt"),
-        "utf8",
-      ),
-      stderr: fs.readFileSync(
-        path.join(executionDirectory, "stderr.txt"),
-        "utf8",
-      ),
+      stdout: fs.readFileSync(path.join(executionDirectory, "stdout.txt"), "utf8"),
+      stderr: fs.readFileSync(path.join(executionDirectory, "stderr.txt"), "utf8"),
     };
   }
 
   it("records a retained shell's numeric child-crash status without inventing a supervisor signal", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "adapter-shell-crash-"));
     roots.push(root);
-    const { request, artifactRoot, timeline } = await run(
-      "command",
-      "crash",
-      root,
-      true,
-    );
+    const { request, artifactRoot, timeline } = await run("command", "crash", root, true);
     await expect(request).resolves.toMatchObject({ exitCode: 143 });
     const evidence = await inspectArtifact(artifactRoot);
     expect(evidence.metadata).toMatchObject({
@@ -236,38 +202,25 @@ describe("production child adapter outcome matrix", () => {
     expect(evidence.metadata.signal).toBeUndefined();
     expect(evidence.stdout).toBe("RAW_OUT_command_crash\n");
     expect(evidence.stderr).toContain("RAW_ERR_command_crash\n");
-    expect(timeline.map((event) => event.type)).toEqual([
-      "process-started",
-      "process-finished",
-    ]);
+    expect(timeline.map((event) => event.type)).toEqual(["process-started", "process-finished"]);
     expect(timeline[1]).toMatchObject({
       executionId: evidence.metadata.executionId,
       status: "nonzero",
     });
   });
 
-  it.each(
-    families.flatMap((family) =>
-      cases.map((scenario) => [family, scenario] as const),
-    ),
-  )(
+  it.each(families.flatMap((family) => cases.map((scenario) => [family, scenario] as const)))(
     "records %s %s from a real executable",
     async (family, scenario) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "adapter-matrix-"));
       roots.push(root);
-      const { request, artifactRoot, timeline } = await run(
-        family,
-        scenario,
-        root,
-      );
+      const { request, artifactRoot, timeline } = await run(family, scenario, root);
       if (scenario === "partial") {
         const result = await request;
         expect(result).toBeDefined();
       } else if (scenario === "nonzero" || scenario === "crash") {
         if (family === "command" && scenario === "crash") {
-          await expect(request).rejects.toBeInstanceOf(
-            CommandRunInterruptedError,
-          );
+          await expect(request).rejects.toBeInstanceOf(CommandRunInterruptedError);
         } else if (family === "command" || family === "opencode") {
           await expect(request).resolves.toMatchObject({
             exitCode: scenario === "crash" ? 1 : 9,
@@ -306,8 +259,7 @@ describe("production child adapter outcome matrix", () => {
         expect(evidence.stdout).toBe("");
         expect(evidence.stderr).not.toContain(markers.stdout);
         expect(evidence.stderr).not.toContain(markers.stderr);
-        if (family === "command")
-          expect(evidence.stderr).toContain("not found");
+        if (family === "command") expect(evidence.stderr).toContain("not found");
       } else if (scenario === "partial") {
         const expectedStdout =
           family === "gh"
@@ -333,13 +285,8 @@ describe("production child adapter outcome matrix", () => {
       if (scenario === "crash" && family !== "command")
         expect(evidence.metadata.signal).toBe("SIGTERM");
       const start = timeline.find((event) => event.type === "process-started");
-      const finish = timeline.find(
-        (event) => event.type === "process-finished",
-      );
-      expect(timeline.map((event) => event.type)).toEqual([
-        "process-started",
-        "process-finished",
-      ]);
+      const finish = timeline.find((event) => event.type === "process-finished");
+      expect(timeline.map((event) => event.type)).toEqual(["process-started", "process-finished"]);
       expect(start).toMatchObject({
         executionId: evidence.metadata.executionId,
         stdoutArtifact: expect.stringContaining("stdout.txt"),
@@ -352,11 +299,7 @@ describe("production child adapter outcome matrix", () => {
       expect(JSON.stringify(timeline)).not.toContain(markers.stdout);
       expect(JSON.stringify(timeline)).not.toContain(markers.stderr);
       const metadataText = fs.readFileSync(
-        path.join(
-          artifactRoot,
-          evidence.metadata.executionId!,
-          "execution.json",
-        ),
+        path.join(artifactRoot, evidence.metadata.executionId!, "execution.json"),
         "utf8",
       );
       expect(metadataText).not.toContain(markers.stdout);
@@ -365,11 +308,9 @@ describe("production child adapter outcome matrix", () => {
       const previousVitest = process.env.VITEST;
       const loggerRoot = path.join(root, "logger-runtime");
       const consoleDiagnostics: string[] = [];
-      const consoleError = vi
-        .spyOn(console, "error")
-        .mockImplementation((...values: unknown[]) => {
-          consoleDiagnostics.push(values.join(" "));
-        });
+      const consoleError = vi.spyOn(console, "error").mockImplementation((...values: unknown[]) => {
+        consoleDiagnostics.push(values.join(" "));
+      });
       configureLoggerRuntime(loggerRoot);
       process.env.VITEST = "false";
       try {
@@ -390,9 +331,7 @@ describe("production child adapter outcome matrix", () => {
         if (previousVitest === undefined) delete process.env.VITEST;
         else process.env.VITEST = previousVitest;
       }
-      const loggerFiles = fs.readdirSync(
-        path.join(loggerRoot, "orchestrator-logs"),
-      );
+      const loggerFiles = fs.readdirSync(path.join(loggerRoot, "orchestrator-logs"));
       expect(loggerFiles).toHaveLength(1);
       const loggerText = fs.readFileSync(
         path.join(loggerRoot, "orchestrator-logs", loggerFiles[0]!),
@@ -522,21 +461,15 @@ describe("production child adapter outcome matrix", () => {
                 signal: new AbortController().signal,
               });
       if (family === "gh")
-        await expect(operation).rejects.toThrow(
-          "GitHub CLI returned an invalid pull request URL",
-        );
+        await expect(operation).rejects.toThrow("GitHub CLI returned an invalid pull request URL");
       else await expect(operation).resolves.toBeDefined();
 
-      const evidence = await inspectArtifact(
-        path.join(runtimeRoot, "process-executions"),
-      );
+      const evidence = await inspectArtifact(path.join(runtimeRoot, "process-executions"));
       expect(evidence.stdout).toBe(`out: café:[REDACTED]:終\n�`);
       expect(evidence.stderr).toBe(`err: λ:[REDACTED]:雪\n`);
       expect(evidence.stdout).not.toContain(secret);
       expect(evidence.stderr).not.toContain(secret);
-      expect(() =>
-        JSON.parse(JSON.stringify({ out: evidence.stdout })),
-      ).not.toThrow();
+      expect(() => JSON.parse(JSON.stringify({ out: evidence.stdout }))).not.toThrow();
     },
     15_000,
   );
@@ -575,9 +508,7 @@ describe("production child adapter outcome matrix", () => {
               signal: new AbortController().signal,
             });
       await expect(request).rejects.toBeDefined();
-      const evidence = await inspectArtifact(
-        path.join(runtimeRoot, "process-executions"),
-      );
+      const evidence = await inspectArtifact(path.join(runtimeRoot, "process-executions"));
       expect(evidence.metadata).toMatchObject({
         status: "evidence-failure",
         exitCode: 0,
@@ -611,31 +542,20 @@ describe("production child adapter outcome matrix", () => {
       .split(path.delimiter)
       .map((directory) => path.join(directory, "bwrap"))
       .find((candidate) => fs.existsSync(candidate));
-    if (!bubblewrap)
-      throw new Error("test host does not provide Bubblewrap on PATH");
+    if (!bubblewrap) throw new Error("test host does not provide Bubblewrap on PATH");
     fs.symlinkSync(bubblewrap, path.join(binaries, "bwrap"));
     configureProcessRuntime({
       runtimeRoot: path.join(root, "runtime"),
       signal: new AbortController().signal,
       operationTimeoutMilliseconds: 1_000,
     });
-    await expect(
-      validateGitAndOpenCode(new CommandRunner(), 1_000),
-    ).resolves.toBeUndefined();
-    const records = fs.readdirSync(
-      path.join(root, "runtime", "process-executions"),
-    );
+    await expect(validateGitAndOpenCode(new CommandRunner(), 1_000)).resolves.toBeUndefined();
+    const records = fs.readdirSync(path.join(root, "runtime", "process-executions"));
     expect(records).toHaveLength(5);
     for (const entry of records) {
       const metadata = JSON.parse(
         fs.readFileSync(
-          path.join(
-            root,
-            "runtime",
-            "process-executions",
-            entry,
-            "execution.json",
-          ),
+          path.join(root, "runtime", "process-executions", entry, "execution.json"),
           "utf8",
         ),
       ) as { status: string };
@@ -706,18 +626,9 @@ describe("production child adapter outcome matrix", () => {
         secretValues: ["synthetic-offline-token"],
       }),
     } as unknown as import("../src/github/github-credential-provider.js").GitHubCredentialProvider;
-    await ensureRepository(
-      new GitClient(),
-      new CommandRunner(),
-      project,
-      syntheticCredentials,
-    );
-    expect(fs.readFileSync(path.join(destination, "fixture.txt"), "utf8")).toBe(
-      "offline clone\n",
-    );
-    const executions = fs.readdirSync(
-      path.join(root, "runtime", "process-executions"),
-    );
+    await ensureRepository(new GitClient(), new CommandRunner(), project, syntheticCredentials);
+    expect(fs.readFileSync(path.join(destination, "fixture.txt"), "utf8")).toBe("offline clone\n");
+    const executions = fs.readdirSync(path.join(root, "runtime", "process-executions"));
     expect(executions).toHaveLength(2);
   });
 
@@ -737,14 +648,10 @@ describe("production child adapter outcome matrix", () => {
       fs.mkdirSync(binaries);
       if (fault !== "missing") {
         const behavior =
-          fault === "nonzero"
-            ? "process.exit(7);"
-            : "setInterval(() => {}, 30_000);";
-        fs.writeFileSync(
-          path.join(binaries, "flock"),
-          `#!${process.execPath}\n${behavior}\n`,
-          { mode: 0o700 },
-        );
+          fault === "nonzero" ? "process.exit(7);" : "setInterval(() => {}, 30_000);";
+        fs.writeFileSync(path.join(binaries, "flock"), `#!${process.execPath}\n${behavior}\n`, {
+          mode: 0o700,
+        });
       }
       process.env.PATH = binaries;
       const runtimeRoot = path.join(root, "runtime");
@@ -760,18 +667,11 @@ describe("production child adapter outcome matrix", () => {
           "flock-matrix",
         ),
       ).rejects.toBeDefined();
-      const entries = fs.readdirSync(
-        path.join(runtimeRoot, "process-executions"),
-      );
+      const entries = fs.readdirSync(path.join(runtimeRoot, "process-executions"));
       expect(entries).toHaveLength(1);
       const metadata = JSON.parse(
         fs.readFileSync(
-          path.join(
-            runtimeRoot,
-            "process-executions",
-            entries[0]!,
-            "execution.json",
-          ),
+          path.join(runtimeRoot, "process-executions", entries[0]!, "execution.json"),
           "utf8",
         ),
       ) as { status: string };
@@ -795,20 +695,12 @@ describe("production child adapter outcome matrix", () => {
       trelloBoardId: "real-board",
       githubRepository: "real/repo",
     };
-    const first = await acquireProjectOwnership(
-      coordination,
-      identity,
-      "real-flock",
+    const first = await acquireProjectOwnership(coordination, identity, "real-flock");
+    await expect(acquireProjectOwnership(coordination, identity, "real-flock")).rejects.toThrow(
+      /already held/,
     );
-    await expect(
-      acquireProjectOwnership(coordination, identity, "real-flock"),
-    ).rejects.toThrow(/already held/);
     await first.release();
-    const replacement = await acquireProjectOwnership(
-      coordination,
-      identity,
-      "real-flock",
-    );
+    const replacement = await acquireProjectOwnership(coordination, identity, "real-flock");
     replacement.assertHeld();
     await replacement.release();
     const statuses = fs
@@ -818,12 +710,7 @@ describe("production child adapter outcome matrix", () => {
           (
             JSON.parse(
               fs.readFileSync(
-                path.join(
-                  runtimeRoot,
-                  "process-executions",
-                  entry,
-                  "execution.json",
-                ),
+                path.join(runtimeRoot, "process-executions", entry, "execution.json"),
                 "utf8",
               ),
             ) as { status: string }
@@ -855,16 +742,11 @@ describe("production child adapter outcome matrix", () => {
         signal: new AbortController().signal,
       });
       const append = fs.appendFileSync;
-      vi.spyOn(fs, "appendFileSync").mockImplementation(
-        (file, data, options) => {
-          if (
-            String(file).includes("process-executions") &&
-            String(file).endsWith("stdout.txt")
-          )
-            throw new Error("injected recorder failure");
-          return append.call(fs, file, data, options);
-        },
-      );
+      vi.spyOn(fs, "appendFileSync").mockImplementation((file, data, options) => {
+        if (String(file).includes("process-executions") && String(file).endsWith("stdout.txt"))
+          throw new Error("injected recorder failure");
+        return append.call(fs, file, data, options);
+      });
       const request =
         family === "git"
           ? new GitClient().getStatus(root)
@@ -878,9 +760,7 @@ describe("production child adapter outcome matrix", () => {
             });
       await expect(request).rejects.toBeDefined();
       vi.restoreAllMocks();
-      const evidence = await inspectArtifact(
-        path.join(runtimeRoot, "process-executions"),
-      );
+      const evidence = await inspectArtifact(path.join(runtimeRoot, "process-executions"));
       expect(evidence.metadata.status).toBe("evidence-failure");
       expect(evidence.stdout).toBe("");
       expect(evidence.stderr).toBe(errMarker);

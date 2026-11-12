@@ -28,11 +28,7 @@ function reportFailure(action: string, filePath: string, error: unknown): void {
   }
 }
 
-function reportRemoval(
-  projectId: string,
-  cardId: string,
-  directoryPath: string,
-): void {
+function reportRemoval(projectId: string, cardId: string, directoryPath: string): void {
   try {
     logger
       .child({ projectId, cardId })
@@ -43,12 +39,7 @@ function reportRemoval(
 }
 
 function isMissingPathError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    error.code === "ENOENT"
-  );
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
 function isBelowRoot(root: string, candidate: string): boolean {
@@ -73,11 +64,7 @@ function normalizeContextRoot(contextRoot: string): string | undefined {
   }
 
   if (!path.isAbsolute(contextRoot)) {
-    reportFailure(
-      "scan",
-      contextRoot,
-      new Error("context root must be an absolute path"),
-    );
+    reportFailure("scan", contextRoot, new Error("context root must be an absolute path"));
     return undefined;
   }
 
@@ -87,11 +74,7 @@ function normalizeContextRoot(contextRoot: string): string | undefined {
 function getDirectoryOpenFlags(): number | undefined {
   const { O_DIRECTORY, O_NOFOLLOW, O_RDONLY } = fs.constants;
 
-  if (
-    descriptorPathRoot === undefined ||
-    O_DIRECTORY === undefined ||
-    O_NOFOLLOW === undefined
-  ) {
+  if (descriptorPathRoot === undefined || O_DIRECTORY === undefined || O_NOFOLLOW === undefined) {
     return undefined;
   }
 
@@ -119,9 +102,7 @@ function openDirectoryChain(directoryPath: string): number | undefined {
     reportFailure(
       "remove",
       directoryPath,
-      new Error(
-        "safe descriptor-based removal is not supported on this platform",
-      ),
+      new Error("safe descriptor-based removal is not supported on this platform"),
     );
     return undefined;
   }
@@ -132,17 +113,12 @@ function openDirectoryChain(directoryPath: string): number | undefined {
   try {
     descriptor = fs.openSync(parsedPath.root, flags);
 
-    for (const component of path
-      .relative(parsedPath.root, directoryPath)
-      .split(path.sep)) {
+    for (const component of path.relative(parsedPath.root, directoryPath).split(path.sep)) {
       if (component.length === 0) {
         continue;
       }
 
-      const nextDescriptor = fs.openSync(
-        descriptorPath(descriptor, component),
-        flags,
-      );
+      const nextDescriptor = fs.openSync(descriptorPath(descriptor, component), flags);
       closeDescriptor(descriptor);
       descriptor = nextDescriptor;
     }
@@ -328,9 +304,7 @@ function inspectContextRoot(contextRoot: string): boolean {
   const parsedPath = path.parse(contextRoot);
   let currentPath = parsedPath.root;
 
-  for (const component of path
-    .relative(parsedPath.root, contextRoot)
-    .split(path.sep)) {
+  for (const component of path.relative(parsedPath.root, contextRoot).split(path.sep)) {
     if (component.length === 0) {
       continue;
     }
@@ -374,8 +348,7 @@ export function cleanupCardContextRetention(
   }
 
   const cutoffMilliseconds = now.getTime() - retentionDays * millisecondsPerDay;
-  const configuredProjectIds =
-    projectIds === undefined ? undefined : new Set(projectIds);
+  const configuredProjectIds = projectIds === undefined ? undefined : new Set(projectIds);
   const contextRootDescriptor = openDirectoryChain(normalizedRoot);
 
   if (contextRootDescriptor === undefined) {
@@ -394,16 +367,12 @@ export function cleanupCardContextRetention(
       if (
         projectDirectory.isSymbolicLink() ||
         !projectDirectory.isDirectory() ||
-        (configuredProjectIds !== undefined &&
-          !configuredProjectIds.has(projectDirectory.name))
+        (configuredProjectIds !== undefined && !configuredProjectIds.has(projectDirectory.name))
       ) {
         continue;
       }
 
-      const projectDirectoryPath = path.resolve(
-        normalizedRoot,
-        projectDirectory.name,
-      );
+      const projectDirectoryPath = path.resolve(normalizedRoot, projectDirectory.name);
 
       if (!isBelowRoot(normalizedRoot, projectDirectoryPath)) {
         reportFailure(
@@ -425,10 +394,7 @@ export function cleanupCardContextRetention(
           continue;
         }
 
-        const cardDirectoryPath = path.resolve(
-          projectDirectoryPath,
-          cardDirectory.name,
-        );
+        const cardDirectoryPath = path.resolve(projectDirectoryPath, cardDirectory.name);
 
         if (!isBelowRoot(normalizedRoot, cardDirectoryPath)) {
           reportFailure(

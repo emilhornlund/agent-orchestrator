@@ -73,9 +73,7 @@ describe("parseTaskExecutionRecord", () => {
   });
 
   it("preserves advisory planning outcomes while accepting older records without them", () => {
-    const oldRecord = parseTaskExecutionRecord(
-      JSON.parse(JSON.stringify(record)),
-    );
+    const oldRecord = parseTaskExecutionRecord(JSON.parse(JSON.stringify(record)));
     expect(oldRecord.planningAdvice).toBeUndefined();
     const withAdvice = parseTaskExecutionRecord({
       ...record,
@@ -88,9 +86,7 @@ describe("parseTaskExecutionRecord", () => {
         diagnostic: "Reviewer returned malformed output",
       },
     });
-    expect(
-      parseTaskExecutionRecord(JSON.parse(JSON.stringify(withAdvice))),
-    ).toEqual(withAdvice);
+    expect(parseTaskExecutionRecord(JSON.parse(JSON.stringify(withAdvice)))).toEqual(withAdvice);
   });
 
   it.each([
@@ -107,9 +103,7 @@ describe("parseTaskExecutionRecord", () => {
   });
 
   it("rejects an invalid phase", () => {
-    expect(() =>
-      parseTaskExecutionRecord({ ...record, phase: "queued" }),
-    ).toThrow();
+    expect(() => parseTaskExecutionRecord({ ...record, phase: "queued" })).toThrow();
   });
 
   it.each([
@@ -117,10 +111,7 @@ describe("parseTaskExecutionRecord", () => {
       "implementation without its primary session",
       { primarySessionId: undefined, phase: "implementation" },
     ],
-    [
-      "implementation without its branch",
-      { expectedBranch: undefined, phase: "implementation" },
-    ],
+    ["implementation without its branch", { expectedBranch: undefined, phase: "implementation" }],
     ["CI without its pull request", { pullRequest: undefined, phase: "ci" }],
   ])("rejects an impossible state: %s", (_description, update) => {
     expect(() => parseTaskExecutionRecord({ ...record, ...update })).toThrow();

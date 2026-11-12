@@ -45,9 +45,7 @@ function fixture() {
     version: 1,
     projectId: "project",
     cardId: "card",
-    requirements: [
-      { id: "REQ-1", text: "Feature works", verification: "Test it" },
-    ],
+    requirements: [{ id: "REQ-1", text: "Feature works", verification: "Test it" }],
     steps: [
       {
         id: "STEP-1",
@@ -65,13 +63,10 @@ function fixture() {
     getHeadSha: vi.fn(async () => headSha),
     getHeadTrackedFiles: vi.fn(async () => ["source.ts"]),
     getIndexEntries: vi.fn(
-      async () =>
-        "100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\tsource.ts\0",
+      async () => "100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\tsource.ts\0",
     ),
     getUntrackedFiles: vi.fn(async () => []),
-    getDiff: vi.fn(async (_cwd: string, staged = false) =>
-      staged ? "staged" : "unstaged",
-    ),
+    getDiff: vi.fn(async (_cwd: string, staged = false) => (staged ? "staged" : "unstaged")),
   } as unknown as Pick<
     GitClient,
     | "getCurrentBranch"
@@ -139,10 +134,7 @@ function skippedQuality(identity: string): TaskSessionValidationResult {
 describe("runTaskSessionFeedbackVerification", () => {
   it("uses a separate read-only session and returns one disposition per feedback ID", async () => {
     const f = fixture();
-    const identity = await getTaskSessionSourceSnapshotIdentity(
-      f.git,
-      f.worktreePath,
-    );
+    const identity = await getTaskSessionSourceSnapshotIdentity(f.git, f.worktreePath);
     const response = {
       version: 1,
       projectId: "project",
@@ -205,10 +197,7 @@ describe("runTaskSessionFeedbackVerification", () => {
 
   it("verifies feedback against the original task when no plan is available", async () => {
     const f = fixture();
-    const identity = await getTaskSessionSourceSnapshotIdentity(
-      f.git,
-      f.worktreePath,
-    );
+    const identity = await getTaskSessionSourceSnapshotIdentity(f.git, f.worktreePath);
     const run = vi.fn<RunOpenCode>().mockResolvedValue({
       exitCode: 0,
       output: JSON.stringify({
@@ -262,18 +251,13 @@ describe("runTaskSessionFeedbackVerification", () => {
       },
     });
 
-    expect(run.mock.calls[0]?.[0].prompt).toContain(
-      "No usable plan was available",
-    );
+    expect(run.mock.calls[0]?.[0].prompt).toContain("No usable plan was available");
     expect(run.mock.calls[0]?.[0].prompt).toContain("Original task:");
   });
 
   it("does not invoke an independent verifier with stale source evidence", async () => {
     const f = fixture();
-    const identity = await getTaskSessionSourceSnapshotIdentity(
-      f.git,
-      f.worktreePath,
-    );
+    const identity = await getTaskSessionSourceSnapshotIdentity(f.git, f.worktreePath);
     const run = vi.fn<RunOpenCode>();
     await expect(
       runTaskSessionFeedbackVerification({
@@ -312,10 +296,7 @@ describe("runTaskSessionFeedbackVerification", () => {
     "runs verification with failed advisory AI review and validation failure=%s",
     async (failed) => {
       const f = fixture();
-      const identity = await getTaskSessionSourceSnapshotIdentity(
-        f.git,
-        f.worktreePath,
-      );
+      const identity = await getTaskSessionSourceSnapshotIdentity(f.git, f.worktreePath);
       const run = vi.fn<RunOpenCode>().mockResolvedValue({
         exitCode: 0,
         output: JSON.stringify({
@@ -380,10 +361,7 @@ describe("runTaskSessionFeedbackVerification", () => {
     "reports uncertain feedback when AI verification is %s",
     async (failure) => {
       const f = fixture();
-      const identity = await getTaskSessionSourceSnapshotIdentity(
-        f.git,
-        f.worktreePath,
-      );
+      const identity = await getTaskSessionSourceSnapshotIdentity(f.git, f.worktreePath);
       const run = vi.fn<RunOpenCode>().mockImplementation(async () => {
         if (failure === "execution") throw new Error("AI unavailable");
         return {
@@ -437,10 +415,7 @@ describe("runTaskSessionFeedbackVerification", () => {
 
   it("does not accept advisory fallback after a source change", async () => {
     const f = fixture();
-    const identity = await getTaskSessionSourceSnapshotIdentity(
-      f.git,
-      f.worktreePath,
-    );
+    const identity = await getTaskSessionSourceSnapshotIdentity(f.git, f.worktreePath);
     const run = vi.fn<RunOpenCode>().mockImplementation(async () => {
       fs.writeFileSync(path.join(f.worktreePath, "source.ts"), "changed\\n");
       return { exitCode: 0, output: "malformed", errorOutput: "" };
@@ -485,10 +460,7 @@ describe("runTaskSessionFeedbackVerification", () => {
 
   it("reports uncertain feedback on an invalid AI disposition", async () => {
     const f = fixture();
-    const identity = await getTaskSessionSourceSnapshotIdentity(
-      f.git,
-      f.worktreePath,
-    );
+    const identity = await getTaskSessionSourceSnapshotIdentity(f.git, f.worktreePath);
     const run = vi.fn<RunOpenCode>().mockResolvedValue({
       exitCode: 0,
       output: JSON.stringify({

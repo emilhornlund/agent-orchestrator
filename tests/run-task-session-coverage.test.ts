@@ -27,20 +27,14 @@ afterEach(() => {
 });
 
 function createFixture(coverageCommand?: string) {
-  temporaryRoot = fs.mkdtempSync(
-    path.join(os.tmpdir(), "agent-orchestrator-coverage-runner-"),
-  );
+  temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-coverage-runner-"));
   const repositoryPath = path.join(temporaryRoot, "repository");
   const worktreeRoot = path.join(temporaryRoot, "worktrees");
   const worktreePath = path.join(worktreeRoot, "card-one");
   const storageRoot = path.join(temporaryRoot, "runtime-state");
   fs.mkdirSync(repositoryPath);
   fs.mkdirSync(worktreePath, { recursive: true });
-  fs.writeFileSync(
-    path.join(worktreePath, "src.ts"),
-    "source before\n",
-    "utf8",
-  );
+  fs.writeFileSync(path.join(worktreePath, "src.ts"), "source before\n", "utf8");
 
   const project = {
     id: "project-one",
@@ -202,10 +196,7 @@ describe("runTaskSessionCoverage", () => {
       throw new Error("Expected configured coverage result");
     }
 
-    fs.writeFileSync(
-      path.join(fixture.worktreePath, "src.ts"),
-      "changed source\n",
-    );
+    fs.writeFileSync(path.join(fixture.worktreePath, "src.ts"), "changed source\n");
     const currentIdentity = await getTaskSessionSourceSnapshotIdentity(
       fixture.git,
       fixture.worktreePath,

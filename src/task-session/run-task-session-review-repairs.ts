@@ -44,12 +44,8 @@ export function carryReviewRepairIntoCiCorrection(
 /** Reuses a precomputed first round once; all later rounds must read current source. */
 export function createReviewRoundRunner(
   initialRound: TaskSessionReviewRound | undefined,
-  runFreshReview: (
-    previousFindings: readonly TrackedFinding[],
-  ) => Promise<TaskSessionReviewRound>,
-): (
-  previousFindings: readonly TrackedFinding[],
-) => Promise<TaskSessionReviewRound> {
+  runFreshReview: (previousFindings: readonly TrackedFinding[]) => Promise<TaskSessionReviewRound>,
+): (previousFindings: readonly TrackedFinding[]) => Promise<TaskSessionReviewRound> {
   let pendingInitialRound = initialRound;
   return async (previousFindings) => {
     const cached = pendingInitialRound;
@@ -65,9 +61,7 @@ export interface RunTaskSessionReviewRepairsOptions {
   operationKey: string;
   reviewCycleId?: string;
   expectedPrimarySessionId: string;
-  runReview: (
-    previousFindings: readonly TrackedFinding[],
-  ) => Promise<TaskSessionReviewRound>;
+  runReview: (previousFindings: readonly TrackedFinding[]) => Promise<TaskSessionReviewRound>;
   repair: (
     review: ImplementationReviewResult,
     attempt: number,
@@ -104,12 +98,9 @@ function normalizeRepairOutcome(
     | undefined,
 ): ReviewRepairOutcome {
   if (value === undefined) return { finishedEarly: false };
-  if ("findingDispositions" in value)
-    return { dispositions: value, finishedEarly: false };
+  if ("findingDispositions" in value) return { dispositions: value, finishedEarly: false };
   return {
-    ...(value.dispositions === undefined
-      ? {}
-      : { dispositions: value.dispositions }),
+    ...(value.dispositions === undefined ? {} : { dispositions: value.dispositions }),
     finishedEarly: value.finishedEarly === true,
   };
 }
@@ -283,14 +274,10 @@ function updateFindingLedger(
   cycleId: string,
 ): { review: ImplementationReviewResult; findings: TrackedFinding[] } {
   const assessments = review.previousFindingAssessments ?? [];
-  const byId = new Map(
-    assessments.map((assessment) => [assessment.findingId, assessment]),
-  );
+  const byId = new Map(assessments.map((assessment) => [assessment.findingId, assessment]));
   for (const finding of previous) {
     if (!byId.has(finding.id)) {
-      throw new TaskSessionReviewRepairError(
-        `Review omitted prior finding ${finding.id}`,
-      );
+      throw new TaskSessionReviewRepairError(`Review omitted prior finding ${finding.id}`);
     }
   }
 
@@ -311,20 +298,13 @@ function updateFindingLedger(
         `Unresolved prior finding must remain blocking: ${finding.id}`,
       );
     }
-    if (
-      assessment.status !== "unresolved" &&
-      isReportedBlocking &&
-      !evidenceBackedReopening
-    ) {
+    if (assessment.status !== "unresolved" && isReportedBlocking && !evidenceBackedReopening) {
       throw new TaskSessionReviewRepairError(
         `Review lists ${assessment.status} prior finding as blocking: ${finding.id}`,
       );
     }
   }
-  if (
-    review.verdict === "pass" &&
-    assessments.some(({ status }) => status === "unresolved")
-  ) {
+  if (review.verdict === "pass" && assessments.some(({ status }) => status === "unresolved")) {
     throw new TaskSessionReviewRepairError(
       "A passing review cannot leave prior blocking findings unresolved",
     );
@@ -346,14 +326,7 @@ function updateFindingLedger(
   const normalizedFindings: ImplementationReviewResult["blockingFindings"] = [];
   for (const finding of review.blockingFindings) {
     const fingerprint = createHash("sha256")
-      .update(
-        JSON.stringify([
-          cycleId,
-          finding.kind,
-          finding.summary,
-          finding.location ?? null,
-        ]),
-      )
+      .update(JSON.stringify([cycleId, finding.kind, finding.summary, finding.location ?? null]))
       .digest("hex");
     const id = finding.id ?? `finding-${fingerprint.slice(0, 32)}`;
     const old = updated.find((candidate) => candidate.id === id);
@@ -362,8 +335,7 @@ function updateFindingLedger(
         `Review blocking finding references unknown prior finding: ${finding.id}`,
       );
     }
-    const priorAssessment =
-      finding.id === undefined ? undefined : byId.get(finding.id);
+    const priorAssessment = finding.id === undefined ? undefined : byId.get(finding.id);
     const priorFinding =
       finding.id === undefined
         ? undefined
@@ -454,8 +426,7 @@ async function completePrimaryRepair(
   const baseRevision = latest.revision;
   const baseTimestamp = latest.updatedAt;
   const needsReviewTransition = noChange && latest.phase === "validation";
-  if (needsReviewTransition)
-    latest = transitionTaskExecutionRecord(latest, transitionEvent);
+  if (needsReviewTransition) latest = transitionTaskExecutionRecord(latest, transitionEvent);
   const reviewRepair = latest.reviewRepair;
   if (reviewRepair?.activePrimaryOperation?.operationId !== operationId)
     return { record: latest, noChange: false, contentIdentity: finalIdentity };
@@ -523,9 +494,7 @@ export async function runTaskSessionReviewWithRepairs(
   options: RunTaskSessionReviewRepairsOptions,
 ): Promise<TaskSessionReviewRepairResult> {
   if (!Number.isSafeInteger(options.maxAttempts) || options.maxAttempts < 0)
-    throw new TaskSessionReviewRepairError(
-      "Invalid configured review repair limit",
-    );
+    throw new TaskSessionReviewRepairError("Invalid configured review repair limit");
   let record = options.store.read(options.cardId);
   assertOwner(record, options);
   const cycleId =
@@ -564,15 +533,10 @@ export async function runTaskSessionReviewWithRepairs(
 
   // A completed review round is durable. Recovery must not consume another
   // repair or run another review when its source snapshot is unchanged.
-  if (
-    record.reviewRepair?.status === "exhausted" ||
-    record.reviewRepair?.status === "passed"
-  ) {
+  if (record.reviewRepair?.status === "exhausted" || record.reviewRepair?.status === "passed") {
     if (
       record.reviewRepair.status === "passed" &&
-      record.reviewRepair.findings?.some(
-        (finding) => finding.status === "unresolved",
-      )
+      record.reviewRepair.findings?.some((finding) => finding.status === "unresolved")
     ) {
       throw new TaskSessionReviewRepairError(
         "Persisted passing review contains unresolved blocking findings",
@@ -590,9 +554,7 @@ export async function runTaskSessionReviewWithRepairs(
         remediationAttempt: record.retryCounters.review,
         verdict: previous.verdict,
         contentIdentity: previous.reviewedContentIdentity,
-        blockingFindingIds: boundedIds(
-          previous.blockingFindings.map(({ id }) => id ?? "unknown"),
-        ),
+        blockingFindingIds: boundedIds(previous.blockingFindings.map(({ id }) => id ?? "unknown")),
         ...qualityDiagnostic(record),
       });
       return {
@@ -615,27 +577,15 @@ export async function runTaskSessionReviewWithRepairs(
     try {
       currentIdentity = await options.getCurrentContentIdentity();
     } catch (error) {
-      logReviewStageFailure(
-        options,
-        record,
-        "source-identity-check",
-        round.contentIdentity,
-      );
+      logReviewStageFailure(options, record, "source-identity-check", round.contentIdentity);
       throw error;
     }
     if (
       round.contentIdentity !== currentIdentity ||
       round.review.reviewedContentIdentity !== currentIdentity
     ) {
-      logReviewStageFailure(
-        options,
-        record,
-        "source-identity-check",
-        round.contentIdentity,
-      );
-      throw new TaskSessionReviewRepairError(
-        "Recovered review belongs to a stale source snapshot",
-      );
+      logReviewStageFailure(options, record, "source-identity-check", round.contentIdentity);
+      throw new TaskSessionReviewRepairError("Recovered review belongs to a stale source snapshot");
     }
     record = updateRecord(options.store, record, {
       reviewRepair: {
@@ -677,9 +627,7 @@ export async function runTaskSessionReviewWithRepairs(
       const stored: unknown = options.store.readPrimaryResultArtifact({
         reference: active.promptArtifact.reference as `sha256:${string}`,
         bytes: active.promptArtifact.bytes,
-        ...(active.promptArtifact.path === undefined
-          ? {}
-          : { path: active.promptArtifact.path }),
+        ...(active.promptArtifact.path === undefined ? {} : { path: active.promptArtifact.path }),
       });
       if (
         typeof stored !== "object" ||
@@ -704,12 +652,7 @@ export async function runTaskSessionReviewWithRepairs(
       let afterRepairIdentity: string;
       try {
         outcome = normalizeRepairOutcome(
-          await options.repair(
-            retainedReview,
-            active.pass,
-            active.operationId,
-            stored.prompt,
-          ),
+          await options.repair(retainedReview, active.pass, active.operationId, stored.prompt),
         );
         afterRepairIdentity = await options.getCurrentContentIdentity();
       } catch (error) {
@@ -755,24 +698,14 @@ export async function runTaskSessionReviewWithRepairs(
     try {
       currentIdentity = await options.getCurrentContentIdentity();
     } catch (error) {
-      logReviewStageFailure(
-        options,
-        record,
-        "source-identity-check",
-        round.contentIdentity,
-      );
+      logReviewStageFailure(options, record, "source-identity-check", round.contentIdentity);
       throw error;
     }
     if (
       round.contentIdentity !== currentIdentity ||
       round.review.reviewedContentIdentity !== currentIdentity
     ) {
-      logReviewStageFailure(
-        options,
-        record,
-        "source-identity-check",
-        round.contentIdentity,
-      );
+      logReviewStageFailure(options, record, "source-identity-check", round.contentIdentity);
       throw new TaskSessionReviewRepairError(
         "Review result or quality evidence belongs to a stale source snapshot",
       );
@@ -787,12 +720,7 @@ export async function runTaskSessionReviewWithRepairs(
         cycleId,
       );
     } catch (error) {
-      logReviewStageFailure(
-        options,
-        record,
-        "result-validation",
-        round.contentIdentity,
-      );
+      logReviewStageFailure(options, record, "result-validation", round.contentIdentity);
       throw error;
     }
     const trackedRound = { ...round, review: ledger.review };
@@ -800,9 +728,7 @@ export async function runTaskSessionReviewWithRepairs(
     assertOwner(record, options);
 
     const assessments = ledger.review.previousFindingAssessments ?? [];
-    const previousIds = new Set(
-      (record.reviewRepair?.findings ?? []).map(({ id }) => id),
-    );
+    const previousIds = new Set((record.reviewRepair?.findings ?? []).map(({ id }) => id));
     const resolvedIds = assessments
       .filter(({ status }) => status === "resolved" || status === "superseded")
       .map(({ findingId }) => findingId);
@@ -896,9 +822,7 @@ export async function runTaskSessionReviewWithRepairs(
           ledger.review.blockingFindings.map(({ id }) => id ?? "unknown"),
         ),
         unresolvedFindingIds: boundedIds(
-          ledger.findings
-            .filter(({ status }) => status === "unresolved")
-            .map(({ id }) => id),
+          ledger.findings.filter(({ status }) => status === "unresolved").map(({ id }) => id),
         ),
         contentIdentity: round.contentIdentity,
         ...qualityDiagnostic(record),
@@ -911,10 +835,10 @@ export async function runTaskSessionReviewWithRepairs(
     const prompt =
       (await options.buildRepairPrompt?.(ledger.review, repairAttempt)) ??
       JSON.stringify({ review: ledger.review, attempt: repairAttempt });
-    const promptArtifact = options.store.writePrimaryResultArtifact(
-      `${operationId}:prompt`,
-      { prompt, review: ledger.review },
-    );
+    const promptArtifact = options.store.writePrimaryResultArtifact(`${operationId}:prompt`, {
+      prompt,
+      review: ledger.review,
+    });
     updateRecord(options.store, record, {
       retryCounters: { ...record.retryCounters, review: repairAttempt },
       // Once a primary repair is durably reserved, older remediation-failure
@@ -938,14 +862,11 @@ export async function runTaskSessionReviewWithRepairs(
       reviewPass: attempts + 1,
       remediationAttempt: repairAttempt,
       findingsBeforeRemediation: boundedIds(
-        ledger.findings
-          .filter(({ status }) => status === "unresolved")
-          .map(({ id }) => id),
+        ledger.findings.filter(({ status }) => status === "unresolved").map(({ id }) => id),
       ),
       contentIdentity: round.contentIdentity,
     });
-    let failureCategory:
-      "remediation-execution" | "source-identity-check" | "validation" =
+    let failureCategory: "remediation-execution" | "source-identity-check" | "validation" =
       "remediation-execution";
     let outcome: ReviewRepairOutcome;
     let afterRepairIdentity: string;
@@ -1017,9 +938,7 @@ export async function runTaskSessionReviewWithRepairs(
           { cause: error },
           { before, after, unchanged: false },
         );
-      if (
-        latest.reviewRepair?.activePrimaryOperation?.operationId !== operationId
-      ) {
+      if (latest.reviewRepair?.activePrimaryOperation?.operationId !== operationId) {
         updateRecord(options.store, latest, {
           reviewRemediationFailure: {
             cycleId,
@@ -1039,9 +958,7 @@ export async function runTaskSessionReviewWithRepairs(
           ledger.review.blockingFindings.map(({ id }) => id ?? "unknown"),
         ),
         findingsBeforeRemediation: boundedIds(
-          ledger.findings
-            .filter(({ status }) => status === "unresolved")
-            .map(({ id }) => id),
+          ledger.findings.filter(({ status }) => status === "unresolved").map(({ id }) => id),
         ),
         beforeContentIdentity: before,
         afterContentIdentity: after,

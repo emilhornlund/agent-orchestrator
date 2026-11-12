@@ -28,9 +28,7 @@ export function buildTaskSessionCiRepairPrompt(input: {
     input.diagnostics.length === 0 ||
     input.diagnostics.some((item) => item.headSha !== input.headSha)
   ) {
-    throw new Error(
-      "CI repair requires diagnostics for the exact failed PR head",
-    );
+    throw new Error("CI repair requires diagnostics for the exact failed PR head");
   }
   return [
     "Repair the required GitHub CI failures on the current PR head in the existing primary task session.",

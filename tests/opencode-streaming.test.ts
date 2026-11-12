@@ -89,18 +89,8 @@ describe("OpenCode streaming output", () => {
     vi.stubEnv("ANTHROPIC_API_KEY", "anthropic-project-secret");
     vi.stubEnv("TRELLO_API_KEY", "must-not-leak");
     const modelRuns = [
-      [
-        "openai/gpt-test",
-        "OPENAI_API_KEY",
-        "openai-project-secret",
-        "ANTHROPIC_API_KEY",
-      ],
-      [
-        "anthropic/claude-test",
-        "ANTHROPIC_API_KEY",
-        "anthropic-project-secret",
-        "OPENAI_API_KEY",
-      ],
+      ["openai/gpt-test", "OPENAI_API_KEY", "openai-project-secret", "ANTHROPIC_API_KEY"],
+      ["anthropic/claude-test", "ANTHROPIC_API_KEY", "anthropic-project-secret", "OPENAI_API_KEY"],
     ] as const;
 
     for (const [model, allowedKey, allowedValue, excludedKey] of modelRuns) {
@@ -201,8 +191,7 @@ describe("OpenCode streaming output", () => {
   });
 
   it("redacts registered PEM literal and encoded forms from the actual OpenCode prompt argument", async () => {
-    const pem =
-      "-----BEGIN PRIVATE KEY-----\nsynthetic-open-code-pem\n-----END PRIVATE KEY-----";
+    const pem = "-----BEGIN PRIVATE KEY-----\nsynthetic-open-code-pem\n-----END PRIVATE KEY-----";
     const child = fakeChild();
     spawnMock.mockReturnValue(child);
     const prompt = `Inspect this attachment: ${pem}; encoded=${Buffer.from(pem).toString("base64url")}`;
@@ -242,9 +231,7 @@ describe("OpenCode streaming output", () => {
     await expect(result).resolves.toMatchObject({
       output: events.replace("secret-value", "[REDACTED]"),
     });
-    expect(
-      fs.readFileSync(path.join(directory, "card.log"), "utf8"),
-    ).not.toContain("secret-value");
+    expect(fs.readFileSync(path.join(directory, "card.log"), "utf8")).not.toContain("secret-value");
   });
 
   it("captures a session ID from the complete structured stream", async () => {
@@ -310,18 +297,12 @@ describe("OpenCode streaming output", () => {
 
   it("handles large streams incrementally without writing card output to container streams", async () => {
     const child = fakeChild();
-    const stdoutWrite = vi
-      .spyOn(process.stdout, "write")
-      .mockImplementation(() => true);
-    const stderrWrite = vi
-      .spyOn(process.stderr, "write")
-      .mockImplementation(() => true);
+    const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const result = run(child);
     for (let i = 0; i < 500; i += 1)
       child.stdout.emit("data", Buffer.from(`${"x".repeat(2048)}\n`));
-    expect(fs.statSync(path.join(directory, "card.log")).size).toBeGreaterThan(
-      1_000_000,
-    );
+    expect(fs.statSync(path.join(directory, "card.log")).size).toBeGreaterThan(1_000_000);
     child.emit("close", 0);
     const captured = await result;
     expect(captured.output.length).toBeGreaterThan(1_000_000);
@@ -356,8 +337,7 @@ describe("OpenCode streaming output", () => {
     const secondChild = fakeChild();
     const timeout = run(secondChild, { timeoutMilliseconds: 1_000 });
     secondChild.stdout.emit("data", Buffer.from("before timeout\n"));
-    const rejection =
-      expect(timeout).rejects.toBeInstanceOf(OpenCodeTimeoutError);
+    const rejection = expect(timeout).rejects.toBeInstanceOf(OpenCodeTimeoutError);
     await vi.advanceTimersByTimeAsync(6_000);
     secondChild.emit("close", null);
     await rejection;

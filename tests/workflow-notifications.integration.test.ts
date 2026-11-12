@@ -37,9 +37,7 @@ const smtpMessageId = (message: string) =>
 const decodeSmtpMessage = (message: string) =>
   message
     .replace(/=\r\n/gu, "")
-    .replace(/=([0-9A-F]{2})/gu, (_, byte: string) =>
-      String.fromCharCode(parseInt(byte, 16)),
-    );
+    .replace(/=([0-9A-F]{2})/gu, (_, byte: string) => String.fromCharCode(parseInt(byte, 16)));
 function delivery(root: string, project: string) {
   return new NotificationOutbox(
     root,
@@ -59,9 +57,7 @@ function tracked(notifier: EmailNotifier) {
   quiesce.push(idle);
   let started = 0;
   const sender: EmailNotifier = {
-    ...(notifier.deliveryTarget
-      ? { deliveryTarget: notifier.deliveryTarget }
-      : {}),
+    ...(notifier.deliveryTarget ? { deliveryTarget: notifier.deliveryTarget } : {}),
     isEventEnabled: (event) => notifier.isEventEnabled?.(event) ?? true,
     send: async (message) => {
       started++;
@@ -100,9 +96,7 @@ describe("actual Git/process workflow events -> durable obligation -> outbox -> 
       });
       if (fault === "accepted-response-lost") {
         f.services.change({ loseCreationResponse: true });
-        const create = f.services.github.createPullRequest.bind(
-          f.services.github,
-        );
+        const create = f.services.github.createPullRequest.bind(f.services.github);
         f.services.github.createPullRequest = async (input) => {
           try {
             return await create(input);
@@ -112,10 +106,7 @@ describe("actual Git/process workflow events -> durable obligation -> outbox -> 
         };
       }
       vi.useFakeTimers({ toFake: ["Date"] });
-      const source = await getTaskSessionSourceSnapshotIdentity(
-        f.git,
-        f.worktreePath,
-      );
+      const source = await getTaskSessionSourceSnapshotIdentity(f.git, f.worktreePath);
       f.authority.run(() =>
         beginInitialPublication(
           {
@@ -127,12 +118,8 @@ describe("actual Git/process workflow events -> durable obligation -> outbox -> 
             worktreePath: f.worktreePath,
             branch: "agent/card",
             commitMessage: "feat: real workflow to observed SMTP",
-            reviewResult: draft
-              ? "Failed: outstanding advisory finding"
-              : "Passed",
-            remediationResult: draft
-              ? "Outstanding issues retained"
-              : "Not required",
+            reviewResult: draft ? "Failed: outstanding advisory finding" : "Passed",
+            remediationResult: draft ? "Outstanding issues retained" : "Not required",
           },
           "Implementation and observed checks",
           source,
@@ -167,9 +154,8 @@ describe("actual Git/process workflow events -> durable obligation -> outbox -> 
       }
       expect(f.store.read()!.lifecycle).toBe("publication");
       expect(
-        f.authority.run(() =>
-          new TaskMutationQueue(f.project.contextRoot, f.project).getActive(),
-        )?.cardId,
+        f.authority.run(() => new TaskMutationQueue(f.project.contextRoot, f.project).getActive())
+          ?.cardId,
       ).toBe("card");
       const originalPr = f.services.read().prs[0]?.url;
       if (fault.includes("create") || fault === "accepted-response-lost") {
@@ -191,11 +177,7 @@ describe("actual Git/process workflow events -> durable obligation -> outbox -> 
         rejectMove: false,
         loseCommentResponse: false,
       });
-      for (
-        let pass = 0;
-        pass < 12 && f.store.read()!.lifecycle === "publication";
-        pass++
-      ) {
+      for (let pass = 0; pass < 12 && f.store.read()!.lifecycle === "publication"; pass++) {
         tick();
         await poll();
       }
@@ -205,33 +187,24 @@ describe("actual Git/process workflow events -> durable obligation -> outbox -> 
       expect(f.services.read().comments).toHaveLength(1);
       expect(f.services.read().list).toBe("review");
       expect(f.services.read().prs[0]!.draft).toBe(draft);
-      expect(
-        f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD"),
-      ).toBe("1");
+      expect(f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD")).toBe("1");
       await vi.waitFor(() =>
         expect(
           delivery(f.project.contextRoot, "p")
             .records()
-            .some(
-              (record) =>
-                record.event === "humanReview" && record.dispatches.length > 0,
-            ),
+            .some((record) => record.event === "humanReview" && record.dispatches.length > 0),
         ).toBe(true),
       );
       await vi.waitFor(() =>
         expect(mail.finished()).toBeGreaterThanOrEqual(
-          fault.includes("create") || fault === "accepted-response-lost"
-            ? 2
-            : 1,
+          fault.includes("create") || fault === "accepted-response-lost" ? 2 : 1,
         ),
       );
       const outbox = () => delivery(f.project.contextRoot, "p");
       const event = outbox()
         .records()
         .find((record) => record.event === "humanReview")!;
-      await vi.waitFor(() =>
-        expect(mail.settled.has(event.messageId)).toBe(true),
-      );
+      await vi.waitFor(() => expect(mail.settled.has(event.messageId)).toBe(true));
       await vi.waitFor(() =>
         expect(
           outbox()
@@ -252,29 +225,19 @@ describe("actual Git/process workflow events -> durable obligation -> outbox -> 
         .records()
         .find((record) => record.event === "humanReview")!;
       expect(ready.dispatches).toHaveLength(smtp === "reject" ? 2 : 1);
-      expect(ready.dispatches.at(-1)?.outcome).toBe(
-        smtp === "reject" ? "confirmed" : "ambiguous",
-      );
+      expect(ready.dispatches.at(-1)?.outcome).toBe(smtp === "reject" ? "confirmed" : "ambiguous");
       expect(f.store.read()!.publicationState).toBe("open");
       expect(
-        f.services
-          .entries()
-          .filter((entry) => entry.type === "move-card:second"),
+        f.services.entries().filter((entry) => entry.type === "move-card:second"),
       ).toHaveLength(0);
       const ids = sink.messages.map(smtpMessageId);
       expect(ids.every(Boolean)).toBe(true);
       expect(new Set(ids).size).toBe(ids.length);
       const expected = outbox()
         .records()
-        .filter((record) =>
-          ["humanReview", "attentionRequired"].includes(record.event),
-        );
-      expect(
-        expected.filter((record) => record.event === "humanReview"),
-      ).toHaveLength(1);
-      expect(
-        expected.filter((record) => record.event === "attentionRequired"),
-      ).toHaveLength(
+        .filter((record) => ["humanReview", "attentionRequired"].includes(record.event));
+      expect(expected.filter((record) => record.event === "humanReview")).toHaveLength(1);
+      expect(expected.filter((record) => record.event === "attentionRequired")).toHaveLength(
         fault === "before-create" || fault === "accepted-response-lost" ? 1 : 0,
       );
       expect(sink.messages).toHaveLength(expected.length);
@@ -335,60 +298,50 @@ describe("actual Git/process workflow events -> durable obligation -> outbox -> 
       leases.push(b.lease);
       let hideClaim = true;
       const secondClaims: string[] = [];
-      vi.stubGlobal(
-        "fetch",
-        async (input: URL | string, init?: RequestInit) => {
-          const url = new URL(input);
-          const f = url.pathname.includes("/a-") ? a : b;
-          if (
-            (init?.method ?? "GET") === "GET" &&
-            url.pathname === "/1/lists/a-ready/cards"
-          )
-            return Response.json([
-              ...(a.card.idList === a.project.trello.readyListId
-                ? [a.card]
-                : []),
-              {
-                ...a.card,
-                id: "a-second",
-                idList: a.project.trello.readyListId,
-                url: "https://trello.com/c/a-second",
-              },
-            ]);
-          if (url.pathname.includes("a-second") && init?.method === "PUT")
-            secondClaims.push(url.pathname);
-          if (
-            f === a &&
-            hideClaim &&
-            (init?.method ?? "GET") === "GET" &&
-            url.pathname === "/1/cards/a-card"
-          )
-            return Response.json({
+      vi.stubGlobal("fetch", async (input: URL | string, init?: RequestInit) => {
+        const url = new URL(input);
+        const f = url.pathname.includes("/a-") ? a : b;
+        if ((init?.method ?? "GET") === "GET" && url.pathname === "/1/lists/a-ready/cards")
+          return Response.json([
+            ...(a.card.idList === a.project.trello.readyListId ? [a.card] : []),
+            {
               ...a.card,
+              id: "a-second",
               idList: a.project.trello.readyListId,
-            });
-          const result = await f.fetch(url, init);
-          if (
-            f === a &&
-            hideClaim &&
-            init?.method === "PUT" &&
-            String(init.body).includes(a.project.trello.workingListId)
-          )
-            throw new Error("Accepted Working move; acknowledgment lost");
-          return result;
-        },
-      );
+              url: "https://trello.com/c/a-second",
+            },
+          ]);
+        if (url.pathname.includes("a-second") && init?.method === "PUT")
+          secondClaims.push(url.pathname);
+        if (
+          f === a &&
+          hideClaim &&
+          (init?.method ?? "GET") === "GET" &&
+          url.pathname === "/1/cards/a-card"
+        )
+          return Response.json({
+            ...a.card,
+            idList: a.project.trello.readyListId,
+          });
+        const result = await f.fetch(url, init);
+        if (
+          f === a &&
+          hideClaim &&
+          init?.method === "PUT" &&
+          String(init.body).includes(a.project.trello.workingListId)
+        )
+          throw new Error("Accepted Working move; acknowledgment lost");
+        return result;
+      });
       if (event === "failure") {
         a.project.opencode.refinement.model = "openai/test";
         const bin = path.join(root, "failure-bin");
         const home = path.join(root, "failure-home");
         fs.mkdirSync(bin);
         fs.mkdirSync(home);
-        fs.writeFileSync(
-          path.join(bin, "opencode"),
-          `#!${process.execPath}\nprocess.exit(7);\n`,
-          { mode: 0o700 },
-        );
+        fs.writeFileSync(path.join(bin, "opencode"), `#!${process.execPath}\nprocess.exit(7);\n`, {
+          mode: 0o700,
+        });
         const real = new OpenCodeClient();
         a.engineer.mockImplementation((options) =>
           real.run({
@@ -420,30 +373,24 @@ describe("actual Git/process workflow events -> durable obligation -> outbox -> 
       await poll(a);
       await mail.idle();
       expect(
-        a.authority.store
-          .read()!
-          .pendingOperations.some((op) => op.status === "ambiguous"),
+        a.authority.store.read()!.pendingOperations.some((op) => op.status === "ambiguous"),
       ).toBe(true);
       expect(
-        a.authority.run(() =>
-          new TaskMutationQueue(a.pinned.storageRoot, a.project).getActive(),
-        )?.cardId,
+        a.authority.run(() => new TaskMutationQueue(a.pinned.storageRoot, a.project).getActive())
+          ?.cardId,
       ).toBe("a-card");
       await poll(b);
       await mail.idle();
       expect(b.authority.store.read()!.lifecycle).toBe("refined");
       expect(
-        b.authority.run(() =>
-          new TaskMutationQueue(b.pinned.storageRoot, b.project).getActive(),
-        ),
+        b.authority.run(() => new TaskMutationQueue(b.pinned.storageRoot, b.project).getActive()),
       ).toBeNull();
       // Resume A from durable claim/owned real-worktree proof, without a new task.
       hideClaim = false;
       for (
         let pass = 0;
         pass < 8 &&
-        a.authority.store.read()!.lifecycle !==
-          (event === "failure" ? "failed" : "refined");
+        a.authority.store.read()!.lifecycle !== (event === "failure" ? "failed" : "refined");
         pass++
       ) {
         tick();
@@ -457,16 +404,12 @@ describe("actual Git/process workflow events -> durable obligation -> outbox -> 
         // Verified originals/Failed/comment release the queue while preserving
         // the failed worktree and process diagnostics.
         expect(
-          a.authority.run(() =>
-            new TaskMutationQueue(a.pinned.storageRoot, a.project).getActive(),
-          ),
+          a.authority.run(() => new TaskMutationQueue(a.pinned.storageRoot, a.project).getActive()),
         ).toBeNull();
       } else {
         expect(a.authority.store.read()!.lifecycle).toBe("refined");
         expect(
-          a.authority.run(() =>
-            new TaskMutationQueue(a.pinned.storageRoot, a.project).getActive(),
-          ),
+          a.authority.run(() => new TaskMutationQueue(a.pinned.storageRoot, a.project).getActive()),
         ).toBeNull();
       }
       // A prepared B obligation may have been observed before its final move was
@@ -475,15 +418,12 @@ describe("actual Git/process workflow events -> durable obligation -> outbox -> 
       tick();
       await delivery(a.pinned.storageRoot, "a").drain(mail.sender, () => {});
       await delivery(b.pinned.storageRoot, "b").drain(mail.sender, () => {});
-      if (smtp === "lose-ack")
-        await vi.waitFor(() => expect(sink.messages).toHaveLength(2));
+      if (smtp === "lose-ack") await vi.waitFor(() => expect(sink.messages).toHaveLength(2));
       await vi.waitFor(() => expect(mail.finished()).toBeGreaterThanOrEqual(2));
       const old = delivery(a.pinned.storageRoot, "a").records();
       expect(
         old.some(
-          (record) =>
-            record.event ===
-            (event === "failure" ? "failed" : "refinementComplete"),
+          (record) => record.event === (event === "failure" ? "failed" : "refinementComplete"),
         ),
       ).toBe(true);
       expect(
@@ -499,14 +439,8 @@ describe("actual Git/process workflow events -> durable obligation -> outbox -> 
       sink.mode("accept");
       for (let pass = 0; pass < 3; pass++) {
         tick();
-        await delivery(a.pinned.storageRoot, "a").drain(
-          sink.notifier,
-          () => {},
-        );
-        await delivery(b.pinned.storageRoot, "b").drain(
-          sink.notifier,
-          () => {},
-        );
+        await delivery(a.pinned.storageRoot, "a").drain(sink.notifier, () => {});
+        await delivery(b.pinned.storageRoot, "b").drain(sink.notifier, () => {});
       }
       expect(sink.messages).toHaveLength(2);
       const observed = sink.messages.map(decodeSmtpMessage).join("\n");

@@ -5,9 +5,7 @@ import type { TestProject } from "vitest/node";
 
 /** Own all filesystem fixtures and child-process artifacts for one test run. */
 export default function setup(project: TestProject): () => void {
-  const root = fs.mkdtempSync(
-    path.join(os.tmpdir(), "agent-orchestrator-tests-"),
-  );
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-tests-"));
   project.config.env ??= {};
   for (const key of ["TMPDIR", "TMP", "TEMP"]) {
     project.config.env[key] = root;

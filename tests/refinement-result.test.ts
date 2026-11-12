@@ -15,9 +15,7 @@ import {
 const temporaryDirectories: string[] = [];
 
 function createWorktree(): string {
-  const worktreePath = fs.mkdtempSync(
-    path.join(os.tmpdir(), "agent-orchestrator-refinement-"),
-  );
+  const worktreePath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-refinement-"));
 
   temporaryDirectories.push(worktreePath);
 
@@ -98,9 +96,7 @@ describe("refinement result", () => {
     fs.mkdirSync(path.dirname(resultPath), { recursive: true });
     fs.symlinkSync(targetPath, resultPath);
 
-    expect(() => clearRefinementResult(worktreePath)).toThrow(
-      "preserving unknown artifact",
-    );
+    expect(() => clearRefinementResult(worktreePath)).toThrow("preserving unknown artifact");
 
     expect(fs.lstatSync(resultPath).isSymbolicLink()).toBe(true);
     expect(fs.readFileSync(targetPath, "utf8")).toBe("stale");
@@ -138,9 +134,7 @@ describe("refinement result", () => {
   it("rejects a missing refinement result", () => {
     const worktreePath = createWorktree();
 
-    expect(() => readRefinementResult(worktreePath)).toThrow(
-      "Refinement result file not found",
-    );
+    expect(() => readRefinementResult(worktreePath)).toThrow("Refinement result file not found");
   });
 
   it("rejects malformed JSON", () => {
@@ -150,9 +144,7 @@ describe("refinement result", () => {
     fs.mkdirSync(path.dirname(resultPath), { recursive: true });
     fs.writeFileSync(resultPath, "{");
 
-    expect(() => readRefinementResult(worktreePath)).toThrow(
-      "Invalid refinement result JSON",
-    );
+    expect(() => readRefinementResult(worktreePath)).toThrow("Invalid refinement result JSON");
   });
 
   it("rejects an unsupported task type", () => {
@@ -164,9 +156,7 @@ describe("refinement result", () => {
       description: "Description",
     });
 
-    expect(() => readRefinementResult(worktreePath)).toThrow(
-      "Invalid refinement result",
-    );
+    expect(() => readRefinementResult(worktreePath)).toThrow("Invalid refinement result");
   });
 
   it("rejects a result missing its task type", () => {
@@ -177,9 +167,7 @@ describe("refinement result", () => {
       description: "Description",
     });
 
-    expect(() => readRefinementResult(worktreePath)).toThrow(
-      "Invalid refinement result",
-    );
+    expect(() => readRefinementResult(worktreePath)).toThrow("Invalid refinement result");
   });
 
   it("rejects blank titles", () => {
@@ -191,9 +179,7 @@ describe("refinement result", () => {
       description: "Description",
     });
 
-    expect(() => readRefinementResult(worktreePath)).toThrow(
-      "Refinement title must not be blank",
-    );
+    expect(() => readRefinementResult(worktreePath)).toThrow("Refinement title must not be blank");
   });
 
   it("rejects blank descriptions", () => {
@@ -220,9 +206,7 @@ describe("refinement result", () => {
       labelId: "arbitrary-label",
     });
 
-    expect(() => readRefinementResult(worktreePath)).toThrow(
-      "Invalid refinement result",
-    );
+    expect(() => readRefinementResult(worktreePath)).toThrow("Invalid refinement result");
   });
 
   it("rejects symbolic links", () => {

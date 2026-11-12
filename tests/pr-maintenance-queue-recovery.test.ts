@@ -19,8 +19,7 @@ const originalHead = "a6143f17211d8fa0e18b2f07307963f9941b3e26";
 const preparedHead = "1797fa6c2bfce50f547e05d993923e046fc8796d";
 const baseHead = "f9b7b132eca9d9484c24d273630a057cbb066ed6";
 const operationId = "7d7d0a40-fa6b-49a1-9054-d4a2d04fd140";
-const originalOperationKey =
-  "task-session:6adde9527d050aac6da503da:73e8283eecaf4778";
+const originalOperationKey = "task-session:6adde9527d050aac6da503da:73e8283eecaf4778";
 const prUrl = "https://github.com/emilhornlund/agent-orchestrator/pull/142";
 const date = "2026-10-25T17:37:28.178Z";
 
@@ -96,16 +95,11 @@ function fixture() {
   });
   // The original implementation is already finished before maintenance begins.
   // Complete it in the persisted queue fixture without changing the failed owner.
-  const queueFile = path.join(
-    context,
-    "task-mutation-queues",
-    `${project.id}.json`,
-  );
+  const queueFile = path.join(context, "task-mutation-queues", `${project.id}.json`);
   const queueJson = JSON.parse(fs.readFileSync(queueFile, "utf8")) as {
     events: Array<{ eventId: string; status: string }>;
   };
-  queueJson.events.find((e) => e.eventId === implementationId)!.status =
-    "completed";
+  queueJson.events.find((e) => e.eventId === implementationId)!.status = "completed";
   fs.writeFileSync(queueFile, JSON.stringify(queueJson), "utf8");
   const terminalId = `terminal-pr:${cardId}:CLOSED:${originalHead}`;
   queue.enqueue({
@@ -160,13 +154,9 @@ describe("legacy PR-maintenance preservation", () => {
     const restartedQueue = new TaskMutationQueue(f.context, f.project);
     const restartedStore = new PrMaintenanceStore(f.context, f.project);
     expect(restartedStore.inspect(operationId)?.status).toBe("uncertain");
-    expect(
-      restartedStore.inspect(operationId)?.localPreparation?.resultingHead,
-    ).toBe(preparedHead);
+    expect(restartedStore.inspect(operationId)?.localPreparation?.resultingHead).toBe(preparedHead);
     expect(restartedQueue.getActive()?.status).toBe("failed");
-    expect(
-      restartedQueue.list().find((e) => e.eventId === f.maintenanceId)?.status,
-    ).toBe("failed");
+    expect(restartedQueue.list().find((e) => e.eventId === f.maintenanceId)?.status).toBe("failed");
     retireFailedUnpublishedPrMaintenance({
       project: f.project,
       maintenanceStore: restartedStore,
@@ -193,13 +183,9 @@ describe("legacy PR-maintenance preservation", () => {
       signal: new AbortController().signal,
       observedReviewCardIds: [],
     });
-    expect(f.queue.list().find((e) => e.eventId === f.terminalId)?.status).toBe(
-      "queued",
-    );
+    expect(f.queue.list().find((e) => e.eventId === f.terminalId)?.status).toBe("queued");
     expect(f.queue.claimNext()).toBeNull();
-    expect(f.store.inspect(operationId)?.localPreparation?.resultingHead).toBe(
-      preparedHead,
-    );
+    expect(f.store.inspect(operationId)?.localPreparation?.resultingHead).toBe(preparedHead);
   });
 
   it("does not infer safe cleanup from a deleted branch", async () => {
@@ -226,9 +212,7 @@ describe("legacy PR-maintenance preservation", () => {
       signal: new AbortController().signal,
       observedReviewCardIds: [],
     });
-    expect(f.queue.list().find((e) => e.eventId === f.terminalId)?.status).toBe(
-      "queued",
-    );
+    expect(f.queue.list().find((e) => e.eventId === f.terminalId)?.status).toBe("queued");
     expect(f.queue.claimNext()).toBeNull();
   });
 
@@ -259,9 +243,7 @@ describe("legacy PR-maintenance preservation", () => {
         observedReviewCardIds: [],
       }),
     ).rejects.toThrow(/could not be verified/);
-    expect(f.queue.list().find((e) => e.eventId === f.terminalId)?.status).toBe(
-      "queued",
-    );
+    expect(f.queue.list().find((e) => e.eventId === f.terminalId)?.status).toBe("queued");
   });
 
   it("does not delete the rebased worktree when a closed PR card is returned to Backlog", async () => {

@@ -76,14 +76,8 @@ describe("reconciliation block storage", () => {
   it.each([
     ["invalid JSON", "{"],
     ["missing required value", JSON.stringify({ version: 1 })],
-    [
-      "unsupported operation",
-      JSON.stringify({ ...block(), operation: "GitHub unknown" }),
-    ],
-    [
-      "mismatched project",
-      JSON.stringify({ ...block(), projectId: "project-two" }),
-    ],
+    ["unsupported operation", JSON.stringify({ ...block(), operation: "GitHub unknown" })],
+    ["mismatched project", JSON.stringify({ ...block(), projectId: "project-two" })],
     [
       "inconsistent recovery condition",
       JSON.stringify({ ...block(), recoveryCondition: "worker-restart" }),
@@ -109,12 +103,8 @@ describe("reconciliation block storage", () => {
     fs.mkdirSync(outside);
     fs.symlinkSync(outside, projectDirectory, "dir");
 
-    expect(loadReconciliationBlock(root, "project-one").status).toBe(
-      "malformed",
-    );
-    expect(() => writeReconciliationBlock(root, block())).toThrow(
-      "symbolic-link",
-    );
+    expect(loadReconciliationBlock(root, "project-one").status).toBe("malformed");
+    expect(() => writeReconciliationBlock(root, block())).toThrow("symbolic-link");
   });
 
   it("removes only the known block file", () => {

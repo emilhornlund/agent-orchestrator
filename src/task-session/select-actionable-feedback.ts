@@ -4,8 +4,7 @@ import type {
   PullRequestReview,
 } from "../github/github-client.js";
 
-export type ConversationClassification =
-  "actionable" | "discussion" | "not-actionable";
+export type ConversationClassification = "actionable" | "discussion" | "not-actionable";
 
 export interface SelectedFeedbackItem {
   key: string;
@@ -31,9 +30,7 @@ export interface SelectActionableFeedbackInput {
   botAuthor: string;
   reviews: readonly PullRequestReview[];
   conversationComments: readonly PullRequestConversationComment[];
-  conversationClassifications?: Readonly<
-    Record<string, ConversationClassification>
-  >;
+  conversationClassifications?: Readonly<Record<string, ConversationClassification>>;
 }
 
 function nonBlank(value: string | null | undefined): value is string {
@@ -65,9 +62,7 @@ function inlineItem(
   };
 }
 
-export function selectActionableFeedback(
-  input: SelectActionableFeedbackInput,
-): FeedbackSelection {
+export function selectActionableFeedback(input: SelectActionableFeedbackInput): FeedbackSelection {
   const actionable: SelectedFeedbackItem[] = [];
   const discussion: PullRequestConversationComment[] = [];
   const attentionNeeded: FeedbackSelection["attentionNeeded"] = [];
@@ -89,23 +84,16 @@ export function selectActionableFeedback(
         id: String(review.id),
         author: review.author,
         body: review.body,
-        ...(review.commitSha === undefined
-          ? {}
-          : { commitSha: review.commitSha }),
+        ...(review.commitSha === undefined ? {} : { commitSha: review.commitSha }),
       });
     }
 
     for (const comment of review.inlineComments) {
       if (comment.isResolved === true || comment.isOutdated === true) continue;
-      if (
-        carried &&
-        (comment.isResolved === undefined || comment.isOutdated === undefined)
-      ) {
+      if (carried && (comment.isResolved === undefined || comment.isOutdated === undefined)) {
         attentionNeeded.push({
           feedbackId:
-            comment.id === undefined
-              ? `review:${review.id}`
-              : `inline-comment:${comment.id}`,
+            comment.id === undefined ? `review:${review.id}` : `inline-comment:${comment.id}`,
           reason: "Carried-forward inline thread resolution state is unknown",
         });
         continue;
@@ -133,17 +121,14 @@ export function selectActionableFeedback(
         id: String(comment.id),
         author: comment.author,
         body: comment.body,
-        ...(comment.commitSha === undefined
-          ? {}
-          : { commitSha: comment.commitSha }),
+        ...(comment.commitSha === undefined ? {} : { commitSha: comment.commitSha }),
       });
     } else {
       discussion.push(comment);
       if (classification === undefined) {
         attentionNeeded.push({
           feedbackId: key,
-          reason:
-            "Conversation comment requires explicit actionability classification",
+          reason: "Conversation comment requires explicit actionability classification",
         });
       }
     }

@@ -45,10 +45,7 @@ export function getSetupTrackedDelta(
   const beforeMap = new Map(before.files.map((file) => [file.path, file]));
   const afterMap = new Map(after.files.map((file) => [file.path, file]));
   const currentMap = new Map(current.files.map((file) => [file.path, file]));
-  const eligible = new Set([
-    ...committablePaths(before),
-    ...committablePaths(after),
-  ]);
+  const eligible = new Set([...committablePaths(before), ...committablePaths(after)]);
   const changed = [...eligible]
     .filter(
       (filePath) =>
@@ -58,20 +55,12 @@ export function getSetupTrackedDelta(
     .sort((a, b) => a.localeCompare(b));
   const context = changed.map((filePath) => ({
     path: filePath,
-    before: beforeMap.has(filePath)
-      ? setupFileIdentity(beforeMap.get(filePath)!)
-      : null,
-    after: afterMap.has(filePath)
-      ? setupFileIdentity(afterMap.get(filePath)!)
-      : null,
-    current: currentMap.has(filePath)
-      ? setupFileIdentity(currentMap.get(filePath)!)
-      : null,
+    before: beforeMap.has(filePath) ? setupFileIdentity(beforeMap.get(filePath)!) : null,
+    after: afterMap.has(filePath) ? setupFileIdentity(afterMap.get(filePath)!) : null,
+    current: currentMap.has(filePath) ? setupFileIdentity(currentMap.get(filePath)!) : null,
   }));
   return {
-    candidates: changed.map(
-      (filePath) => afterMap.get(filePath) ?? beforeMap.get(filePath)!,
-    ),
+    candidates: changed.map((filePath) => afterMap.get(filePath) ?? beforeMap.get(filePath)!),
     contextDigest: digest(context),
   };
 }
@@ -82,26 +71,16 @@ export function buildSetupRelevancePrompt(
   after: SetupInventory,
   current: SetupInventory,
 ): string {
-  const { candidates, contextDigest } = getSetupTrackedDelta(
-    before,
-    after,
-    current,
-  );
+  const { candidates, contextDigest } = getSetupTrackedDelta(before, after, current);
   const beforeMap = new Map(before.files.map((file) => [file.path, file]));
   const afterMap = new Map(after.files.map((file) => [file.path, file]));
   const currentMap = new Map(current.files.map((file) => [file.path, file]));
   const delta = candidates.map((file) => ({
     path: file.path,
     identity: setupFileIdentity(file),
-    before: beforeMap.has(file.path)
-      ? setupFileIdentity(beforeMap.get(file.path)!)
-      : null,
-    after: afterMap.has(file.path)
-      ? setupFileIdentity(afterMap.get(file.path)!)
-      : null,
-    current: currentMap.has(file.path)
-      ? setupFileIdentity(currentMap.get(file.path)!)
-      : null,
+    before: beforeMap.has(file.path) ? setupFileIdentity(beforeMap.get(file.path)!) : null,
+    after: afterMap.has(file.path) ? setupFileIdentity(afterMap.get(file.path)!) : null,
+    current: currentMap.has(file.path) ? setupFileIdentity(currentMap.get(file.path)!) : null,
     mode: currentMap.get(file.path)?.mode ?? null,
   }));
   return [
@@ -122,11 +101,7 @@ export function resolveSetupCommitScope(
   current: SetupInventory,
   rawVerdict: unknown,
 ): SetupScopeEvidence {
-  const { candidates, contextDigest } = getSetupTrackedDelta(
-    before,
-    after,
-    current,
-  );
+  const { candidates, contextDigest } = getSetupTrackedDelta(before, after, current);
   const afterMap = new Map(after.files.map((file) => [file.path, file]));
   const currentMap = new Map(current.files.map((file) => [file.path, file]));
   if (
@@ -138,20 +113,14 @@ export function resolveSetupCommitScope(
     !Array.isArray((rawVerdict as Record<string, unknown>).changes) ||
     Object.keys(rawVerdict).sort().join(",") !== "changes,contextDigest,version"
   )
-    throw new Error(
-      "Setup relevance verdict is malformed or context-stale; publication blocked",
-    );
+    throw new Error("Setup relevance verdict is malformed or context-stale; publication blocked");
   const changes = (rawVerdict as { changes: unknown[] }).changes;
   if (changes.length !== candidates.length)
-    throw new Error(
-      "Setup relevance verdict does not cover the setup delta; publication blocked",
-    );
+    throw new Error("Setup relevance verdict does not cover the setup delta; publication blocked");
   const verdictByPath = new Map<string, boolean>();
   for (const raw of changes) {
     if (typeof raw !== "object" || raw === null || Array.isArray(raw))
-      throw new Error(
-        "Setup relevance verdict contains an invalid entry; publication blocked",
-      );
+      throw new Error("Setup relevance verdict contains an invalid entry; publication blocked");
     const entry = raw as Record<string, unknown>;
     if (
       Object.keys(entry).sort().join(",") !== "identity,path,relevant" ||
@@ -171,9 +140,7 @@ export function resolveSetupCommitScope(
     const now = currentMap.get(entry.path);
     if (
       afterMap.has(entry.path)
-        ? !now ||
-          setupFileIdentity(now) !==
-            setupFileIdentity(afterMap.get(entry.path)!)
+        ? !now || setupFileIdentity(now) !== setupFileIdentity(afterMap.get(entry.path)!)
         : now !== undefined
     )
       throw new Error(
@@ -182,9 +149,7 @@ export function resolveSetupCommitScope(
     verdictByPath.set(entry.path, entry.relevant);
   }
   if (candidates.some((file) => !verdictByPath.has(file.path)))
-    throw new Error(
-      "Setup relevance verdict is incomplete; publication blocked",
-    );
+    throw new Error("Setup relevance verdict is incomplete; publication blocked");
   const excluded = candidates
     .filter((file) => !verdictByPath.get(file.path))
     .map((file) => ({
@@ -196,9 +161,7 @@ export function resolveSetupCommitScope(
   return {
     version: 1,
     contextDigest,
-    include: candidates
-      .filter((file) => verdictByPath.get(file.path))
-      .map((file) => file.path),
+    include: candidates.filter((file) => verdictByPath.get(file.path)).map((file) => file.path),
     exclude: excluded,
   };
 }

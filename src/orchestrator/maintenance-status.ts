@@ -1,8 +1,5 @@
 import type { ProjectConfig } from "../config/config.js";
-import type {
-  GitHubClient,
-  PullRequestDescriptionStatusOptions,
-} from "../github/github-client.js";
+import type { GitHubClient, PullRequestDescriptionStatusOptions } from "../github/github-client.js";
 import { type ManagedPullRequestStatus } from "../github/pull-request-status.js";
 import { annotateCardFailure, annotateFailure } from "./failure-diagnostic.js";
 import { WorkflowError } from "./workflow-error.js";

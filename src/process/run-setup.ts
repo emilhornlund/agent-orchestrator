@@ -16,8 +16,7 @@ export async function captureSetupEffects(
 ): Promise<Buffer> {
   if (!finishAfterAbort) signal?.throwIfAborted();
   const root = fs.realpathSync(worktreePath);
-  const gitSignal =
-    finishAfterAbort && signal?.aborted ? new AbortController().signal : signal;
+  const gitSignal = finishAfterAbort && signal?.aborted ? new AbortController().signal : signal;
   const readGit = async <T>(read: () => Promise<T>): Promise<T> => {
     if (!finishAfterAbort) signal?.throwIfAborted();
     const result = await read();
@@ -70,15 +69,9 @@ export async function captureSetupEffects(
     branch: await readGit(() => gitClient.getCurrentBranch(root, gitSignal)),
     head: await readGit(() => gitClient.getHeadSha(root, gitSignal)),
     status: await readGit(() => gitClient.getStatus(root, gitSignal)),
-    tracked: await readGit(() =>
-      gitClient.getHeadTrackedFiles(root, gitSignal),
-    ),
-    committable: await readGit(() =>
-      gitClient.getCommittableChangedPaths(root, gitSignal),
-    ),
-    untracked: await readGit(() =>
-      gitClient.getUntrackedFiles(root, gitSignal),
-    ),
+    tracked: await readGit(() => gitClient.getHeadTrackedFiles(root, gitSignal)),
+    committable: await readGit(() => gitClient.getCommittableChangedPaths(root, gitSignal)),
+    untracked: await readGit(() => gitClient.getUntrackedFiles(root, gitSignal)),
     ignored: await readGit(() => gitClient.getIgnoredFiles(root, gitSignal)),
     files,
   };
@@ -123,9 +116,7 @@ export function assertSetupInventoryIdentity(
     !Array.isArray(inventory.ignored) ||
     typeof inventory.status !== "string"
   )
-    throw new Error(
-      "Setup inventory worktree identity or inventory is invalid",
-    );
+    throw new Error("Setup inventory worktree identity or inventory is invalid");
   for (const file of inventory.files) {
     if (
       typeof file !== "object" ||

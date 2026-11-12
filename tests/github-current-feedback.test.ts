@@ -1,8 +1,5 @@
 import { expect, it, vi } from "vitest";
-import {
-  GitHubClient,
-  type RunGitHubCommand,
-} from "../src/github/github-client.js";
+import { GitHubClient, type RunGitHubCommand } from "../src/github/github-client.js";
 
 it("collects standalone inline discussion after approval without requiring current-head changes-requested", async () => {
   const run = vi
@@ -141,9 +138,7 @@ it("retains Bot actor identity at the REST comment boundary", async () => {
       ],
     ]),
   );
-  const comments = await new GitHubClient(
-    run,
-  ).getPullRequestConversationComments({
+  const comments = await new GitHubClient(run).getPullRequestConversationComments({
     cwd: "/repo",
     repository: "owner/repo",
     pullRequestUrl: "https://github.com/Owner/Repo/pull/1",

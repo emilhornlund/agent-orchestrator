@@ -15,13 +15,8 @@ process.on("SIGTERM", () => {
   if (child.exitCode !== null || child.signalCode !== null) process.exit(0);
   else child.kill("SIGTERM");
 });
-fs.writeFileSync(
-  "unshipped-review.txt",
-  "Reviewer correction was not published.\n",
-);
+fs.writeFileSync("unshipped-review.txt", "Reviewer correction was not published.\n");
 fs.writeFileSync("writer-child.pid", String(child.pid));
 fs.writeFileSync("writer-started", "ready\n");
-process.stdout.write(
-  '{"type":"text","part":{"type":"text","text":"correction running"}}\n',
-);
+process.stdout.write('{"type":"text","part":{"type":"text","text":"correction running"}}\n');
 setInterval(() => {}, 1000);

@@ -22,9 +22,7 @@ export function buildRefinementCompletionComment(
     "",
     `Classification: ${result.type}`,
     `Refined task title: ${result.title}`,
-    ...(elapsedWorkflowTime === undefined
-      ? []
-      : [`Elapsed workflow time: ${elapsedWorkflowTime}`]),
+    ...(elapsedWorkflowTime === undefined ? [] : [`Elapsed workflow time: ${elapsedWorkflowTime}`]),
   ].join("\n");
 }
 
@@ -36,16 +34,9 @@ export async function addRefinementCompletionComment(
   elapsedWorkflowTime?: string,
 ): Promise<void> {
   const projectId = ProjectRunAuthority.currentProjectId();
-  const authority = projectId
-    ? ProjectRunAuthority.current(projectId)
-    : undefined;
-  let state = authority?.read(
-    refinementCompletionKey,
-    refinementCompletionSchema.parse,
-  ) ?? {
-    text: sanitizeControlledText(
-      buildRefinementCompletionComment(result, elapsedWorkflowTime),
-    ),
+  const authority = projectId ? ProjectRunAuthority.current(projectId) : undefined;
+  let state = authority?.read(refinementCompletionKey, refinementCompletionSchema.parse) ?? {
+    text: sanitizeControlledText(buildRefinementCompletionComment(result, elapsedWorkflowTime)),
     verified: false,
   };
   const save = () =>

@@ -22,22 +22,16 @@ export function isolatedOpenCodeDispatch(
   if (!fs.lstatSync(gitFile).isFile())
     throw new Error("OpenCode requires an owned linked worktree");
   const gitDirectory = fs.readFileSync(gitFile, "utf8").trim();
-  if (!gitDirectory.startsWith("gitdir: "))
-    throw new Error("Invalid task worktree Git identity");
+  if (!gitDirectory.startsWith("gitdir: ")) throw new Error("Invalid task worktree Git identity");
   const metadata = fs.realpathSync(path.resolve(cwd, gitDirectory.slice(8)));
   const common = fs.realpathSync(
-    path.resolve(
-      metadata,
-      fs.readFileSync(path.join(metadata, "commondir"), "utf8").trim(),
-    ),
+    path.resolve(metadata, fs.readFileSync(path.join(metadata, "commondir"), "utf8").trim()),
   );
   if (
     common !== fs.realpathSync(path.join(run.pinned.repositoryPath, ".git")) ||
     fs.readFileSync(path.join(metadata, "gitdir"), "utf8").trim() !== gitFile
   )
-    throw new Error(
-      "OpenCode worktree metadata does not match its source repository",
-    );
+    throw new Error("OpenCode worktree metadata does not match its source repository");
   const args = [
     "--die-with-parent",
     "--new-session",
@@ -55,8 +49,7 @@ export function isolatedOpenCodeDispatch(
   ];
   const mounted = new Set<string>();
   const read = (location: string | undefined) => {
-    if (!location || !path.isAbsolute(location) || !fs.existsSync(location))
-      return;
+    if (!location || !path.isAbsolute(location) || !fs.existsSync(location)) return;
     const real = fs.realpathSync(location);
     for (const target of new Set([real, location])) {
       if (mounted.has(target)) continue;
@@ -80,16 +73,11 @@ export function isolatedOpenCodeDispatch(
   ])
     read(location);
   // Operator-selected executable directories, not the rest of their home.
-  for (const location of (environment.PATH ?? "").split(path.delimiter))
-    read(location);
+  for (const location of (environment.PATH ?? "").split(path.delimiter)) read(location);
   const home = environment.HOME;
-  const config =
-    environment.XDG_CONFIG_HOME ?? (home && path.join(home, ".config"));
+  const config = environment.XDG_CONFIG_HOME ?? (home && path.join(home, ".config"));
   read(environment.OPENCODE_CONFIG);
-  read(
-    environment.OPENCODE_CONFIG_DIR ??
-      (config && path.join(config, "opencode")),
-  );
+  read(environment.OPENCODE_CONFIG_DIR ?? (config && path.join(config, "opencode")));
   read(environment.GOOGLE_APPLICATION_CREDENTIALS);
   read(common);
   read(run.pinned.storageRoot);
@@ -101,10 +89,7 @@ export function isolatedOpenCodeDispatch(
   ]) {
     let ancestor = directory;
     while (!fs.existsSync(ancestor)) ancestor = path.dirname(ancestor);
-    const real = path.resolve(
-      fs.realpathSync(ancestor),
-      path.relative(ancestor, directory),
-    );
+    const real = path.resolve(fs.realpathSync(ancestor), path.relative(ancestor, directory));
     if (
       real !== directory ||
       [cwd, common, run.pinned.storageRoot, run.pinned.repositoryPath].some(
@@ -114,27 +99,19 @@ export function isolatedOpenCodeDispatch(
           protectedPath.startsWith(`${real}/`),
       )
     )
-      throw new Error(
-        "OpenCode state overlaps protected repository/runtime state",
-      );
+      throw new Error("OpenCode state overlaps protected repository/runtime state");
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     args.push("--bind", real, directory);
   }
   read(path.join(home, ".local/share/opencode/auth.json"));
   if (refinementResultDirectory !== undefined) {
-    const resultRoot = path.join(
-      run.pinned.storageRoot,
-      "refinement-results",
-      run.attemptId,
-    );
+    const resultRoot = path.join(run.pinned.storageRoot, "refinement-results", run.attemptId);
     if (
       refinementResultDirectory !== resultRoot ||
       fs.realpathSync(resultRoot) !== resultRoot ||
       run.taskKind !== "refinement"
     )
-      throw new Error(
-        "Refinement result directory differs from owned external artifact",
-      );
+      throw new Error("Refinement result directory differs from owned external artifact");
     args.push("--bind", resultRoot, resultRoot);
   }
   args.push(

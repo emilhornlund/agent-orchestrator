@@ -12,9 +12,7 @@ const id = z
       !value.includes("\\") &&
       !Array.from(value).some((character) => {
         const code = character.codePointAt(0);
-        return (
-          code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f))
-        );
+        return code !== undefined && (code <= 0x1f || (code >= 0x7f && code <= 0x9f));
       }),
     "Must be a safe non-blank identifier",
   );
@@ -52,9 +50,7 @@ export const localPreparationSchema = z.strictObject({
   resultingHead: gitSha.optional(),
   conflictedPaths: z.array(z.string().min(1)).optional(),
   preservedFiles: z
-    .array(
-      z.strictObject({ path: z.string().min(1), identity: z.string().min(1) }),
-    )
+    .array(z.strictObject({ path: z.string().min(1), identity: z.string().min(1) }))
     .optional(),
   mergeTree: gitSha.optional(),
   conflictOperationId: z.string().min(1).optional(),
@@ -78,24 +74,13 @@ export const prMaintenanceOperationSchema = z
     expectedRemoteHead: gitSha,
     targetBaseHead: gitSha,
     operationId: id,
-    status: z.enum([
-      "prepared",
-      "active",
-      "uncertain",
-      "cancelled",
-      "completed",
-    ]),
+    status: z.enum(["prepared", "active", "uncertain", "cancelled", "completed"]),
     ownerToken: z.uuid().optional(),
     ownerPid: z.number().int().positive().optional(),
     localPreparation: localPreparationSchema.optional(),
     /** One-shot recovery of a failed event before any maintenance work began. */
     failedPreparedRecoveryAttempted: z.boolean().optional(),
-    conflictRemediationAttempts: z
-      .number()
-      .int()
-      .nonnegative()
-      .safe()
-      .optional(),
+    conflictRemediationAttempts: z.number().int().nonnegative().safe().optional(),
     conflictMaxAttempts: z.number().int().nonnegative().safe().optional(),
     qualityVerification: maintenanceQualityEvidenceSchema.optional(),
     publication: z
@@ -109,10 +94,7 @@ export const prMaintenanceOperationSchema = z
     updatedAt: z.string().datetime(),
   })
   .superRefine((operation, ctx) => {
-    if (
-      (operation.ownerToken === undefined) !==
-      (operation.ownerPid === undefined)
-    ) {
+    if ((operation.ownerToken === undefined) !== (operation.ownerPid === undefined)) {
       ctx.addIssue({
         code: "custom",
         path: ["ownerToken"],
@@ -135,16 +117,10 @@ export const prMaintenanceOperationSchema = z
     }
   });
 
-export type PrMaintenanceOperation = z.infer<
-  typeof prMaintenanceOperationSchema
->;
+export type PrMaintenanceOperation = z.infer<typeof prMaintenanceOperationSchema>;
 export type LocalPreparationProgress = z.infer<typeof localPreparationSchema>;
-export type MaintenanceQualityEvidence = z.infer<
-  typeof maintenanceQualityEvidenceSchema
->;
+export type MaintenanceQualityEvidence = z.infer<typeof maintenanceQualityEvidenceSchema>;
 
-export function parsePrMaintenanceOperation(
-  value: unknown,
-): PrMaintenanceOperation {
+export function parsePrMaintenanceOperation(value: unknown): PrMaintenanceOperation {
   return prMaintenanceOperationSchema.parse(value);
 }

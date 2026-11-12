@@ -80,10 +80,7 @@ export interface RunTaskSessionImplementationOptions {
   resume?: boolean;
   worktreePath: string;
   attachmentContext?: CardAttachmentPromptContext;
-  runOptions: Omit<
-    OpenCodeRunOptions,
-    "cwd" | "prompt" | "sessionId" | "captureSessionId"
-  >;
+  runOptions: Omit<OpenCodeRunOptions, "cwd" | "prompt" | "sessionId" | "captureSessionId">;
 }
 
 export interface TaskSessionImplementationResult {
@@ -102,10 +99,7 @@ function isWithin(parent: string, candidate: string): boolean {
   );
 }
 
-export function assertOwnedTaskWorktreePath(
-  project: ProjectConfig,
-  worktreePath: string,
-): void {
+export function assertOwnedTaskWorktreePath(project: ProjectConfig, worktreePath: string): void {
   if (!path.isAbsolute(worktreePath)) {
     throw new Error("Task-session worktree path must be absolute");
   }
@@ -140,16 +134,12 @@ export function assertOwnedTaskWorktreePath(
     realWorktree === realRepository ||
     isWithin(realRepository, realWorktree)
   ) {
-    throw new Error(
-      "Task-session worktree resolves outside its configured owned location",
-    );
+    throw new Error("Task-session worktree resolves outside its configured owned location");
   }
 }
 
 function nextEventTimestamp(record: TaskExecutionRecord): string {
-  return new Date(
-    Math.max(Date.now(), Date.parse(record.updatedAt) + 1),
-  ).toISOString();
+  return new Date(Math.max(Date.now(), Date.parse(record.updatedAt) + 1)).toISOString();
 }
 
 function createEvent(
@@ -246,8 +236,7 @@ export async function runTaskSessionImplementation(
   });
 
   if (
-    (record.phase !== "planning" &&
-      !(resume && record.phase === "implementation")) ||
+    (record.phase !== "planning" && !(resume && record.phase === "implementation")) ||
     record.sessionCreationStatus !== "bound"
   ) {
     throw new Error(
@@ -257,8 +246,7 @@ export async function runTaskSessionImplementation(
 
   const storedPlan = planStore.read(
     card.id,
-    record.phase === "planning" &&
-      record.planReviewAdvice?.planRevision === undefined
+    record.phase === "planning" && record.planReviewAdvice?.planRevision === undefined
       ? record.revision
       : undefined,
     record.operationKey,
@@ -271,8 +259,7 @@ export async function runTaskSessionImplementation(
     (record.planReviewAdvice.planRevision === undefined
       ? storedPlan.taskRecordRevision !== record.revision - 1
       : record.planReviewAdvice.planRevision !== storedPlan.planRevision ||
-        record.planReviewAdvice.taskRecordRevision !==
-          storedPlan.taskRecordRevision ||
+        record.planReviewAdvice.taskRecordRevision !== storedPlan.taskRecordRevision ||
         record.planReviewAdvice.operationKey !== record.operationKey)
   ) {
     throw new Error(
@@ -306,11 +293,7 @@ export async function runTaskSessionImplementation(
       record,
       createEvent(record, "plan-approved", `${operationKey}:plan-approved`),
     );
-    taskRecordStore.compareAndSwap(
-      card.id,
-      record.revision,
-      implementationRecord,
-    );
+    taskRecordStore.compareAndSwap(card.id, record.revision, implementationRecord);
   }
 
   let runResult: OpenCodeRunResult;
@@ -330,33 +313,21 @@ export async function runTaskSessionImplementation(
             cwd: worktreePath,
             sessionId,
             signal: runOptions.signal,
-            timeoutMilliseconds: Math.min(
-              runOptions.timeoutMilliseconds,
-              30_000,
-            ),
+            timeoutMilliseconds: Math.min(runOptions.timeoutMilliseconds, 30_000),
           }),
-        ...(recoveryAttemptId === undefined
-          ? {}
-          : { attemptId: recoveryAttemptId }),
+        ...(recoveryAttemptId === undefined ? {} : { attemptId: recoveryAttemptId }),
         contextDirectory: path.join(
           recoveryContextRoot,
           "primary-session-context",
           project.id,
           card.id,
         ),
-        forbiddenPaths: [
-          project.repository.path,
-          project.repository.worktreeRoot,
-          worktreePath,
-        ],
+        forbiddenPaths: [project.repository.path, project.repository.worktreeRoot, worktreePath],
         ...(runAuthority === undefined
           ? {}
           : {
               persistArtifact: (content: Uint8Array) => {
-                const artifact = runAuthority.store.writeArtifact(
-                  content,
-                  "application/json",
-                );
+                const artifact = runAuthority.store.writeArtifact(content, "application/json");
                 return { reference: artifact.id, path: artifact.path };
               },
             }),
@@ -369,15 +340,11 @@ export async function runTaskSessionImplementation(
             worktreePath,
             record,
             plan: storedPlan?.plan ?? null,
-            ...(storedPlan === null
-              ? {}
-              : { planRevision: storedPlan.planRevision }),
+            ...(storedPlan === null ? {} : { planRevision: storedPlan.planRevision }),
             ...(storedPlan?.verification === undefined
               ? {}
               : { planReviewAdvice: storedPlan.verification }),
-            ...(attachmentContext === undefined
-              ? {}
-              : { attachments: attachmentContext }),
+            ...(attachmentContext === undefined ? {} : { attachments: attachmentContext }),
             ...(feedbackContent === undefined ? {} : { feedbackContent }),
           }),
       },
@@ -396,9 +363,7 @@ export async function runTaskSessionImplementation(
     );
 
     if (runResult.exitCode !== 0) {
-      const error = new Error(
-        `OpenCode implementation exited with code ${runResult.exitCode}`,
-      );
+      const error = new Error(`OpenCode implementation exited with code ${runResult.exitCode}`);
       persistAttentionRequired(
         taskRecordStore,
         projectId,
@@ -407,12 +372,9 @@ export async function runTaskSessionImplementation(
         `${operationKey}:implementation-failed`,
         error.message,
       );
-      throw new TaskSessionImplementationError(
-        error.message,
-        "failed",
-        runResult,
-        { cause: error },
-      );
+      throw new TaskSessionImplementationError(error.message, "failed", runResult, {
+        cause: error,
+      });
     }
   } catch (error) {
     if (error instanceof TaskSessionImplementationError) {
@@ -467,10 +429,7 @@ export async function runTaskSessionImplementation(
 
     if (error instanceof PrimaryOperationExhaustedError) {
       const current = taskRecordStore.read(card.id);
-      if (
-        current?.pullRequest !== undefined ||
-        current?.externalRecovery !== undefined
-      ) {
+      if (current?.pullRequest !== undefined || current?.externalRecovery !== undefined) {
         persistImplementationWait(
           taskRecordStore,
           card.id,
@@ -485,9 +444,7 @@ export async function runTaskSessionImplementation(
       }
       const exhaustedOperation = current?.primaryOperations?.[operationKey];
       const failureCount =
-        exhaustedOperation?.failureExecutions ??
-        exhaustedOperation?.executions ??
-        3;
+        exhaustedOperation?.failureExecutions ?? exhaustedOperation?.executions ?? 3;
       try {
         persistAttentionRequired(
           taskRecordStore,
@@ -581,14 +538,10 @@ function persistImplementationWait(
     !Number.isSafeInteger(retryIntervalMs) ||
     retryIntervalMs < 1
   )
-    throw new Error(
-      "Implementation recovery wait requires the configured retry interval",
-    );
+    throw new Error("Implementation recovery wait requires the configured retry interval");
   const record = store.read(cardId);
   if (record === null || record.operationKey !== operationKey)
-    throw new Error(
-      "Implementation ownership changed while persisting recovery wait",
-    );
+    throw new Error("Implementation ownership changed while persisting recovery wait");
   const now = Date.now();
   store.compareAndSwap(cardId, record.revision, {
     ...record,

@@ -32,17 +32,8 @@ export interface DomainDiagnostic {
     | "card-failure-transition-failed"
     | "process-failed"
     | "recovery-deferred";
-  classification:
-    | "external-operation"
-    | "process"
-    | "workflow-recovery"
-    | "internal-workflow";
-  recovery:
-    | "retry-scheduled"
-    | "manual-review"
-    | "state-preserved"
-    | "transition-failed"
-    | "none";
+  classification: "external-operation" | "process" | "workflow-recovery" | "internal-workflow";
+  recovery: "retry-scheduled" | "manual-review" | "state-preserved" | "transition-failed" | "none";
   artifactReferences?: readonly string[];
   attempt?: number;
   maximumAttempts?: number;
@@ -66,11 +57,9 @@ function classifySummary(message: string): string {
   const text = message.toLowerCase();
   if (text.includes("retry") || text.includes("attempt")) return "retry";
   if (text.includes("recover") || text.includes("reconcil")) return "recovery";
-  if (text.includes("validation") || text.includes("coverage"))
-    return "quality";
+  if (text.includes("validation") || text.includes("coverage")) return "quality";
   if (text.includes("review")) return "review";
-  if (text.includes("transition") || text.includes("completed"))
-    return "workflow-progress";
+  if (text.includes("transition") || text.includes("completed")) return "workflow-progress";
   return "diagnostic";
 }
 
@@ -78,8 +67,7 @@ function getLogFilePath(): string {
   const date = new Date().toISOString().slice(0, 10);
   const prefix = process.env.VITEST === "true" ? "test-" : "";
 
-  const root =
-    process.env.VITEST === "true" ? path.join(process.cwd(), "logs") : logRoot;
+  const root = process.env.VITEST === "true" ? path.join(process.cwd(), "logs") : logRoot;
   return path.join(root, `${prefix}orchestrator-${date}.log`);
 }
 
@@ -100,9 +88,7 @@ function writeToFile(
 
   // Append-only, attempt-scoped timeline. RunRecord remains the sole workflow
   // authority; this is diagnostic evidence only.
-  const authority = context.projectId
-    ? ProjectRunAuthority.current(context.projectId)
-    : undefined;
+  const authority = context.projectId ? ProjectRunAuthority.current(context.projectId) : undefined;
   if (authority && context.cardId) {
     const record = authority.store.read();
     if (record?.cardId === context.cardId) {
@@ -129,11 +115,7 @@ function writeToFile(
   }
 
   withActiveLogFile(filePath, () => {
-    appendFileSync(
-      filePath,
-      `${timestamp} ${level.padEnd(5)} ${contextText}${message}\n`,
-      "utf8",
-    );
+    appendFileSync(filePath, `${timestamp} ${level.padEnd(5)} ${contextText}${message}\n`, "utf8");
   });
 }
 
@@ -202,12 +184,7 @@ export class Logger {
         "process-failed",
         "recovery-deferred",
       ],
-      classification: [
-        "external-operation",
-        "process",
-        "workflow-recovery",
-        "internal-workflow",
-      ],
+      classification: ["external-operation", "process", "workflow-recovery", "internal-workflow"],
       recovery: [
         "retry-scheduled",
         "manual-review",
@@ -221,13 +198,10 @@ export class Logger {
       !enumValues.classification.includes(diagnostic.classification) ||
       !enumValues.recovery.includes(diagnostic.recovery) ||
       (diagnostic.attempt !== undefined &&
-        (!Number.isSafeInteger(diagnostic.attempt) ||
-          diagnostic.attempt < 1)) ||
+        (!Number.isSafeInteger(diagnostic.attempt) || diagnostic.attempt < 1)) ||
       (diagnostic.maximumAttempts !== undefined &&
-        (!Number.isSafeInteger(diagnostic.maximumAttempts) ||
-          diagnostic.maximumAttempts < 1)) ||
-      (diagnostic.attempt === undefined) !==
-        (diagnostic.maximumAttempts === undefined) ||
+        (!Number.isSafeInteger(diagnostic.maximumAttempts) || diagnostic.maximumAttempts < 1)) ||
+      (diagnostic.attempt === undefined) !== (diagnostic.maximumAttempts === undefined) ||
       (diagnostic.attempt !== undefined &&
         diagnostic.maximumAttempts !== undefined &&
         diagnostic.attempt > diagnostic.maximumAttempts)
@@ -237,9 +211,7 @@ export class Logger {
     if (
       references.some(
         (reference) =>
-          !/^process-executions\/[A-Za-z0-9-]+\/(?:stdout|stderr)\.txt$/.test(
-            reference,
-          ),
+          !/^process-executions\/[A-Za-z0-9-]+\/(?:stdout|stderr)\.txt$/.test(reference),
       )
     )
       throw new Error("Unsafe diagnostic artifact reference");

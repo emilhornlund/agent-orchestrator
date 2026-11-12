@@ -40,15 +40,13 @@ function createProcessEventSource(): {
   removeListener: ReturnType<typeof vi.fn>;
 } {
   const handlers = new Map<string, Handler>();
-  const removeListener = vi.fn(
-    (event: string, handler: Handler): ProcessEventSource => {
-      if (handlers.get(event) === handler) {
-        handlers.delete(event);
-      }
+  const removeListener = vi.fn((event: string, handler: Handler): ProcessEventSource => {
+    if (handlers.get(event) === handler) {
+      handlers.delete(event);
+    }
 
-      return processObject;
-    },
-  );
+    return processObject;
+  });
   const processObject = {
     on: vi.fn((event: string, handler: Handler): ProcessEventSource => {
       handlers.set(event, handler);
@@ -82,9 +80,7 @@ describe("RuntimeLifecycle", () => {
     expect(testLogger.error.mock.calls[0]?.[0]).toContain(
       "Fatal startup failure; requesting coordinated shutdown",
     );
-    expect(testLogger.error.mock.calls[0]?.[0]).toContain(
-      "Invalid configuration",
-    );
+    expect(testLogger.error.mock.calls[0]?.[0]).toContain("Invalid configuration");
   });
 
   it("rejects duplicate project IDs before starting project workers", async () => {
@@ -117,34 +113,24 @@ describe("RuntimeLifecycle", () => {
 
   it.each([
     ["uncaught exception", "uncaughtException", new Error("exception boom")],
-    [
-      "unhandled promise rejection",
-      "unhandledRejection",
-      new Error("rejection boom"),
-    ],
-  ] as const)(
-    "handles a %s at the process boundary",
-    (source, event, error) => {
-      const testLogger = createLogger();
-      const lifecycle = new RuntimeLifecycle({ logger: testLogger });
-      const { processObject, handlers } = createProcessEventSource();
-      const removeProcessHandlers = installProcessHandlers(
-        lifecycle,
-        processObject,
-      );
+    ["unhandled promise rejection", "unhandledRejection", new Error("rejection boom")],
+  ] as const)("handles a %s at the process boundary", (source, event, error) => {
+    const testLogger = createLogger();
+    const lifecycle = new RuntimeLifecycle({ logger: testLogger });
+    const { processObject, handlers } = createProcessEventSource();
+    const removeProcessHandlers = installProcessHandlers(lifecycle, processObject);
 
-      handlers.get(event)?.(error as never);
+    handlers.get(event)?.(error as never);
 
-      expect(lifecycle.signal.aborted).toBe(true);
-      expect(lifecycle.exitCode).toBe(1);
-      expect(lifecycle.fatalFailure?.source).toBe(source);
-      expect(testLogger.error).toHaveBeenCalledOnce();
-      expect(testLogger.error.mock.calls[0]?.[0]).toContain(`Fatal ${source}`);
-      expect(testLogger.error.mock.calls[0]?.[0]).toContain(error.message);
+    expect(lifecycle.signal.aborted).toBe(true);
+    expect(lifecycle.exitCode).toBe(1);
+    expect(lifecycle.fatalFailure?.source).toBe(source);
+    expect(testLogger.error).toHaveBeenCalledOnce();
+    expect(testLogger.error.mock.calls[0]?.[0]).toContain(`Fatal ${source}`);
+    expect(testLogger.error.mock.calls[0]?.[0]).toContain(error.message);
 
-      removeProcessHandlers();
-    },
-  );
+    removeProcessHandlers();
+  });
 
   it("makes signal shutdown idempotent and keeps intentional shutdown successful", () => {
     const testLogger = createLogger();
@@ -156,9 +142,7 @@ describe("RuntimeLifecycle", () => {
     expect(lifecycle.shutdownKind).toBe("signal");
     expect(lifecycle.exitCode).toBe(0);
     expect(testLogger.event).toHaveBeenCalledOnce();
-    expect(testLogger.event).toHaveBeenCalledWith(
-      "Received SIGINT; shutting down...",
-    );
+    expect(testLogger.event).toHaveBeenCalledWith("Received SIGINT; shutting down...");
   });
 
   it("preserves the first fatal diagnostic when fatal events repeat", () => {
@@ -170,10 +154,7 @@ describe("RuntimeLifecycle", () => {
     const firstError = new Error("first failure token=secret-token");
 
     lifecycle.requestFatal("uncaught exception", firstError);
-    lifecycle.requestFatal(
-      "unhandled promise rejection",
-      new Error("second failure"),
-    );
+    lifecycle.requestFatal("unhandled promise rejection", new Error("second failure"));
 
     expect(lifecycle.fatalFailure?.error).toBe(firstError);
     expect(lifecycle.fatalFailure?.source).toBe("uncaught exception");
@@ -186,12 +167,8 @@ describe("RuntimeLifecycle", () => {
   it("routes both signals and process-level failures through removable handlers", () => {
     const testLogger = createLogger();
     const lifecycle = new RuntimeLifecycle({ logger: testLogger });
-    const { processObject, handlers, removeListener } =
-      createProcessEventSource();
-    const removeProcessHandlers = installProcessHandlers(
-      lifecycle,
-      processObject,
-    );
+    const { processObject, handlers, removeListener } = createProcessEventSource();
+    const removeProcessHandlers = installProcessHandlers(lifecycle, processObject);
 
     handlers.get("SIGTERM")?.("SIGTERM" as never);
 

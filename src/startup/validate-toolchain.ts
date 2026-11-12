@@ -25,9 +25,7 @@ function parseVersion(output: string, tool: string): Version | undefined {
   const match = expression.exec(output);
   if (!match) return undefined;
   const values = [Number(match[1]), Number(match[2]), Number(match[3])];
-  return values.every(Number.isSafeInteger)
-    ? (values as unknown as Version)
-    : undefined;
+  return values.every(Number.isSafeInteger) ? (values as unknown as Version) : undefined;
 }
 
 function compare(left: Version, right: Version): number {
@@ -75,12 +73,7 @@ async function validateVersion(
   displayName: string,
   timeoutMilliseconds: number,
 ): Promise<void> {
-  const output = await probe(
-    commands,
-    executable,
-    ["--version"],
-    timeoutMilliseconds,
-  );
+  const output = await probe(commands, executable, ["--version"], timeoutMilliseconds);
   const installed = parseVersion(output, displayName);
   const required = parseVersion(
     displayName === "Git" ? `git version ${minimum}` : minimum,
@@ -103,13 +96,7 @@ export async function validateGitAndOpenCode(
   commands: CommandRunner,
   timeoutMilliseconds = 5 * 60_000,
 ): Promise<void> {
-  await validateVersion(
-    commands,
-    "git",
-    MINIMUM_GIT_VERSION,
-    "Git",
-    timeoutMilliseconds,
-  );
+  await validateVersion(commands, "git", MINIMUM_GIT_VERSION, "Git", timeoutMilliseconds);
   await validateVersion(
     commands,
     "opencode",
@@ -117,12 +104,7 @@ export async function validateGitAndOpenCode(
     "OpenCode",
     timeoutMilliseconds,
   );
-  const gitCommands = await probe(
-    commands,
-    "git",
-    ["--list-cmds=main"],
-    timeoutMilliseconds,
-  );
+  const gitCommands = await probe(commands, "git", ["--list-cmds=main"], timeoutMilliseconds);
   const requiredGitCommands = [
     "branch",
     "cat-file",
@@ -145,20 +127,8 @@ export async function validateGitAndOpenCode(
       "Git",
       `installation is missing required commands: ${missingGitCommands.join(", ")}`,
     );
-  const help = await probe(
-    commands,
-    "opencode",
-    ["run", "--help"],
-    timeoutMilliseconds,
-  );
-  const required = [
-    "--auto",
-    "--model",
-    "--variant",
-    "--dir",
-    "--session",
-    "--format",
-  ];
+  const help = await probe(commands, "opencode", ["run", "--help"], timeoutMilliseconds);
+  const required = ["--auto", "--model", "--variant", "--dir", "--session", "--format"];
   const missing = required.filter((option) => !help.includes(option));
   if (missing.length)
     throw new ToolchainCompatibilityError(
@@ -173,8 +143,7 @@ export async function validateGitAndOpenCode(
       captureOutput: true,
       suppressOutput: true,
     });
-    if (!result || result.exitCode !== 0)
-      throw new Error("Isolation capability probe failed");
+    if (!result || result.exitCode !== 0) throw new Error("Isolation capability probe failed");
   } catch (error) {
     throw new ToolchainCompatibilityError(
       "Bubblewrap",

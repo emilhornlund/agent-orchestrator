@@ -103,35 +103,26 @@ workflow:`,
 }
 
 it("defaults to 15-second polling and unlimited cross-project AI execution", () => {
-  const config = parseConfig(
-    validConfig.replace("pollIntervalSeconds: 15", "{}"),
-  );
+  const config = parseConfig(validConfig.replace("pollIntervalSeconds: 15", "{}"));
   expect(config.workflow.pollIntervalSeconds).toBe(15);
   expect(config.workflow.maxConcurrentAiProjects).toBeUndefined();
 });
 
-it.each([0, -1, 1.5, "many"])(
-  "rejects invalid global AI concurrency %s",
-  (value) => {
-    expect(() =>
-      parseConfig(
-        validConfig.replace(
-          "pollIntervalSeconds: 15",
-          `pollIntervalSeconds: 15\n  maxConcurrentAiProjects: ${value}`,
-        ),
-      ),
-    ).toThrow();
-  },
-);
-
-it("accepts the optional global project AI limit", () => {
-  expect(
+it.each([0, -1, 1.5, "many"])("rejects invalid global AI concurrency %s", (value) => {
+  expect(() =>
     parseConfig(
       validConfig.replace(
         "pollIntervalSeconds: 15",
-        "maxConcurrentAiProjects: 2",
+        `pollIntervalSeconds: 15\n  maxConcurrentAiProjects: ${value}`,
       ),
-    ).workflow,
+    ),
+  ).toThrow();
+});
+
+it("accepts the optional global project AI limit", () => {
+  expect(
+    parseConfig(validConfig.replace("pollIntervalSeconds: 15", "maxConcurrentAiProjects: 2"))
+      .workflow,
   ).toMatchObject({ pollIntervalSeconds: 15, maxConcurrentAiProjects: 2 });
 });
 
@@ -159,13 +150,8 @@ const githubAppValues = {
 type GitHubAppField = keyof typeof githubAppValues;
 
 function configWithGithubApp(fields: readonly GitHubAppField[]): string {
-  const settings = fields
-    .map((field) => `        ${field}: ${githubAppValues[field]}`)
-    .join("\n");
-  const githubApp =
-    settings.length === 0
-      ? "      githubApp: {}"
-      : `      githubApp:\n${settings}`;
+  const settings = fields.map((field) => `        ${field}: ${githubAppValues[field]}`).join("\n");
+  const githubApp = settings.length === 0 ? "      githubApp: {}" : `      githubApp:\n${settings}`;
 
   return validConfig.replace(
     '      github: "owner/repository"',
@@ -173,14 +159,10 @@ function configWithGithubApp(fields: readonly GitHubAppField[]): string {
   );
 }
 
-function configWithGithubAppValues(
-  values: Partial<Record<GitHubAppField, string>>,
-): string {
+function configWithGithubAppValues(values: Partial<Record<GitHubAppField, string>>): string {
   const fields = Object.keys(githubAppValues) as GitHubAppField[];
   const settings = fields
-    .map(
-      (field) => `        ${field}: ${values[field] ?? githubAppValues[field]}`,
-    )
+    .map((field) => `        ${field}: ${values[field] ?? githubAppValues[field]}`)
     .join("\n");
 
   return validConfig.replace(
@@ -192,18 +174,11 @@ function configWithGithubAppValues(
 describe("parseConfig", () => {
   it("parses the unified configuration example", () => {
     const config = parseConfig(
-      fs.readFileSync(
-        new URL("../config.example.yaml", import.meta.url),
-        "utf8",
-      ),
+      fs.readFileSync(new URL("../config.example.yaml", import.meta.url), "utf8"),
     );
+    expect(config.projects.every((project) => project.autoMerge === false)).toBe(true);
     expect(
-      config.projects.every((project) => project.autoMerge === false),
-    ).toBe(true);
-    expect(
-      config.projects.every(
-        (project) => project.repository.validationCommand !== undefined,
-      ),
+      config.projects.every((project) => project.repository.validationCommand !== undefined),
     ).toBe(true);
   });
 
@@ -303,18 +278,12 @@ describe("parseConfig", () => {
       model: "openai/plan-review",
     });
 
-    const secondProject = appendProject(
-      validConfig,
-      "project-two",
-      "two",
-    ).replace(
+    const secondProject = appendProject(validConfig, "project-two", "two").replace(
       'model: "openai/refinement-model"\n        variant: "xhigh"\n      implementation:',
       'model: "openai/project-two-model"\n        variant: "project-two-variant"\n      implementation:',
     );
     const isolated = parseConfig(secondProject);
-    expect(
-      isolated.projects.map((project) => project.opencode.refinement),
-    ).toEqual([
+    expect(isolated.projects.map((project) => project.opencode.refinement)).toEqual([
       { model: "openai/project-two-model", variant: "project-two-variant" },
       { model: "openai/refinement-model", variant: "xhigh" },
     ]);
@@ -336,9 +305,7 @@ describe("parseConfig", () => {
         '  - id: "project-one"',
         `  - id: "project-one"\n    executionMode: "${value}"`,
       );
-      expect(() => parseConfig(raw)).toThrow(
-        'Unrecognized key: "executionMode"',
-      );
+      expect(() => parseConfig(raw)).toThrow('Unrecognized key: "executionMode"');
     }
   });
 
@@ -355,9 +322,7 @@ describe("parseConfig", () => {
       '      worktreeRoot: "/tmp/worktrees"',
       '      worktreeRoot: "/tmp/worktrees"\n      requiredChecks:\n        - "Build"',
     );
-    expect(() => parseConfig(raw)).toThrow(
-      'Unrecognized key: "requiredChecks"',
-    );
+    expect(() => parseConfig(raw)).toThrow('Unrecognized key: "requiredChecks"');
   });
 
   it("accepts configured coverage alongside unified validation", () => {
@@ -365,15 +330,11 @@ describe("parseConfig", () => {
       '      validationCommand: "yarn validate"',
       '      validationCommand: "yarn validate"\n      coverageCommand: "yarn coverage"',
     );
-    expect(parseConfig(raw).projects[0]?.repository.coverageCommand).toBe(
-      "yarn coverage",
-    );
+    expect(parseConfig(raw).projects[0]?.repository.coverageCommand).toBe("yarn coverage");
   });
 
   it("accepts and normalizes a complete GitHub App configuration", () => {
-    const config = parseConfig(
-      configWithGithubApp(["appId", "installationId", "privateKeyPath"]),
-    );
+    const config = parseConfig(configWithGithubApp(["appId", "installationId", "privateKeyPath"]));
 
     expect(config.projects[0]?.repository.githubApp).toEqual({
       appId: "123456",
@@ -387,21 +348,9 @@ describe("parseConfig", () => {
     ["app ID only", ["appId"], ["installationId", "privateKeyPath"]],
     ["installation ID only", ["installationId"], ["appId", "privateKeyPath"]],
     ["private key path only", ["privateKeyPath"], ["appId", "installationId"]],
-    [
-      "app and installation IDs",
-      ["appId", "installationId"],
-      ["privateKeyPath"],
-    ],
-    [
-      "app ID and private key path",
-      ["appId", "privateKeyPath"],
-      ["installationId"],
-    ],
-    [
-      "installation ID and private key path",
-      ["installationId", "privateKeyPath"],
-      ["appId"],
-    ],
+    ["app and installation IDs", ["appId", "installationId"], ["privateKeyPath"]],
+    ["app ID and private key path", ["appId", "privateKeyPath"], ["installationId"]],
+    ["installation ID and private key path", ["installationId", "privateKeyPath"], ["appId"]],
   ])(
     "rejects an incomplete GitHub App configuration: %s",
     (_label, suppliedFields, missingFields) => {
@@ -417,9 +366,7 @@ describe("parseConfig", () => {
 
       if (thrown instanceof Error) {
         for (const field of missingFields) {
-          expect(thrown.message).toContain(
-            `projects.0.repository.githubApp.${field}`,
-          );
+          expect(thrown.message).toContain(`projects.0.repository.githubApp.${field}`);
         }
       }
     },
@@ -437,24 +384,15 @@ describe("parseConfig", () => {
     ["blank private key path", "privateKeyPath", '"  "', "Must not be blank"],
     ["numeric app ID", "appId", "123456", "expected string"],
     ["numeric installation ID", "installationId", "987654", "expected string"],
-  ] as const)(
-    "rejects an invalid GitHub App value: %s",
-    (_label, field, value, message) => {
-      const raw = configWithGithubAppValues({ [field]: value });
+  ] as const)("rejects an invalid GitHub App value: %s", (_label, field, value, message) => {
+    const raw = configWithGithubAppValues({ [field]: value });
 
-      expect(() => parseConfig(raw)).toThrow(
-        `projects.0.repository.githubApp.${field}`,
-      );
-      expect(() => parseConfig(raw)).toThrow(message);
-    },
-  );
+    expect(() => parseConfig(raw)).toThrow(`projects.0.repository.githubApp.${field}`);
+    expect(() => parseConfig(raw)).toThrow(message);
+  });
 
   it("rejects unknown GitHub App configuration keys", () => {
-    const raw = configWithGithubApp([
-      "appId",
-      "installationId",
-      "privateKeyPath",
-    ]).replace(
+    const raw = configWithGithubApp(["appId", "installationId", "privateKeyPath"]).replace(
       '        privateKeyPath: "/tmp/github-app-key/../private-key.pem"',
       '        privateKeyPath: "/tmp/github-app-key/../private-key.pem"\n        privateKeyPth: "/tmp/typo.pem"',
     );
@@ -500,9 +438,7 @@ describe("parseConfig", () => {
         maxPasses: ${maxPasses}`,
     );
 
-    expect(parseConfig(raw).projects[0]?.opencode.remediation.maxPasses).toBe(
-      maxPasses,
-    );
+    expect(parseConfig(raw).projects[0]?.opencode.remediation.maxPasses).toBe(maxPasses);
   });
 
   it.each([0, 4])("accepts validationMaxPasses: %s", (validationMaxPasses) => {
@@ -516,25 +452,20 @@ describe("parseConfig", () => {
         validationMaxPasses: ${validationMaxPasses}`,
     );
 
-    expect(
-      parseConfig(raw).projects[0]?.opencode.remediation.validationMaxPasses,
-    ).toBe(validationMaxPasses);
+    expect(parseConfig(raw).projects[0]?.opencode.remediation.validationMaxPasses).toBe(
+      validationMaxPasses,
+    );
   });
 
-  it.each([0, 4, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
-    "validates ciMaxPasses: %s",
-    (limit) => {
-      const raw = validConfig.replace(
-        '        variant: "xhigh"\n      commit:',
-        `        variant: "xhigh"\n        ciMaxPasses: ${limit}\n      commit:`,
-      );
-      if (Number.isSafeInteger(limit) && limit >= 0)
-        expect(
-          parseConfig(raw).projects[0]?.opencode.remediation.ciMaxPasses,
-        ).toBe(limit);
-      else expect(() => parseConfig(raw)).toThrow("ciMaxPasses");
-    },
-  );
+  it.each([0, 4, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])("validates ciMaxPasses: %s", (limit) => {
+    const raw = validConfig.replace(
+      '        variant: "xhigh"\n      commit:',
+      `        variant: "xhigh"\n        ciMaxPasses: ${limit}\n      commit:`,
+    );
+    if (Number.isSafeInteger(limit) && limit >= 0)
+      expect(parseConfig(raw).projects[0]?.opencode.remediation.ciMaxPasses).toBe(limit);
+    else expect(() => parseConfig(raw)).toThrow("ciMaxPasses");
+  });
 
   it.each(["-1", "1.5", '"many"'])(
     "rejects invalid validationMaxPasses: %s",
@@ -549,9 +480,7 @@ describe("parseConfig", () => {
         validationMaxPasses: ${validationMaxPasses}`,
       );
 
-      expect(() => parseConfig(raw)).toThrow(
-        "projects.0.opencode.remediation.validationMaxPasses",
-      );
+      expect(() => parseConfig(raw)).toThrow("projects.0.opencode.remediation.validationMaxPasses");
     },
   );
 
@@ -574,9 +503,7 @@ describe("parseConfig", () => {
         maxPasses: ${value}`,
     );
 
-    expect(() => parseConfig(raw)).toThrow(
-      "projects.0.opencode.remediation.maxPasses",
-    );
+    expect(() => parseConfig(raw)).toThrow("projects.0.opencode.remediation.maxPasses");
   });
 
   it("rejects unsupported remediation configuration keys", () => {
@@ -595,19 +522,14 @@ describe("parseConfig", () => {
     );
 
     expect(() => parseConfig(raw)).toThrow("projects.0.autoMerge");
-    expect(() => parseConfig(raw)).toThrow(
-      'Remove "autoMerge" or set it to false',
-    );
+    expect(() => parseConfig(raw)).toThrow('Remove "autoMerge" or set it to false');
   });
 
   it.each([
     ["non-boolean", '    autoMerge: "yes"'],
     ["unknown", "    automaticMerge: true"],
   ])("rejects a project auto-merge setting that is %s", (_label, setting) => {
-    const raw = validConfig.replace(
-      '  - id: "project-one"',
-      `  - id: "project-one"\n${setting}`,
-    );
+    const raw = validConfig.replace('  - id: "project-one"', `  - id: "project-one"\n${setting}`);
 
     expect(() => parseConfig(raw)).toThrow("projects.0");
   });
@@ -724,18 +646,12 @@ workflow:`,
   });
 
   it.each([
-    [
-      "non-boolean",
-      '      humanReview: "yes"',
-      "notifications.email.events.humanReview",
-    ],
+    ["non-boolean", '      humanReview: "yes"', "notifications.email.events.humanReview"],
     ["unknown", "      unexpected: false", "notifications.email.events"],
-  ])(
-    "rejects an %s email notification event setting",
-    (_label, event, location) => {
-      const raw = validConfig.replace(
-        "\nworkflow:",
-        `
+  ])("rejects an %s email notification event setting", (_label, event, location) => {
+    const raw = validConfig.replace(
+      "\nworkflow:",
+      `
 notifications:
   email:
     enabled: false
@@ -743,11 +659,10 @@ notifications:
 ${event}
 
 workflow:`,
-      );
+    );
 
-      expect(() => parseConfig(raw)).toThrow(location);
-    },
-  );
+    expect(() => parseConfig(raw)).toThrow(location);
+  });
 
   it.each([
     [
@@ -816,9 +731,7 @@ workflow:`,
     const config = parseConfig(raw);
 
     expect(config.projects[0]?.repository.setupCommand).toBe("yarn install");
-    expect(config.projects[0]?.repository.validationCommand).toBe(
-      "yarn validate",
-    );
+    expect(config.projects[0]?.repository.validationCommand).toBe("yarn validate");
   });
 
   it("rejects a missing OpenCode refinement stage", () => {
@@ -846,10 +759,7 @@ workflow:`,
   });
 
   it("rejects an empty OpenCode stage model", () => {
-    const raw = validConfig.replace(
-      'model: "openai/implementation-model"',
-      'model: ""',
-    );
+    const raw = validConfig.replace('model: "openai/implementation-model"', 'model: ""');
 
     expect(() => parseConfig(raw)).toThrow();
   });
@@ -861,14 +771,9 @@ workflow:`,
   });
 
   it("accepts independently optional validation and coverage commands", () => {
-    const raw = validConfig.replace(
-      '      validationCommand: "yarn validate"\n',
-      "",
-    );
+    const raw = validConfig.replace('      validationCommand: "yarn validate"\n', "");
 
-    expect(
-      parseConfig(raw).projects[0]?.repository.validationCommand,
-    ).toBeUndefined();
+    expect(parseConfig(raw).projects[0]?.repository.validationCommand).toBeUndefined();
   });
 
   it("accepts multiple projects", () => {
@@ -943,10 +848,7 @@ workflow:
   });
 
   it("rejects relative repository paths", () => {
-    const raw = validConfig.replace(
-      'path: "/tmp/repository"',
-      'path: "./repository"',
-    );
+    const raw = validConfig.replace('path: "/tmp/repository"', 'path: "./repository"');
 
     expect(() => parseConfig(raw)).toThrow("Must be an absolute path");
   });
@@ -1014,68 +916,37 @@ workflow:
       "/tmp/repository-source",
       "/tmp/repository-worktrees",
     ],
-  ])(
-    "accepts %s repository and worktree paths",
-    (_label, repository, worktreeRoot) => {
-      const raw = validConfig
-        .replace('path: "/tmp/repository"', `path: "${repository}"`)
-        .replace(
-          'worktreeRoot: "/tmp/worktrees"',
-          `worktreeRoot: "${worktreeRoot}"`,
-        );
+  ])("accepts %s repository and worktree paths", (_label, repository, worktreeRoot) => {
+    const raw = validConfig
+      .replace('path: "/tmp/repository"', `path: "${repository}"`)
+      .replace('worktreeRoot: "/tmp/worktrees"', `worktreeRoot: "${worktreeRoot}"`);
 
-      expect(() => parseConfig(raw)).not.toThrow();
-    },
-  );
+    expect(() => parseConfig(raw)).not.toThrow();
+  });
 
   it.each([
     ["equal", "/tmp/repository", "/tmp/repository"],
-    [
-      "repository inside worktree root",
-      "/tmp/worktrees/repository",
-      "/tmp/worktrees",
-    ],
-    [
-      "worktree root inside repository",
-      "/tmp/repository",
-      "/tmp/repository/worktrees",
-    ],
-    [
-      "normalized equal paths",
-      "/tmp/repository/./source/..",
-      "/tmp/worktrees/../repository",
-    ],
-    [
-      "normalized repository inside worktree root",
-      "/tmp/worktrees/./repository",
-      "/tmp/worktrees",
-    ],
+    ["repository inside worktree root", "/tmp/worktrees/repository", "/tmp/worktrees"],
+    ["worktree root inside repository", "/tmp/repository", "/tmp/repository/worktrees"],
+    ["normalized equal paths", "/tmp/repository/./source/..", "/tmp/worktrees/../repository"],
+    ["normalized repository inside worktree root", "/tmp/worktrees/./repository", "/tmp/worktrees"],
     [
       "normalized worktree root inside repository",
       "/tmp/repository",
       "/tmp/repository/tasks/../worktrees",
     ],
-  ])(
-    "rejects %s repository and worktree paths",
-    (_label, repository, worktreeRoot) => {
-      const raw = validConfig
-        .replace('path: "/tmp/repository"', `path: "${repository}"`)
-        .replace(
-          'worktreeRoot: "/tmp/worktrees"',
-          `worktreeRoot: "${worktreeRoot}"`,
-        );
+  ])("rejects %s repository and worktree paths", (_label, repository, worktreeRoot) => {
+    const raw = validConfig
+      .replace('path: "/tmp/repository"', `path: "${repository}"`)
+      .replace('worktreeRoot: "/tmp/worktrees"', `worktreeRoot: "${worktreeRoot}"`);
 
-      expect(() => parseConfig(raw)).toThrow("Repository path");
-      expect(() => parseConfig(raw)).toThrow("overlaps worktree root");
-      expect(() => parseConfig(raw)).toThrow('for project "project-one"');
-    },
-  );
+    expect(() => parseConfig(raw)).toThrow("Repository path");
+    expect(() => parseConfig(raw)).toThrow("overlaps worktree root");
+    expect(() => parseConfig(raw)).toThrow('for project "project-one"');
+  });
 
   it("rejects malformed GitHub repository names", () => {
-    const raw = validConfig.replace(
-      'github: "owner/repository"',
-      'github: "repository"',
-    );
+    const raw = validConfig.replace('github: "owner/repository"', 'github: "repository"');
 
     expect(() => parseConfig(raw)).toThrow("owner/repository");
   });
@@ -1093,73 +964,44 @@ workflow:
       'github: "owner/repository-two"',
       'github: "git@github.com:OWNER/REPOSITORY.git"',
     );
-    expect(() => parseConfig(duplicate)).toThrow(
-      "GitHub repositories must be unique",
-    );
+    expect(() => parseConfig(duplicate)).toThrow("GitHub repositories must be unique");
   });
 
   it("requires the coordination directory and namespace identity as a pair", () => {
     expect(() =>
       parseConfig(
-        validConfig.replace(
-          "workflow:",
-          'workflow:\n  coordinationRoot: "/tmp/coordination"',
-        ),
+        validConfig.replace("workflow:", 'workflow:\n  coordinationRoot: "/tmp/coordination"'),
       ),
-    ).toThrow(
-      "coordinationRoot and coordinationNamespaceId must be configured together",
-    );
+    ).toThrow("coordinationRoot and coordinationNamespaceId must be configured together");
     const complete = validConfig.replace(
       "workflow:",
       'workflow:\n  coordinationRoot: "/tmp/coordination"\n  coordinationNamespaceId: "host-one"',
     );
-    expect(parseConfig(complete).workflow.coordinationNamespaceId).toBe(
-      "host-one",
-    );
+    expect(parseConfig(complete).workflow.coordinationNamespaceId).toBe("host-one");
   });
 
   it("rejects duplicate Trello workflow list IDs", () => {
-    const raw = validConfig.replace(
-      'workingListId: "working"',
-      'workingListId: "ready"',
-    );
+    const raw = validConfig.replace('workingListId: "working"', 'workingListId: "ready"');
 
-    expect(() => parseConfig(raw)).toThrow(
-      "Trello workflow list IDs must be unique",
-    );
+    expect(() => parseConfig(raw)).toThrow("Trello workflow list IDs must be unique");
   });
 
   it("rejects a backlog list ID that duplicates another workflow list", () => {
-    const raw = validConfig.replace(
-      'backlogListId: "backlog"',
-      'backlogListId: "ready"',
-    );
+    const raw = validConfig.replace('backlogListId: "backlog"', 'backlogListId: "ready"');
 
-    expect(() => parseConfig(raw)).toThrow(
-      "Trello workflow list IDs must be unique",
-    );
+    expect(() => parseConfig(raw)).toThrow("Trello workflow list IDs must be unique");
   });
 
   it("rejects duplicate Trello workflow label IDs", () => {
-    const raw = validConfig.replace(
-      'bugLabelId: "bug"',
-      'bugLabelId: "feature"',
-    );
+    const raw = validConfig.replace('bugLabelId: "bug"', 'bugLabelId: "feature"');
 
-    expect(() => parseConfig(raw)).toThrow(
-      "Trello workflow label IDs must be unique",
-    );
+    expect(() => parseConfig(raw)).toThrow("Trello workflow label IDs must be unique");
   });
 
   it("accepts multiple projects with unique IDs", () => {
-    const config = parseConfig(
-      configWithProjectIds(["project-one", "project-two"]),
-    );
+    const config = parseConfig(configWithProjectIds(["project-one", "project-two"]));
 
-    expect(config.projects.map((project) => project.id)).toEqual([
-      "project-one",
-      "project-two",
-    ]);
+    expect(config.projects.map((project) => project.id)).toEqual(["project-one", "project-two"]);
   });
 
   it("rejects duplicate project IDs", () => {
@@ -1212,16 +1054,12 @@ workflow:
 workflow:`,
     );
 
-    expect(() => parseConfig(raw)).toThrow(
-      'Duplicate project ID "project-one"',
-    );
+    expect(() => parseConfig(raw)).toThrow('Duplicate project ID "project-one"');
   });
 
   it("rejects a project ID that occurs more than twice", () => {
     expect(() =>
-      parseConfig(
-        configWithProjectIds(["project-one", "project-one", "project-one"]),
-      ),
+      parseConfig(configWithProjectIds(["project-one", "project-one", "project-one"])),
     ).toThrow('Duplicate project ID "project-one"');
   });
 
@@ -1275,9 +1113,7 @@ workflow:`,
 workflow:`,
     );
 
-    expect(() => parseConfig(raw)).toThrow(
-      "GitHub repositories must be unique",
-    );
+    expect(() => parseConfig(raw)).toThrow("GitHub repositories must be unique");
   });
 
   it("rejects duplicate Trello board IDs", () => {
@@ -1334,10 +1170,7 @@ workflow:`,
   });
 
   it("rejects non-positive poll intervals", () => {
-    const raw = validConfig.replace(
-      "pollIntervalSeconds: 15",
-      "pollIntervalSeconds: 0",
-    );
+    const raw = validConfig.replace("pollIntervalSeconds: 15", "pollIntervalSeconds: 0");
 
     expect(() => parseConfig(raw)).toThrow();
   });
@@ -1382,10 +1215,7 @@ workflow:`,
   });
 
   it("rejects an empty validation command", () => {
-    const raw = validConfig.replace(
-      'validationCommand: "yarn validate"',
-      'validationCommand: ""',
-    );
+    const raw = validConfig.replace('validationCommand: "yarn validate"', 'validationCommand: ""');
 
     expect(() => parseConfig(raw)).toThrow();
   });

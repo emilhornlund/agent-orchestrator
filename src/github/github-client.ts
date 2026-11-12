@@ -2,10 +2,7 @@ import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { buildChildEnvironment } from "../process/child-environment.js";
 
-import {
-  canonicalizeGitHubRepository,
-  type ProjectConfig,
-} from "../config/config.js";
+import { canonicalizeGitHubRepository, type ProjectConfig } from "../config/config.js";
 import type { CiCheckExpectationSource } from "./ci-check-expectations.js";
 import { collectCiWorkflowDocumentExpectationSources } from "./ci-workflow-contract.js";
 import { presentExternalDiagnostic } from "../security/bounded-diagnostic.js";
@@ -191,8 +188,7 @@ export interface CiObservationsResult {
 
 export type PullRequestStatus = "OPEN" | "CLOSED" | "MERGED";
 
-export type PullRequestBaseRelation =
-  "current" | "behind" | "diverged" | "uncertain";
+export type PullRequestBaseRelation = "current" | "behind" | "diverged" | "uncertain";
 
 export interface PullRequestBaseRelationOptions {
   cwd: string;
@@ -205,20 +201,10 @@ export interface PullRequestBaseRelationOptions {
 export type PullRequestMergeability = "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
 
 export type PullRequestMergeStateStatus =
-  | "BEHIND"
-  | "BLOCKED"
-  | "CLEAN"
-  | "DIRTY"
-  | "DRAFT"
-  | "HAS_HOOKS"
-  | "UNKNOWN"
-  | "UNSTABLE";
+  "BEHIND" | "BLOCKED" | "CLEAN" | "DIRTY" | "DRAFT" | "HAS_HOOKS" | "UNKNOWN" | "UNSTABLE";
 
 export class GitHubMergeStateUnknownError extends Error {
-  constructor(
-    mergeable: PullRequestMergeability,
-    mergeStateStatus: PullRequestMergeStateStatus,
-  ) {
+  constructor(mergeable: PullRequestMergeability, mergeStateStatus: PullRequestMergeStateStatus) {
     super(
       `GitHub returned a temporary unresolved pull request merge state while recalculating (mergeable: ${mergeable}, mergeStateStatus: ${mergeStateStatus})`,
     );
@@ -340,9 +326,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function parseHeadRepository(
-  value: unknown,
-): PullRequestHeadRepository | null | undefined {
+function parseHeadRepository(value: unknown): PullRequestHeadRepository | null | undefined {
   if (value === null) {
     return null;
   }
@@ -361,11 +345,7 @@ function parseHeadRepositoryOwner(
     return null;
   }
 
-  if (
-    !isRecord(value) ||
-    typeof value.login !== "string" ||
-    value.login === ""
-  ) {
+  if (!isRecord(value) || typeof value.login !== "string" || value.login === "") {
     return undefined;
   }
 
@@ -417,16 +397,10 @@ function validatePullRequestList(value: unknown): PullRequestReviewListItem[] {
   });
 }
 
-function parsePullRequestBody(
-  output: string,
-  origin?: GitHubOutputOrigin,
-): string {
+function parsePullRequestBody(output: string, origin?: GitHubOutputOrigin): string {
   const parsed = parseGitHubJson(output, origin, "pull request body");
 
-  if (
-    !isRecord(parsed) ||
-    (typeof parsed.body !== "string" && parsed.body !== null)
-  )
+  if (!isRecord(parsed) || (typeof parsed.body !== "string" && parsed.body !== null))
     throw new MalformedGitHubResponseError("pull request body", origin);
 
   return parsed.body ?? "";
@@ -442,9 +416,7 @@ function validatePullRequestStateList(
 
   return value.map((item) => {
     if (!isRecord(item)) {
-      throw new Error(
-        "GitHub CLI returned an invalid pull request state list item",
-      );
+      throw new Error("GitHub CLI returned an invalid pull request state list item");
     }
 
     const url = item.url;
@@ -453,15 +425,12 @@ function validatePullRequestStateList(
     const baseRefName = item.baseRefName;
     const headRefName = item.headRefName;
     const headRepository = parseHeadRepository(item.headRepository);
-    const headRepositoryOwner = parseHeadRepositoryOwner(
-      item.headRepositoryOwner,
-    );
+    const headRepositoryOwner = parseHeadRepositoryOwner(item.headRepositoryOwner);
     const mergeable = item.mergeable;
     const mergeStateStatus = item.mergeStateStatus;
     const headRefOid = item.headRefOid;
     const baseRefOid = item.baseRefOid;
-    const requiresMaintenanceFacts =
-      requireMaintenanceFacts && state === "OPEN";
+    const requiresMaintenanceFacts = requireMaintenanceFacts && state === "OPEN";
     const hasHeadRepositoryIdentity =
       headRepository !== undefined &&
       headRepository !== null &&
@@ -478,9 +447,7 @@ function validatePullRequestStateList(
           headRefOid.length === 0 ||
           typeof baseRefName !== "string" ||
           typeof headRefName !== "string" ||
-          (mergeable !== "MERGEABLE" &&
-            mergeable !== "CONFLICTING" &&
-            mergeable !== "UNKNOWN") ||
+          (mergeable !== "MERGEABLE" && mergeable !== "CONFLICTING" && mergeable !== "UNKNOWN") ||
           (mergeStateStatus !== "BEHIND" &&
             mergeStateStatus !== "BLOCKED" &&
             mergeStateStatus !== "CLEAN" &&
@@ -490,9 +457,7 @@ function validatePullRequestStateList(
             mergeStateStatus !== "UNKNOWN" &&
             mergeStateStatus !== "UNSTABLE")))
     ) {
-      throw new Error(
-        "GitHub CLI returned an invalid pull request state list item",
-      );
+      throw new Error("GitHub CLI returned an invalid pull request state list item");
     }
 
     return {
@@ -505,9 +470,7 @@ function validatePullRequestStateList(
       ...(headRepositoryOwner === undefined ? {} : { headRepositoryOwner }),
       ...(typeof baseRefName === "string" &&
       typeof headRefName === "string" &&
-      (mergeable === "MERGEABLE" ||
-        mergeable === "CONFLICTING" ||
-        mergeable === "UNKNOWN") &&
+      (mergeable === "MERGEABLE" || mergeable === "CONFLICTING" || mergeable === "UNKNOWN") &&
       (mergeStateStatus === "BEHIND" ||
         mergeStateStatus === "BLOCKED" ||
         mergeStateStatus === "CLEAN" ||
@@ -527,9 +490,7 @@ function validatePullRequestStateList(
   });
 }
 
-function validateRequestedChangesReview(
-  value: unknown,
-): RequestedChangesReview {
+function validateRequestedChangesReview(value: unknown): RequestedChangesReview {
   if (!isRecord(value)) {
     throw new Error("GitHub CLI returned an invalid requested changes review");
   }
@@ -543,9 +504,7 @@ function validateRequestedChangesReview(
   const author =
     user === null
       ? null
-      : isRecord(user) &&
-          typeof user.login === "string" &&
-          user.login.length > 0
+      : isRecord(user) && typeof user.login === "string" && user.login.length > 0
         ? user.login
         : undefined;
 
@@ -585,12 +544,7 @@ export function parsePaginatedGitHubResponse(
   origin?: GitHubOutputOrigin,
 ): unknown[] {
   try {
-    return parsePaginatedGitHubResponseUnsafe(
-      output,
-      description,
-      collectionProperty,
-      origin,
-    );
+    return parsePaginatedGitHubResponseUnsafe(output, description, collectionProperty, origin);
   } catch (error) {
     if (error instanceof MalformedGitHubResponseError) throw error;
     throw new MalformedGitHubResponseError(description, origin);
@@ -628,9 +582,7 @@ function parsePaginatedGitHubResponseUnsafe(
   return values;
 }
 
-function validateInlineReviewComment(
-  value: unknown,
-): ValidatedInlineReviewComment {
+function validateInlineReviewComment(value: unknown): ValidatedInlineReviewComment {
   if (!isRecord(value)) {
     throw new Error("GitHub CLI returned an invalid inline review comment");
   }
@@ -647,26 +599,18 @@ function validateInlineReviewComment(
   const author =
     user === null
       ? null
-      : isRecord(user) &&
-          typeof user.login === "string" &&
-          user.login.length > 0
+      : isRecord(user) && typeof user.login === "string" && user.login.length > 0
         ? user.login
         : undefined;
 
   if (
-    (id !== undefined &&
-      (typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0)) ||
+    (id !== undefined && (typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0)) ||
     (reviewId !== null &&
-      (typeof reviewId !== "number" ||
-        !Number.isSafeInteger(reviewId) ||
-        reviewId <= 0)) ||
+      (typeof reviewId !== "number" || !Number.isSafeInteger(reviewId) || reviewId <= 0)) ||
     (typeof body !== "string" && body !== null) ||
-    (commitSha !== undefined &&
-      (typeof commitSha !== "string" || commitSha.length === 0)) ||
+    (commitSha !== undefined && (typeof commitSha !== "string" || commitSha.length === 0)) ||
     author === undefined ||
-    (path !== undefined &&
-      path !== null &&
-      (typeof path !== "string" || path.length === 0)) ||
+    (path !== undefined && path !== null && (typeof path !== "string" || path.length === 0)) ||
     (line !== undefined &&
       line !== null &&
       (typeof line !== "number" || !Number.isSafeInteger(line) || line <= 0)) ||
@@ -675,9 +619,7 @@ function validateInlineReviewComment(
       (typeof originalLine !== "number" ||
         !Number.isSafeInteger(originalLine) ||
         originalLine <= 0)) ||
-    (diffHunk !== undefined &&
-      diffHunk !== null &&
-      typeof diffHunk !== "string")
+    (diffHunk !== undefined && diffHunk !== null && typeof diffHunk !== "string")
   ) {
     throw new Error("GitHub CLI returned an invalid inline review comment");
   }
@@ -760,9 +702,7 @@ function validateReviewThreadComment(
   const diffHunk = value.diffHunk;
   const reviewValue = value.pullRequestReview;
   const reviewId =
-    isRecord(reviewValue) && reviewValue.databaseId !== null
-      ? reviewValue.databaseId
-      : undefined;
+    isRecord(reviewValue) && reviewValue.databaseId !== null ? reviewValue.databaseId : undefined;
 
   if (
     typeof id !== "number" ||
@@ -775,8 +715,7 @@ function validateReviewThreadComment(
     !Number.isSafeInteger(reviewId) ||
     reviewId <= 0 ||
     (path !== null && typeof path !== "string") ||
-    (line !== null &&
-      (typeof line !== "number" || !Number.isSafeInteger(line) || line <= 0)) ||
+    (line !== null && (typeof line !== "number" || !Number.isSafeInteger(line) || line <= 0)) ||
     (originalLine !== null &&
       (typeof originalLine !== "number" ||
         !Number.isSafeInteger(originalLine) ||
@@ -804,13 +743,10 @@ function validateReviewThreadComment(
   };
 }
 
-function validateReviewThreadsResponse(
-  value: unknown,
-): ValidatedReviewThread[] {
+function validateReviewThreadsResponse(value: unknown): ValidatedReviewThread[] {
   if (
     !isRecord(value) ||
-    (value.errors !== undefined &&
-      (!Array.isArray(value.errors) || value.errors.length > 0)) ||
+    (value.errors !== undefined && (!Array.isArray(value.errors) || value.errors.length > 0)) ||
     !isRecord(value.data)
   ) {
     throw new Error("GitHub CLI returned an invalid review thread response");
@@ -818,9 +754,7 @@ function validateReviewThreadsResponse(
 
   const repository = value.data.repository;
   const pullRequest = isRecord(repository) ? repository.pullRequest : undefined;
-  const reviewThreads = isRecord(pullRequest)
-    ? pullRequest.reviewThreads
-    : undefined;
+  const reviewThreads = isRecord(pullRequest) ? pullRequest.reviewThreads : undefined;
 
   if (!isRecord(reviewThreads)) {
     throw new Error("GitHub CLI returned an invalid review thread response");
@@ -905,18 +839,11 @@ function hasTransientHttpStatus(error: unknown, message: string): boolean {
       response?: { status?: unknown };
     };
 
-    statusValues.push(
-      candidate.status,
-      candidate.statusCode,
-      candidate.response?.status,
-    );
+    statusValues.push(candidate.status, candidate.statusCode, candidate.response?.status);
   }
 
   if (
-    statusValues.some(
-      (status) =>
-        typeof status === "number" && transientHttpStatuses.has(status),
-    )
+    statusValues.some((status) => typeof status === "number" && transientHttpStatuses.has(status))
   ) {
     return true;
   }
@@ -931,19 +858,13 @@ function hasTransientHttpStatus(error: unknown, message: string): boolean {
 
 /** Returns true only for failures that can reasonably change on a later read. */
 export function isRetryableGitHubError(error: unknown): boolean {
-  if (
-    errorChain(error).some(
-      (entry) => entry instanceof GitHubMergeStateUnknownError,
-    )
-  ) {
+  if (errorChain(error).some((entry) => entry instanceof GitHubMergeStateUnknownError)) {
     return true;
   }
 
   const messages = errorChain(error).flatMap((entry) => {
     const diagnostic =
-      entry instanceof ProcessExecutionError
-        ? getProcessFailureDiagnostic(entry)
-        : undefined;
+      entry instanceof ProcessExecutionError ? getProcessFailureDiagnostic(entry) : undefined;
     return [
       entry.message.toLowerCase(),
       ...(diagnostic === undefined ? [] : [diagnostic.toLowerCase()]),
@@ -1004,10 +925,7 @@ export function isRetryableGitHubError(error: unknown): boolean {
   );
 }
 
-function parsePullRequestUrl(
-  value: string,
-  origin?: GitHubOutputOrigin,
-): string {
+function parsePullRequestUrl(value: string, origin?: GitHubOutputOrigin): string {
   const url = value.trim();
 
   try {
@@ -1032,9 +950,7 @@ export class MalformedPullRequestUrlError extends Error {
   public readonly stdoutArtifactReference?: string;
 
   constructor(origin?: GitHubOutputOrigin) {
-    super(
-      "GitHub CLI returned an invalid pull request URL (malformed response)",
-    );
+    super("GitHub CLI returned an invalid pull request URL (malformed response)");
     this.name = "MalformedPullRequestUrlError";
     if (origin !== undefined) {
       this.executionId = origin.executionId;
@@ -1053,10 +969,7 @@ export class MalformedGitHubResponseError extends Error {
   public readonly executionId?: string;
   public readonly stdoutArtifactReference?: string;
 
-  constructor(
-    description = "GitHub CLI response",
-    origin?: GitHubOutputOrigin,
-  ) {
+  constructor(description = "GitHub CLI response", origin?: GitHubOutputOrigin) {
     super(`GitHub CLI returned an invalid ${description}`);
     this.name = "MalformedGitHubResponseError";
     if (origin !== undefined) {
@@ -1093,10 +1006,7 @@ function validateGitHubJson<T>(
   }
 }
 
-function getPullRequestNumberForRepository(
-  pullRequestUrl: string,
-  repository: string,
-): number {
+function getPullRequestNumberForRepository(pullRequestUrl: string, repository: string): number {
   const parsed = new URL(parsePullRequestUrl(pullRequestUrl));
   const [, owner, name, , number] = parsed.pathname.split("/");
   if (
@@ -1106,9 +1016,7 @@ function getPullRequestNumberForRepository(
     number === undefined ||
     !/^\d+$/u.test(number)
   ) {
-    throw new Error(
-      "Pull request URL does not belong to the requested repository",
-    );
+    throw new Error("Pull request URL does not belong to the requested repository");
   }
   const parsedNumber = Number(number);
   if (!Number.isSafeInteger(parsedNumber) || parsedNumber < 1) {
@@ -1133,11 +1041,7 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
       environment?.GITHUB_TOKEN,
       ...runtime.secretValues,
     ].filter((value): value is string => value !== undefined);
-    const execution = beginProcessEvidence(
-      `gh ${args.join(" ")}`,
-      cwd,
-      environmentSecrets,
-    );
+    const execution = beginProcessEvidence(`gh ${args.join(" ")}`, cwd, environmentSecrets);
     const contentFlags = new Set([
       "--body",
       "--title",
@@ -1179,22 +1083,16 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
       try {
         execution.append(stream, text);
         if (execution.failure !== undefined) throw execution.failure;
-        if (stream === "stdout")
-          output = appendBoundedOutput(output, text, stream);
+        if (stream === "stdout") output = appendBoundedOutput(output, text, stream);
         else errorOutput = appendBoundedOutput(errorOutput, text, stream);
       } catch (error) {
         recorderFailure =
           error instanceof Error
             ? error
             : new ProcessEvidenceError("GitHub process recording failed");
-        signalProcessGroup(child.pid, "SIGTERM", (signal) =>
-          child.kill(signal),
-        );
+        signalProcessGroup(child.pid, "SIGTERM", (signal) => child.kill(signal));
         forceKillTimeout = setTimeout(
-          () =>
-            signalProcessGroup(child.pid, "SIGKILL", (signal) =>
-              child.kill(signal),
-            ),
+          () => signalProcessGroup(child.pid, "SIGKILL", (signal) => child.kill(signal)),
           GITHUB_TERMINATION_GRACE_MS,
         );
       }
@@ -1225,9 +1123,7 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
           return;
         }
 
-        signalProcessGroup(child.pid, "SIGKILL", (signal) =>
-          child.kill(signal),
-        );
+        signalProcessGroup(child.pid, "SIGKILL", (signal) => child.kill(signal));
       }, GITHUB_TERMINATION_GRACE_MS);
     }, timeoutMilliseconds);
 
@@ -1270,13 +1166,7 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
         clearTimeout(forceKillTimeout);
       }
 
-      reject(
-        new ProcessExecutionError(
-          "GitHub CLI",
-          execution.executionId,
-          "spawn-failure",
-        ),
-      );
+      reject(new ProcessExecutionError("GitHub CLI", execution.executionId, "spawn-failure"));
     });
 
     child.once("close", async (code, signalName) => {
@@ -1298,9 +1188,7 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
           recorderFailure ??=
             finishError instanceof Error
               ? finishError
-              : new ProcessEvidenceError(
-                  "Process evidence finalization failed",
-                );
+              : new ProcessEvidenceError("Process evidence finalization failed");
         }
         reject(error);
         return;
@@ -1323,14 +1211,11 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
             : "nonzero";
       recorderFailure ??= execution.failure;
       try {
-        execution.finish(
-          recorderFailure === undefined ? status : "evidence-failure",
-          {
-            pid: child.pid,
-            exitCode: code ?? 1,
-            ...(signalName === null ? {} : { signal: signalName }),
-          },
-        );
+        execution.finish(recorderFailure === undefined ? status : "evidence-failure", {
+          pid: child.pid,
+          exitCode: code ?? 1,
+          ...(signalName === null ? {} : { signal: signalName }),
+        });
       } catch (finishError) {
         reject(finishError);
         return;
@@ -1342,20 +1227,12 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
       }
 
       if (runtime.signal?.aborted) {
-        reject(
-          new Error("GitHub CLI execution interrupted by runtime shutdown"),
-        );
+        reject(new Error("GitHub CLI execution interrupted by runtime shutdown"));
         return;
       }
 
       if (timedOut) {
-        reject(
-          new ProcessExecutionError(
-            "GitHub CLI",
-            execution.executionId,
-            "timeout",
-          ),
-        );
+        reject(new ProcessExecutionError("GitHub CLI", execution.executionId, "timeout"));
         return;
       }
 
@@ -1384,9 +1261,7 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
       if (settled) return;
       signalProcessGroup(child.pid, "SIGTERM", (signal) => child.kill(signal));
       forceKillTimeout = setTimeout(() => {
-        signalProcessGroup(child.pid, "SIGKILL", (signal) =>
-          child.kill(signal),
-        );
+        signalProcessGroup(child.pid, "SIGKILL", (signal) => child.kill(signal));
       }, GITHUB_TERMINATION_GRACE_MS);
     };
     runtime.signal?.addEventListener("abort", abort, { once: true });
@@ -1394,10 +1269,7 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
   });
 
 export class GitHubClient {
-  private async sanitizeMutationBody(
-    body: string,
-    project?: ProjectConfig,
-  ): Promise<string> {
+  private async sanitizeMutationBody(body: string, project?: ProjectConfig): Promise<string> {
     const credential = await this.resolveCredential(project);
     return sanitizeControlledText(
       redactRegisteredSecrets(body, [
@@ -1458,29 +1330,21 @@ export class GitHubClient {
   ): Promise<string> {
     const dispatch = async (): Promise<string> => {
       if (
-        (args[0] === "pr" &&
-          ["create", "edit", "ready"].includes(args[1] ?? "")) ||
+        (args[0] === "pr" && ["create", "edit", "ready"].includes(args[1] ?? "")) ||
         (args[0] === "api" &&
-          ((args.includes("--method") &&
-            args[args.indexOf("--method") + 1] !== "GET") ||
-            args.some(
-              (arg) =>
-                arg.startsWith("query=") && /\bmutation\s*[({]/u.test(arg),
-            )))
+          ((args.includes("--method") && args[args.indexOf("--method") + 1] !== "GET") ||
+            args.some((arg) => arg.startsWith("query=") && /\bmutation\s*[({]/u.test(arg))))
       )
         assertJournaledTransport();
       try {
         const canCaptureOrigin =
           onSuccessfulOutput !== undefined &&
-          (this.runGitHubCommand === defaultRunGitHubCommand ||
-            this.runGitHubCommand.length >= 4);
+          (this.runGitHubCommand === defaultRunGitHubCommand || this.runGitHubCommand.length >= 4);
         const output = canCaptureOrigin
           ? await this.runGitHubCommand(
               cwd,
               args,
-              Object.keys(credential.environment).length === 0
-                ? undefined
-                : credential.environment,
+              Object.keys(credential.environment).length === 0 ? undefined : credential.environment,
               onSuccessfulOutput,
             )
           : Object.keys(credential.environment).length === 0
@@ -1492,10 +1356,7 @@ export class GitHubClient {
         if (error instanceof ProcessExecutionError) throw error;
         const safeError = redactError(error, credential.secretValues);
 
-        if (
-          credential.mode === "ambient" &&
-          !containsSecret(error, credential.secretValues)
-        ) {
+        if (credential.mode === "ambient" && !containsSecret(error, credential.secretValues)) {
           throw error;
         }
 
@@ -1504,11 +1365,8 @@ export class GitHubClient {
         throw new Error(safeError.message, { cause: safeError });
       }
     };
-    const projectId =
-      getGitHubOperationProject()?.id ?? ProjectRunAuthority.currentProjectId();
-    return projectId === undefined
-      ? dispatch()
-      : ProjectRunAuthority.dispatch(projectId, dispatch);
+    const projectId = getGitHubOperationProject()?.id ?? ProjectRunAuthority.currentProjectId();
+    return projectId === undefined ? dispatch() : ProjectRunAuthority.dispatch(projectId, dispatch);
   }
 
   /** Runs one command and returns provenance captured by that invocation only. */
@@ -1524,18 +1382,14 @@ export class GitHubClient {
     return { output, ...(origin === undefined ? {} : { origin }) };
   }
 
-  private resolveCredential(
-    project?: ProjectConfig,
-  ): Promise<GitHubCredential> {
+  private resolveCredential(project?: ProjectConfig): Promise<GitHubCredential> {
     const operationProject = project ?? getGitHubOperationProject();
 
     return this.credentials.resolve(operationProject);
   }
 
   /** Collects exact-head check runs, statuses, and available CI contracts. */
-  async getCiObservations(
-    options: CiObservationsOptions,
-  ): Promise<CiObservationsResult> {
+  async getCiObservations(options: CiObservationsOptions): Promise<CiObservationsResult> {
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(options.headSha)) {
       throw new Error("CI observations require a full expected commit SHA");
     }
@@ -1547,27 +1401,14 @@ export class GitHubClient {
     const checkRunsPath = `repos/${options.repository}/commits/${options.headSha}/check-runs?per_page=100&filter=latest`;
     const statusesPath = `repos/${options.repository}/commits/${options.headSha}/statuses?per_page=100`;
     const branchRulesPath = `repos/${options.repository}/branches/${encodeURIComponent(options.defaultBranch)}/protection/required_status_checks`;
-    const [checkRunsResult, statusesResult, branchRulesResult] =
-      await Promise.all([
-        this.runWithOrigin(
-          options.cwd,
-          ["api", "--paginate", "--slurp", checkRunsPath],
-          credential,
-        ),
-        this.runWithOrigin(
-          options.cwd,
-          ["api", "--paginate", "--slurp", statusesPath],
-          credential,
-        ),
-        this.runWithOrigin(
-          options.cwd,
-          ["api", branchRulesPath],
-          credential,
-        ).then(
-          (result) => ({ result }),
-          (error: unknown) => ({ error }),
-        ),
-      ]);
+    const [checkRunsResult, statusesResult, branchRulesResult] = await Promise.all([
+      this.runWithOrigin(options.cwd, ["api", "--paginate", "--slurp", checkRunsPath], credential),
+      this.runWithOrigin(options.cwd, ["api", "--paginate", "--slurp", statusesPath], credential),
+      this.runWithOrigin(options.cwd, ["api", branchRulesPath], credential).then(
+        (result) => ({ result }),
+        (error: unknown) => ({ error }),
+      ),
+    ]);
 
     const checkRunPages = parsePaginatedGitHubResponse(
       checkRunsResult.output,
@@ -1590,10 +1431,7 @@ export class GitHubClient {
         (value.conclusion !== null && typeof value.conclusion !== "string") ||
         (value.html_url !== null && typeof value.html_url !== "string")
       ) {
-        throw new MalformedGitHubResponseError(
-          "check runs",
-          checkRunsResult.origin,
-        );
+        throw new MalformedGitHubResponseError("check runs", checkRunsResult.origin);
       }
       if (value.head_sha !== options.headSha) {
         throw new MalformedGitHubResponseError(
@@ -1607,8 +1445,7 @@ export class GitHubClient {
         name: value.name,
         headSha: value.head_sha,
         status: value.status,
-        conclusion:
-          typeof value.conclusion === "string" ? value.conclusion : null,
+        conclusion: typeof value.conclusion === "string" ? value.conclusion : null,
         url: typeof value.html_url === "string" ? value.html_url : null,
       });
     }
@@ -1634,10 +1471,7 @@ export class GitHubClient {
         (value.target_url !== null && typeof value.target_url !== "string") ||
         (value.description !== null && typeof value.description !== "string")
       ) {
-        throw new MalformedGitHubResponseError(
-          "commit statuses",
-          statusesResult.origin,
-        );
+        throw new MalformedGitHubResponseError("commit statuses", statusesResult.origin);
       }
       if (value.sha !== options.headSha) {
         throw new MalformedGitHubResponseError(
@@ -1654,8 +1488,7 @@ export class GitHubClient {
         createdAt: value.created_at,
         updatedAt: value.updated_at,
         url: typeof value.target_url === "string" ? value.target_url : null,
-        description:
-          typeof value.description === "string" ? value.description : null,
+        description: typeof value.description === "string" ? value.description : null,
       });
     }
 
@@ -1678,9 +1511,7 @@ export class GitHubClient {
         if (Array.isArray(rules.checks)) {
           for (const check of rules.checks) {
             if (!isRecord(check) || typeof check.context !== "string")
-              throw new Error(
-                "branch rules include a malformed check contract",
-              );
+              throw new Error("branch rules include a malformed check contract");
             names.push(check.context);
           }
         }
@@ -1696,8 +1527,7 @@ export class GitHubClient {
           sourceId: `branch-protection:${options.defaultBranch}`,
           complete: false,
           checkNames: [],
-          uncertainty:
-            "GitHub branch protection returned an invalid check contract",
+          uncertainty: "GitHub branch protection returned an invalid check contract",
         });
       }
     } else if (
@@ -1717,17 +1547,9 @@ export class GitHubClient {
     }
 
     try {
-      const workflowSources = await this.getRevisionWorkflowContracts(
-        options,
-        credential,
-      );
-      const incompleteWorkflows = workflowSources.filter(
-        (source) => !source.complete,
-      );
-      if (
-        incompleteWorkflows.length > 0 &&
-        options.pullRequestNumber !== undefined
-      ) {
+      const workflowSources = await this.getRevisionWorkflowContracts(options, credential);
+      const incompleteWorkflows = workflowSources.filter((source) => !source.complete);
+      if (incompleteWorkflows.length > 0 && options.pullRequestNumber !== undefined) {
         const runtime = await this.getWorkflowRunJobs({
           cwd: options.cwd,
           repository: options.repository,
@@ -1743,9 +1565,7 @@ export class GitHubClient {
             runtime.coveredWorkflowPaths.map((path) => `workflow:${path}`),
           );
           expectationSources.push(
-            ...workflowSources.filter(
-              (source) => !resolvedIds.has(source.sourceId),
-            ),
+            ...workflowSources.filter((source) => !resolvedIds.has(source.sourceId)),
             {
               kind: "workflow-contract",
               sourceId: `workflow-runs:pull-request:${options.pullRequestNumber}:${options.headSha}`,
@@ -1790,18 +1610,10 @@ export class GitHubClient {
     const endpoint = `repos/${options.repository}/contents/.github/workflows?ref=${options.headSha}`;
     let listing: unknown;
     try {
-      const result = await this.runWithOrigin(
-        options.cwd,
-        ["api", endpoint],
-        credential,
-      );
+      const result = await this.runWithOrigin(options.cwd, ["api", endpoint], credential);
       listing = parseGitHubJson(result.output, result.origin);
     } catch (error) {
-      if (
-        error instanceof Error &&
-        /(?:\b404\b|not found)/iu.test(error.message)
-      )
-        return [];
+      if (error instanceof Error && /(?:\b404\b|not found)/iu.test(error.message)) return [];
       throw error;
     }
     if (!Array.isArray(listing) || listing.length >= 1000)
@@ -1816,10 +1628,7 @@ export class GitHubClient {
       )
         throw new Error("Malformed workflow directory entry");
       if (!/\.ya?ml$/iu.test(entry.name)) continue;
-      if (
-        entry.name.includes("/") ||
-        entry.path !== `.github/workflows/${entry.name}`
-      )
+      if (entry.name.includes("/") || entry.path !== `.github/workflows/${entry.name}`)
         throw new Error("Unexpected workflow file path");
       let content: string | null = null;
       if (entry.type === "file") {
@@ -1833,20 +1642,11 @@ export class GitHubClient {
             credential,
           );
           const file: unknown = parseGitHubJson(result.output, result.origin);
-          if (
-            isRecord(file) &&
-            file.encoding === "base64" &&
-            typeof file.content === "string"
-          ) {
+          if (isRecord(file) && file.encoding === "base64" && typeof file.content === "string") {
             const encoded = file.content.replace(/\s/gu, "");
-            if (
-              /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(
-                encoded,
-              )
-            ) {
+            if (/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(encoded)) {
               const decoded = Buffer.from(encoded, "base64");
-              if (decoded.byteLength <= 1024 * 1024)
-                content = decoded.toString("utf8");
+              if (decoded.byteLength <= 1024 * 1024) content = decoded.toString("utf8");
             }
           }
         } catch {
@@ -1881,12 +1681,7 @@ export class GitHubClient {
     });
     const runResult = await this.runWithOrigin(
       options.cwd,
-      [
-        "api",
-        "--paginate",
-        "--slurp",
-        `repos/${options.repository}/actions/runs?${query}`,
-      ],
+      ["api", "--paginate", "--slurp", `repos/${options.repository}/actions/runs?${query}`],
       options.credential,
     );
     const workflowRuns = parsePaginatedGitHubResponse(
@@ -1904,10 +1699,7 @@ export class GitHubClient {
         typeof run.status !== "string" ||
         !Array.isArray(run.pull_requests)
       )
-        throw new MalformedGitHubResponseError(
-          "workflow runs",
-          runResult.origin,
-        );
+        throw new MalformedGitHubResponseError("workflow runs", runResult.origin);
       if (run.head_sha !== options.headSha) continue;
       const associated = run.pull_requests.some(
         (pr) => isRecord(pr) && Number(pr.number) === options.pullRequestNumber,
@@ -1919,8 +1711,7 @@ export class GitHubClient {
         (run.event === "pull_request" || run.event === "pull_request_target")
       ) {
         const previous = latestByPath.get(run.path);
-        if (!previous || Number(previous.id) < run.id)
-          latestByPath.set(run.path, run);
+        if (!previous || Number(previous.id) < run.id) latestByPath.set(run.path, run);
       }
     }
     const runs = [...latestByPath.values()];
@@ -1961,10 +1752,7 @@ export class GitHubClient {
           typeof job.status !== "string" ||
           (job.conclusion !== null && typeof job.conclusion !== "string")
         )
-          throw new MalformedGitHubResponseError(
-            "workflow jobs",
-            jobsResult.origin,
-          );
+          throw new MalformedGitHubResponseError("workflow jobs", jobsResult.origin);
         jobCount += 1;
         // A skipped job is authoritative evidence that this conditional branch did not apply.
         if (job.conclusion !== "skipped") expectedNames.add(job.name);
@@ -1990,8 +1778,7 @@ export class GitHubClient {
           coveredWorkflowPaths: [],
         };
     }
-    const complete =
-      allRunsCompleted && allJobsTerminal && expectedNames.size > 0;
+    const complete = allRunsCompleted && allJobsTerminal && expectedNames.size > 0;
     return {
       discovered: true,
       complete,
@@ -2025,14 +1812,8 @@ export class GitHubClient {
     );
     return Promise.all(
       failedChecks.map(async (check) => {
-        if (
-          check.headSha !== options.headSha ||
-          !Number.isSafeInteger(check.id) ||
-          check.id <= 0
-        ) {
-          throw new Error(
-            "Failed check diagnostics refer to a stale or unidentified check run",
-          );
+        if (check.headSha !== options.headSha || !Number.isSafeInteger(check.id) || check.id <= 0) {
+          throw new Error("Failed check diagnostics refer to a stale or unidentified check run");
         }
         try {
           const runResult = await this.runWithOrigin(
@@ -2060,10 +1841,7 @@ export class GitHubClient {
               typeof annotation.start_line !== "number" ||
               !Number.isSafeInteger(annotation.start_line)
             ) {
-              throw new MalformedGitHubResponseError(
-                "check annotations",
-                runResult.origin,
-              );
+              throw new MalformedGitHubResponseError("check annotations", runResult.origin);
             }
             return `${annotation.annotation_level}: ${annotation.path}:${annotation.start_line}: ${annotation.message}`;
           });
@@ -2074,9 +1852,7 @@ export class GitHubClient {
             logUrl: check.url,
             available: details.length > 0,
             diagnostic: presentExternalDiagnostic(
-              details.length > 0
-                ? details.join("\n")
-                : "No check annotations were available.",
+              details.length > 0 ? details.join("\n") : "No check annotations were available.",
               credential.secretValues,
             ),
           };
@@ -2106,14 +1882,11 @@ export class GitHubClient {
     if (
       owner === undefined ||
       repository === undefined ||
-      `${owner}/${repository}`.toLowerCase() !==
-        options.repository.toLowerCase() ||
+      `${owner}/${repository}`.toLowerCase() !== options.repository.toLowerCase() ||
       number === undefined ||
       !/^\d+$/u.test(number)
     ) {
-      throw new Error(
-        "Pull request URL does not match the requested repository",
-      );
+      throw new Error("Pull request URL does not match the requested repository");
     }
 
     const credential = await this.resolveCredential(options.project);
@@ -2143,9 +1916,7 @@ export class GitHubClient {
       const author =
         user === null
           ? null
-          : isRecord(user) &&
-              typeof user.login === "string" &&
-              user.login.length > 0
+          : isRecord(user) && typeof user.login === "string" && user.login.length > 0
             ? user.login
             : undefined;
       if (
@@ -2176,12 +1947,9 @@ export class GitHubClient {
           ? { authorIsBot: user.type === "Bot" }
           : {}),
         createdAt: value.created_at,
-        updatedAt:
-          typeof value.updated_at === "string" ? value.updated_at : null,
+        updatedAt: typeof value.updated_at === "string" ? value.updated_at : null,
         body: value.body,
-        ...(typeof value.commit_id === "string"
-          ? { commitSha: value.commit_id }
-          : {}),
+        ...(typeof value.commit_id === "string" ? { commitSha: value.commit_id } : {}),
       };
     });
   }
@@ -2194,21 +1962,10 @@ export class GitHubClient {
     // credentials may share a human login, so resolve that exact actor as well.
     if (options.project.repository.githubApp) return null;
     const credential = await this.resolveCredential(options.project);
-    const result = await this.runWithOrigin(
-      options.cwd,
-      ["api", "user"],
-      credential,
-    );
+    const result = await this.runWithOrigin(options.cwd, ["api", "user"], credential);
     const value: unknown = JSON.parse(result.output);
-    if (
-      !isRecord(value) ||
-      typeof value.login !== "string" ||
-      value.login.length === 0
-    )
-      throw new MalformedGitHubResponseError(
-        "authenticated GitHub actor",
-        result.origin,
-      );
+    if (!isRecord(value) || typeof value.login !== "string" || value.login.length === 0)
+      throw new MalformedGitHubResponseError("authenticated GitHub actor", result.origin);
     return value.login;
   }
 
@@ -2234,11 +1991,7 @@ export class GitHubClient {
         ...options,
         body: await this.sanitizeMutationBody(options.body, options.project),
       };
-      this.assertMutationPullRequest(
-        authority,
-        options.repository,
-        options.pullRequestUrl,
-      );
+      this.assertMutationPullRequest(authority, options.repository, options.pullRequestUrl);
       const request = {
         route: "github-thread-reply",
         args: {
@@ -2280,9 +2033,7 @@ export class GitHubClient {
           const comments =
             threads
               .find((thread) => thread.id === options.threadId)
-              ?.comments.filter(
-                (comment) => comment.body === `${options.body}\n\n${marker}`,
-              ) ?? [];
+              ?.comments.filter((comment) => comment.body === `${options.body}\n\n${marker}`) ?? [];
           if (comments.length !== 1) return null;
           const result: GitHubContextualReply = {
             id: String(comments[0]!.id),
@@ -2297,13 +2048,8 @@ export class GitHubClient {
       options.pullRequestUrl,
       options.repository,
     );
-    if (
-      options.threadId.trim().length === 0 ||
-      options.body.trim().length === 0
-    ) {
-      throw new Error(
-        "Review-thread reply requires a thread ID and nonblank body",
-      );
+    if (options.threadId.trim().length === 0 || options.body.trim().length === 0) {
+      throw new Error("Review-thread reply requires a thread ID and nonblank body");
     }
     const credential = await this.resolveCredential(options.project);
     const dispatchedBody = redactRegisteredSecrets(options.body, [
@@ -2321,9 +2067,7 @@ export class GitHubClient {
       credential,
     );
     if (!threads.some((thread) => thread.id === options.threadId)) {
-      throw new Error(
-        "Review thread does not belong to the requested pull request",
-      );
+      throw new Error("Review thread does not belong to the requested pull request");
     }
     const query = `mutation($threadId: ID!, $body: String!) { addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $threadId, body: $body}) { comment { databaseId } } }`;
     const runResult = await this.runWithOrigin(
@@ -2344,10 +2088,7 @@ export class GitHubClient {
     try {
       response = parseGitHubJson(runResult.output, runResult.origin);
     } catch {
-      throw new MalformedGitHubResponseError(
-        "review-thread reply",
-        runResult.origin,
-      );
+      throw new MalformedGitHubResponseError("review-thread reply", runResult.origin);
     }
     if (
       !isRecord(response) ||
@@ -2355,19 +2096,13 @@ export class GitHubClient {
         (!Array.isArray(response.errors) || response.errors.length > 0)) ||
       !isRecord(response.data)
     ) {
-      throw new MalformedGitHubResponseError(
-        "review-thread reply",
-        runResult.origin,
-      );
+      throw new MalformedGitHubResponseError("review-thread reply", runResult.origin);
     }
     const mutation = response.data.addPullRequestReviewThreadReply;
     const comment = isRecord(mutation) ? mutation.comment : undefined;
     const id = isRecord(comment) ? comment.databaseId : undefined;
     if (typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0) {
-      throw new MalformedGitHubResponseError(
-        "review-thread reply",
-        runResult.origin,
-      );
+      throw new MalformedGitHubResponseError("review-thread reply", runResult.origin);
     }
     return {
       id: String(id),
@@ -2383,13 +2118,8 @@ export class GitHubClient {
       options.pullRequestUrl,
       options.repository,
     );
-    if (
-      options.threadId.trim().length === 0 ||
-      options.marker.trim().length === 0
-    ) {
-      throw new Error(
-        "Review-thread reconciliation requires a thread ID and marker",
-      );
+    if (options.threadId.trim().length === 0 || options.marker.trim().length === 0) {
+      throw new Error("Review-thread reconciliation requires a thread ID and marker");
     }
     const credential = await this.resolveCredential(options.project);
     const threads = await this.findReviewThreads(
@@ -2402,18 +2132,13 @@ export class GitHubClient {
       pullRequestNumber,
       credential,
     );
-    const thread = threads.find(
-      (candidate) => candidate.id === options.threadId,
-    );
+    const thread = threads.find((candidate) => candidate.id === options.threadId);
     if (thread === undefined) {
-      throw new Error(
-        "Review thread does not belong to the requested pull request",
-      );
+      throw new Error("Review thread does not belong to the requested pull request");
     }
     return (
-      thread.comments
-        .find((comment) => comment.body.includes(options.marker))
-        ?.id.toString() ?? null
+      thread.comments.find((comment) => comment.body.includes(options.marker))?.id.toString() ??
+      null
     );
   }
 
@@ -2438,11 +2163,7 @@ export class GitHubClient {
         ...options,
         body: await this.sanitizeMutationBody(options.body, options.project),
       };
-      this.assertMutationPullRequest(
-        authority,
-        options.repository,
-        options.pullRequestUrl,
-      );
+      this.assertMutationPullRequest(authority, options.repository, options.pullRequestUrl);
       return workflowMutation({
         authority,
         kind: "github-reply",
@@ -2464,9 +2185,7 @@ export class GitHubClient {
           });
         },
         observe: async (marker) => {
-          const comments = (
-            await this.getPullRequestConversationComments(options)
-          ).filter(
+          const comments = (await this.getPullRequestConversationComments(options)).filter(
             (comment) => comment.body === `${options.body}\n\n${marker}`,
           );
           if (comments.length !== 1) return null;
@@ -2478,10 +2197,7 @@ export class GitHubClient {
         },
       });
     }
-    const number = getPullRequestNumberForRepository(
-      options.pullRequestUrl,
-      options.repository,
-    );
+    const number = getPullRequestNumberForRepository(options.pullRequestUrl, options.repository);
     if (options.body.trim().length === 0) {
       throw new Error("Conversation reply body must not be blank");
     }
@@ -2506,10 +2222,7 @@ export class GitHubClient {
     try {
       response = parseGitHubJson(runResult.output, runResult.origin);
     } catch {
-      throw new MalformedGitHubResponseError(
-        "conversation reply",
-        runResult.origin,
-      );
+      throw new MalformedGitHubResponseError("conversation reply", runResult.origin);
     }
     if (
       !isRecord(response) ||
@@ -2519,10 +2232,7 @@ export class GitHubClient {
       typeof response.body !== "string" ||
       response.body !== dispatchedBody
     ) {
-      throw new MalformedGitHubResponseError(
-        "conversation reply",
-        runResult.origin,
-      );
+      throw new MalformedGitHubResponseError("conversation reply", runResult.origin);
     }
     return { id: String(response.id), kind: "conversation" };
   }
@@ -2534,13 +2244,8 @@ export class GitHubClient {
   ): Promise<ValidatedReviewThread[]> {
     const repositoryParts = options.repository.split("/");
 
-    if (
-      repositoryParts.length !== 2 ||
-      repositoryParts.some((part) => part.length === 0)
-    ) {
-      throw new Error(
-        "Cannot reconcile review threads because the GitHub repository is invalid",
-      );
+    if (repositoryParts.length !== 2 || repositoryParts.some((part) => part.length === 0)) {
+      throw new Error("Cannot reconcile review threads because the GitHub repository is invalid");
     }
 
     const runResult = await this.runWithOrigin(
@@ -2565,25 +2270,17 @@ export class GitHubClient {
     try {
       parsed = parseGitHubJson(runResult.output, runResult.origin);
     } catch {
-      throw new MalformedGitHubResponseError(
-        "review thread response",
-        runResult.origin,
-      );
+      throw new MalformedGitHubResponseError("review thread response", runResult.origin);
     }
 
     try {
       return validateReviewThreadsResponse(parsed);
     } catch {
-      throw new MalformedGitHubResponseError(
-        "review thread response",
-        runResult.origin,
-      );
+      throw new MalformedGitHubResponseError("review thread response", runResult.origin);
     }
   }
 
-  async findPullRequest(
-    options: FindPullRequestOptions,
-  ): Promise<PullRequest | null> {
+  async findPullRequest(options: FindPullRequestOptions): Promise<PullRequest | null> {
     const credential = await this.resolveCredential(options.project);
     const runResult = await this.runWithOrigin(
       options.cwd,
@@ -2625,15 +2322,7 @@ export class GitHubClient {
     const pullRequestUrl = parsePullRequestUrl(options.pullRequestUrl);
     const runResult = await this.runWithOrigin(
       options.cwd,
-      [
-        "pr",
-        "view",
-        pullRequestUrl,
-        "--repo",
-        options.repository,
-        "--json",
-        "body",
-      ],
+      ["pr", "view", pullRequestUrl, "--repo", options.repository, "--json", "body"],
       credential,
     );
     return parsePullRequestBody(runResult.output, runResult.origin);
@@ -2656,9 +2345,7 @@ export class GitHubClient {
         repository: options.repository,
         pullRequestUrl: options.pullRequestUrl,
         body: options.body,
-        ...(options.expectedBody === undefined
-          ? {}
-          : { expectedBody: options.expectedBody }),
+        ...(options.expectedBody === undefined ? {} : { expectedBody: options.expectedBody }),
       },
     });
     const assertCurrentBody = async () => {
@@ -2672,11 +2359,7 @@ export class GitHubClient {
         ...options,
         body: await this.sanitizeMutationBody(options.body, options.project),
       };
-      this.assertMutationPullRequest(
-        authority,
-        options.repository,
-        options.pullRequestUrl,
-      );
+      this.assertMutationPullRequest(authority, options.repository, options.pullRequestUrl);
       await workflowMutation({
         authority,
         kind: "github-pr-body",
@@ -2689,9 +2372,7 @@ export class GitHubClient {
             repository: options.repository,
             pullRequestUrl: options.pullRequestUrl,
             body: options.body,
-            ...(options.expectedBody === undefined
-              ? {}
-              : { expectedBody: options.expectedBody }),
+            ...(options.expectedBody === undefined ? {} : { expectedBody: options.expectedBody }),
           },
         },
         preflight: async () => {
@@ -2714,9 +2395,7 @@ export class GitHubClient {
               ...(options.project ? { project: options.project } : {}),
             });
             if (!pr || pr.url !== terminal.url || pr.state !== terminal.state)
-              throw new Error(
-                "PR outcome changed during terminal activity reconciliation",
-              );
+              throw new Error("PR outcome changed during terminal activity reconciliation");
           } else await this.assertMutationOpen(options);
           await assertCurrentBody();
         },
@@ -2737,15 +2416,7 @@ export class GitHubClient {
     const pullRequestUrl = parsePullRequestUrl(options.pullRequestUrl);
     await this.run(
       options.cwd,
-      [
-        "pr",
-        "edit",
-        pullRequestUrl,
-        "--repo",
-        options.repository,
-        "--body",
-        options.body,
-      ],
+      ["pr", "edit", pullRequestUrl, "--repo", options.repository, "--body", options.body],
       credential,
     );
   }
@@ -2758,21 +2429,10 @@ export class GitHubClient {
     const pullRequestUrl = parsePullRequestUrl(options.pullRequestUrl);
     const runResult = await this.runWithOrigin(
       options.cwd,
-      [
-        "pr",
-        "view",
-        pullRequestUrl,
-        "--repo",
-        options.repository,
-        "--json",
-        "body",
-      ],
+      ["pr", "view", pullRequestUrl, "--repo", options.repository, "--json", "body"],
       credential,
     );
-    const currentBody = parsePullRequestBody(
-      runResult.output,
-      runResult.origin,
-    );
+    const currentBody = parsePullRequestBody(runResult.output, runResult.origin);
     const nextBody = reconcileManagedPullRequestStatus(
       currentBody,
       options.status,
@@ -2800,10 +2460,7 @@ export class GitHubClient {
   async getPullRequestStateByNumber(
     options: GetPullRequestStateByNumberOptions,
   ): Promise<PullRequestState> {
-    if (
-      !Number.isSafeInteger(options.pullRequestNumber) ||
-      options.pullRequestNumber < 1
-    )
+    if (!Number.isSafeInteger(options.pullRequestNumber) || options.pullRequestNumber < 1)
       throw new Error("PR number must be a positive integer");
     const credential = await this.resolveCredential(options.project);
     const runResult = await this.runWithOrigin(
@@ -2823,19 +2480,13 @@ export class GitHubClient {
     try {
       parsed = parseGitHubJson(runResult.output, runResult.origin);
     } catch {
-      throw new MalformedGitHubResponseError(
-        "numbered pull request",
-        runResult.origin,
-      );
+      throw new MalformedGitHubResponseError("numbered pull request", runResult.origin);
     }
     let result: PullRequestState | undefined;
     try {
       result = validatePullRequestStateList([parsed])[0];
     } catch {
-      throw new MalformedGitHubResponseError(
-        "numbered pull request",
-        runResult.origin,
-      );
+      throw new MalformedGitHubResponseError("numbered pull request", runResult.origin);
     }
     if (
       result === undefined ||
@@ -2845,17 +2496,12 @@ export class GitHubClient {
       typeof parsed.headRefName !== "string" ||
       typeof parsed.baseRefName !== "string"
     )
-      throw new MalformedGitHubResponseError(
-        "numbered pull request",
-        runResult.origin,
-      );
+      throw new MalformedGitHubResponseError("numbered pull request", runResult.origin);
     // Closed PRs can have null mergeability, which must not remove
     // their still-authoritative base/head names from the parsed identity.
     return {
       ...result,
-      ...(typeof parsed.headRefOid === "string"
-        ? { headRefOid: parsed.headRefOid }
-        : {}),
+      ...(typeof parsed.headRefOid === "string" ? { headRefOid: parsed.headRefOid } : {}),
       headRefName: parsed.headRefName,
       baseRefName: parsed.baseRefName,
     };
@@ -2870,15 +2516,9 @@ export class GitHubClient {
     project?: ProjectConfig;
   }): Promise<boolean> {
     const shaPattern = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu;
-    if (
-      !shaPattern.test(options.ancestorSha) ||
-      !shaPattern.test(options.descendantSha)
-    )
+    if (!shaPattern.test(options.ancestorSha) || !shaPattern.test(options.descendantSha))
       throw new Error("Commit ancestry requires valid Git commit identities");
-    if (
-      options.ancestorSha.toLowerCase() === options.descendantSha.toLowerCase()
-    )
-      return true;
+    if (options.ancestorSha.toLowerCase() === options.descendantSha.toLowerCase()) return true;
     const credential = await this.resolveCredential(options.project);
     const runResult = await this.runWithOrigin(
       options.cwd,
@@ -2892,10 +2532,7 @@ export class GitHubClient {
     try {
       response = parseGitHubJson(runResult.output, runResult.origin);
     } catch {
-      throw new MalformedGitHubResponseError(
-        "commit comparison evidence",
-        runResult.origin,
-      );
+      throw new MalformedGitHubResponseError("commit comparison evidence", runResult.origin);
     }
     if (
       !isRecord(response) ||
@@ -2903,14 +2540,10 @@ export class GitHubClient {
       !isRecord(response.merge_base_commit) ||
       typeof response.merge_base_commit.sha !== "string"
     )
-      throw new MalformedGitHubResponseError(
-        "commit comparison evidence",
-        runResult.origin,
-      );
+      throw new MalformedGitHubResponseError("commit comparison evidence", runResult.origin);
     return (
       response.status === "ahead" &&
-      response.merge_base_commit.sha.toLowerCase() ===
-        options.ancestorSha.toLowerCase()
+      response.merge_base_commit.sha.toLowerCase() === options.ancestorSha.toLowerCase()
     );
   }
 
@@ -2918,10 +2551,7 @@ export class GitHubClient {
   async getPullRequestCommitShas(
     options: GetPullRequestRecoveryEvidenceOptions,
   ): Promise<string[]> {
-    if (
-      !Number.isSafeInteger(options.pullRequestNumber) ||
-      options.pullRequestNumber < 1
-    ) {
+    if (!Number.isSafeInteger(options.pullRequestNumber) || options.pullRequestNumber < 1) {
       throw new Error("PR number must be a positive integer");
     }
     const credential = await this.resolveCredential(options.project);
@@ -2956,17 +2586,12 @@ export class GitHubClient {
       if (shas.length === 0 || new Set(shas).size !== shas.length)
         throw new Error("missing or ambiguous commits");
     } catch {
-      throw new MalformedGitHubResponseError(
-        "pull request commit evidence",
-        runResult.origin,
-      );
+      throw new MalformedGitHubResponseError("pull request commit evidence", runResult.origin);
     }
     return shas;
   }
 
-  async findPullRequestState(
-    options: FindPullRequestOptions,
-  ): Promise<PullRequestState | null> {
+  async findPullRequestState(options: FindPullRequestOptions): Promise<PullRequestState | null> {
     const credential = await this.resolveCredential(options.project);
     const runResult = await this.runWithOrigin(
       options.cwd,
@@ -2977,9 +2602,7 @@ export class GitHubClient {
         options.repository,
         "--head",
         options.headBranch,
-        ...(options.baseBranch === undefined
-          ? []
-          : ["--base", options.baseBranch]),
+        ...(options.baseBranch === undefined ? [] : ["--base", options.baseBranch]),
         "--state",
         "all",
         "--json",
@@ -2995,17 +2618,13 @@ export class GitHubClient {
     const pullRequestOutput = runResult.output.trim();
 
     if (pullRequestOutput.length === 0) {
-      throw new MalformedGitHubResponseError(
-        "pull request state list",
-        runResult.origin,
-      );
+      throw new MalformedGitHubResponseError("pull request state list", runResult.origin);
     }
 
     return (
       validateGitHubJson(
         pullRequestOutput,
-        (value) =>
-          validatePullRequestStateList(value, options.baseBranch !== undefined),
+        (value) => validatePullRequestStateList(value, options.baseBranch !== undefined),
         runResult.origin,
         "pull request state list item",
       )[0] ?? null
@@ -3022,20 +2641,14 @@ export class GitHubClient {
     const credential = await this.resolveCredential(options.project);
     const runResult = await this.runWithOrigin(
       options.cwd,
-      [
-        "api",
-        `repos/${options.repository}/branches/${encodeURIComponent(options.baseBranch)}`,
-      ],
+      ["api", `repos/${options.repository}/branches/${encodeURIComponent(options.baseBranch)}`],
       credential,
     );
     let parsed: unknown;
     try {
       parsed = parseGitHubJson(runResult.output, runResult.origin);
     } catch {
-      throw new MalformedGitHubResponseError(
-        "branch HEAD metadata",
-        runResult.origin,
-      );
+      throw new MalformedGitHubResponseError("branch HEAD metadata", runResult.origin);
     }
     if (
       !isRecord(parsed) ||
@@ -3043,10 +2656,7 @@ export class GitHubClient {
       typeof parsed.commit.sha !== "string" ||
       !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(parsed.commit.sha)
     )
-      throw new MalformedGitHubResponseError(
-        "branch HEAD metadata",
-        runResult.origin,
-      );
+      throw new MalformedGitHubResponseError("branch HEAD metadata", runResult.origin);
     return parsed.commit.sha;
   }
 
@@ -3090,15 +2700,11 @@ export class GitHubClient {
       (parsed.behind_by as number) < 0 ||
       typeof parsed.status !== "string"
     ) {
-      throw new MalformedGitHubResponseError(
-        "commit comparison evidence",
-        runResult.origin,
-      );
+      throw new MalformedGitHubResponseError("commit comparison evidence", runResult.origin);
     }
     if (parsed.status === "behind") return "behind";
     if (parsed.status === "diverged") return "diverged";
-    if (parsed.status === "ahead" || parsed.status === "identical")
-      return "current";
+    if (parsed.status === "ahead" || parsed.status === "identical") return "current";
     return "uncertain";
   }
 
@@ -3117,9 +2723,7 @@ export class GitHubClient {
         options.repository,
         "--head",
         options.headBranch,
-        ...(options.baseBranch === undefined
-          ? []
-          : ["--base", options.baseBranch]),
+        ...(options.baseBranch === undefined ? [] : ["--base", options.baseBranch]),
         "--state",
         "open",
         "--json",
@@ -3149,8 +2753,7 @@ export class GitHubClient {
 
     if (
       !pullRequest ||
-      (!includeDiscussions &&
-        pullRequest.reviewDecision !== "CHANGES_REQUESTED")
+      (!includeDiscussions && pullRequest.reviewDecision !== "CHANGES_REQUESTED")
     ) {
       return null;
     }
@@ -3183,34 +2786,24 @@ export class GitHubClient {
           isRecord(review) &&
           (review.state === "CHANGES_REQUESTED" ||
             (includeDiscussions &&
-              ["COMMENTED", "APPROVED", "DISMISSED"].includes(
-                String(review.state),
-              ))),
+              ["COMMENTED", "APPROVED", "DISMISSED"].includes(String(review.state)))),
       )
       .map((review) => {
         try {
           return validateRequestedChangesReview(review);
         } catch {
-          throw new MalformedGitHubResponseError(
-            "requested changes review",
-            reviewOrigin,
-          );
+          throw new MalformedGitHubResponseError("requested changes review", reviewOrigin);
         }
       })
       .sort((left, right) =>
-        left.submittedAt < right.submittedAt
-          ? -1
-          : left.submittedAt > right.submittedAt
-            ? 1
-            : 0,
+        left.submittedAt < right.submittedAt ? -1 : left.submittedAt > right.submittedAt ? 1 : 0,
       );
     if (reviews.length === 0) {
       return null;
     }
 
     const currentHeadReviews = reviews.filter(
-      (review) =>
-        includeDiscussions || review.commitId === pullRequest.headRefOid,
+      (review) => includeDiscussions || review.commitId === pullRequest.headRefOid,
     );
 
     // Older reviews may carry inline threads forward, but cannot make the PR
@@ -3244,10 +2837,7 @@ export class GitHubClient {
         try {
           return validateInlineReviewComment(comment);
         } catch {
-          throw new MalformedGitHubResponseError(
-            "inline review comment",
-            inlineCommentsOrigin,
-          );
+          throw new MalformedGitHubResponseError("inline review comment", inlineCommentsOrigin);
         }
       })
       .filter(
@@ -3262,25 +2852,12 @@ export class GitHubClient {
         .filter((review) => review.commitId !== pullRequest.headRefOid)
         .map((review) => review.id),
     );
-    const carriedCommentsByReview = new Map<
-      number,
-      ValidatedReviewThreadComment[]
-    >();
+    const carriedCommentsByReview = new Map<number, ValidatedReviewThreadComment[]>();
     const threadIdByCommentId = new Map<number, string>();
-    const threadStateByCommentId = new Map<
-      number,
-      { isResolved: boolean; isOutdated: boolean }
-    >();
+    const threadStateByCommentId = new Map<number, { isResolved: boolean; isOutdated: boolean }>();
 
-    if (
-      earlierReviewIds.size > 0 ||
-      inlineComments.some((comment) => comment.id !== undefined)
-    ) {
-      const reviewThreads = await this.findReviewThreads(
-        options,
-        pullRequest.number,
-        credential,
-      );
+    if (earlierReviewIds.size > 0 || inlineComments.some((comment) => comment.id !== undefined)) {
+      const reviewThreads = await this.findReviewThreads(options, pullRequest.number, credential);
 
       for (const thread of reviewThreads) {
         for (const comment of thread.comments) {
@@ -3307,9 +2884,7 @@ export class GitHubClient {
 
     const latestByAuthor = new Map(
       reviews
-        .filter((review) =>
-          ["CHANGES_REQUESTED", "APPROVED"].includes(review.state),
-        )
+        .filter((review) => ["CHANGES_REQUESTED", "APPROVED"].includes(review.state))
         .map((review) => [review.author, review.id]),
     );
     const currentReviewFeedback = currentHeadReviews.map((review) => ({
@@ -3318,53 +2893,36 @@ export class GitHubClient {
       body:
         includeDiscussions &&
         (review.state === "DISMISSED" ||
-          (review.state !== "COMMENTED" &&
-            latestByAuthor.get(review.author) !== review.id))
+          (review.state !== "COMMENTED" && latestByAuthor.get(review.author) !== review.id))
           ? null
           : review.body,
       ...(includeDiscussions && review.commitId !== pullRequest.headRefOid
         ? { source: "carried-forward" as const }
         : {}),
       author: review.author,
-      ...(review.authorIsBot === undefined
-        ? {}
-        : { authorIsBot: review.authorIsBot }),
+      ...(review.authorIsBot === undefined ? {} : { authorIsBot: review.authorIsBot }),
       submittedAt: review.submittedAt,
       inlineComments: inlineComments
         .filter((comment) => comment.reviewId === review.id)
         .map((comment): InlineReviewComment => {
           const threadId =
-            comment.id === undefined
-              ? undefined
-              : threadIdByCommentId.get(comment.id);
+            comment.id === undefined ? undefined : threadIdByCommentId.get(comment.id);
           const threadState =
-            comment.id === undefined
-              ? undefined
-              : threadStateByCommentId.get(comment.id);
+            comment.id === undefined ? undefined : threadStateByCommentId.get(comment.id);
 
           return {
             body: comment.body,
             author: comment.author,
-            ...(comment.authorIsBot === undefined
-              ? {}
-              : { authorIsBot: comment.authorIsBot }),
+            ...(comment.authorIsBot === undefined ? {} : { authorIsBot: comment.authorIsBot }),
             ...(comment.id === undefined ? {} : { id: comment.id }),
-            ...(comment.reviewId === null
-              ? {}
-              : { reviewId: comment.reviewId }),
-            ...(comment.commitSha === undefined
-              ? {}
-              : { commitSha: comment.commitSha }),
+            ...(comment.reviewId === null ? {} : { reviewId: comment.reviewId }),
+            ...(comment.commitSha === undefined ? {} : { commitSha: comment.commitSha }),
             ...(threadState === undefined ? {} : threadState),
             ...(threadId === undefined ? {} : { threadId }),
             ...(comment.path === undefined ? {} : { path: comment.path }),
             ...(comment.line === undefined ? {} : { line: comment.line }),
-            ...(comment.originalLine === undefined
-              ? {}
-              : { originalLine: comment.originalLine }),
-            ...(comment.diffHunk === undefined
-              ? {}
-              : { diffHunk: comment.diffHunk }),
+            ...(comment.originalLine === undefined ? {} : { originalLine: comment.originalLine }),
+            ...(comment.diffHunk === undefined ? {} : { diffHunk: comment.diffHunk }),
           };
         }),
     }));
@@ -3384,9 +2942,7 @@ export class GitHubClient {
             commitSha: review.commitId,
             body: null,
             author: review.author,
-            ...(review.authorIsBot === undefined
-              ? {}
-              : { authorIsBot: review.authorIsBot }),
+            ...(review.authorIsBot === undefined ? {} : { authorIsBot: review.authorIsBot }),
             submittedAt: review.submittedAt,
             source: "carried-forward" as const,
             inlineComments: comments.map((comment): InlineReviewComment => ({
@@ -3397,19 +2953,13 @@ export class GitHubClient {
               isOutdated: comment.isOutdated,
               body: comment.body,
               author: comment.author,
-              ...(comment.authorIsBot === undefined
-                ? {}
-                : { authorIsBot: comment.authorIsBot }),
+              ...(comment.authorIsBot === undefined ? {} : { authorIsBot: comment.authorIsBot }),
               threadId: comment.threadId,
               source: "carried-forward",
               ...(comment.path === undefined ? {} : { path: comment.path }),
               ...(comment.line === undefined ? {} : { line: comment.line }),
-              ...(comment.originalLine === undefined
-                ? {}
-                : { originalLine: comment.originalLine }),
-              ...(comment.diffHunk === undefined
-                ? {}
-                : { diffHunk: comment.diffHunk }),
+              ...(comment.originalLine === undefined ? {} : { originalLine: comment.originalLine }),
+              ...(comment.diffHunk === undefined ? {} : { diffHunk: comment.diffHunk }),
             })),
           },
         ];
@@ -3443,11 +2993,7 @@ export class GitHubClient {
       }) &&
       authority
     ) {
-      this.assertMutationPullRequest(
-        authority,
-        options.repository,
-        options.pullRequestUrl,
-      );
+      this.assertMutationPullRequest(authority, options.repository, options.pullRequestUrl);
       await workflowMutation({
         authority,
         kind: "github-pr-draft",
@@ -3466,9 +3012,7 @@ export class GitHubClient {
         },
         observe: async () => {
           const fields = await this.getPullRequestPublicationFields(options);
-          return fields.isDraft
-            ? { id: options.pullRequestUrl, fields, result: true }
-            : null;
+          return fields.isDraft ? { id: options.pullRequestUrl, fields, result: true } : null;
         },
       });
       return;
@@ -3478,27 +3022,11 @@ export class GitHubClient {
     const inspect = async (): Promise<boolean> => {
       const runResult = await this.runWithOrigin(
         options.cwd,
-        [
-          "pr",
-          "view",
-          url,
-          "--repo",
-          options.repository,
-          "--json",
-          "isDraft",
-          "--jq",
-          ".isDraft",
-        ],
+        ["pr", "view", url, "--repo", options.repository, "--json", "isDraft", "--jq", ".isDraft"],
         credential,
       );
-      if (
-        runResult.output.trim() !== "true" &&
-        runResult.output.trim() !== "false"
-      )
-        throw new MalformedGitHubResponseError(
-          "pull request draft state",
-          runResult.origin,
-        );
+      if (runResult.output.trim() !== "true" && runResult.output.trim() !== "false")
+        throw new MalformedGitHubResponseError("pull request draft state", runResult.origin);
       return runResult.output.trim() === "true";
     };
     if (await inspect()) return;
@@ -3508,9 +3036,7 @@ export class GitHubClient {
       credential,
     );
     if (!(await inspect()))
-      throw new Error(
-        "GitHub did not confirm draft status for reused pull request",
-      );
+      throw new Error("GitHub did not confirm draft status for reused pull request");
   }
 
   async ensurePullRequestReady(options: {
@@ -3547,17 +3073,11 @@ export class GitHubClient {
         pullRequest.headRefOid !== options.expectedHeadSha ||
         state.body !== options.expectedBody
       )
-        throw new Error(
-          "Pull request readiness evidence changed before promotion",
-        );
+        throw new Error("Pull request readiness evidence changed before promotion");
       return state;
     };
     if (!consumeJournaledDispatch(authority, request) && authority) {
-      this.assertMutationPullRequest(
-        authority,
-        options.repository,
-        options.pullRequestUrl,
-      );
+      this.assertMutationPullRequest(authority, options.repository, options.pullRequestUrl);
       await workflowMutation({
         authority,
         kind: "github-pr-draft",
@@ -3569,9 +3089,7 @@ export class GitHubClient {
         send: () => this.ensurePullRequestReady(options),
         observe: async () => {
           const fields = await verify();
-          return !fields.isDraft
-            ? { id: options.pullRequestUrl, fields, result: true }
-            : null;
+          return !fields.isDraft ? { id: options.pullRequestUrl, fields, result: true } : null;
         },
       });
       return;
@@ -3581,22 +3099,14 @@ export class GitHubClient {
     const credential = await this.resolveCredential(options.project);
     await this.run(
       options.cwd,
-      [
-        "pr",
-        "ready",
-        parsePullRequestUrl(options.pullRequestUrl),
-        "--repo",
-        options.repository,
-      ],
+      ["pr", "ready", parsePullRequestUrl(options.pullRequestUrl), "--repo", options.repository],
       credential,
     );
     if ((await verify()).isDraft)
       throw new Error("GitHub did not confirm ready status for pull request");
   }
 
-  async createPullRequest(
-    options: CreatePullRequestOptions,
-  ): Promise<PullRequest> {
+  async createPullRequest(options: CreatePullRequestOptions): Promise<PullRequest> {
     options = { ...options };
     const authority = mutationAuthority(options.project?.id);
     if (
@@ -3614,9 +3124,7 @@ export class GitHubClient {
       }) &&
       authority
     )
-      throw new Error(
-        "PR creation requires the initial publication reconciler",
-      );
+      throw new Error("PR creation requires the initial publication reconciler");
     const credential = await this.resolveCredential(options.project);
     let outputOrigin: GitHubOutputOrigin | undefined;
     const output = await this.run(
@@ -3658,10 +3166,7 @@ export class GitHubClient {
     pullRequestUrl: string;
     project?: ProjectConfig;
   }): Promise<{ title: string; body: string; isDraft: boolean }> {
-    getPullRequestNumberForRepository(
-      options.pullRequestUrl,
-      options.repository,
-    );
+    getPullRequestNumberForRepository(options.pullRequestUrl, options.repository);
     const credential = await this.resolveCredential(options.project);
     const result = await this.runWithOrigin(
       options.cwd,
@@ -3693,9 +3198,7 @@ export class GitHubClient {
     );
   }
 
-  async validateCliCompatibility(
-    projects: readonly ProjectConfig[],
-  ): Promise<void> {
+  async validateCliCompatibility(projects: readonly ProjectConfig[]): Promise<void> {
     await validateGitHubCliCompatibility(async (args, project) => {
       const credential = await this.resolveCredential(project);
       const dispatch = () => this.run(process.cwd(), [...args], credential);
@@ -3712,9 +3215,7 @@ export class GitHubClient {
       credential = await this.resolveCredential(project);
     } catch (error) {
       const message =
-        error instanceof Error
-          ? error.message
-          : "GitHub credential resolution failed";
+        error instanceof Error ? error.message : "GitHub credential resolution failed";
       const status = message.match(/HTTP\s+(\d{3})/i)?.[1];
       throw new ProjectResourceError(
         status && Number(status) >= 500 ? "unavailable" : "invalid",
@@ -3730,10 +3231,7 @@ export class GitHubClient {
         credential,
       );
     } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "GitHub repository lookup failed";
+      const message = error instanceof Error ? error.message : "GitHub repository lookup failed";
       const status = message.match(/(?:HTTP|status)\s+(401|403|404)\b/i)?.[1];
       const transient =
         /timed?\s*out|connection reset|connection refused|could not resolve|network|HTTP\s+5\d\d/i.test(
@@ -3747,28 +3245,19 @@ export class GitHubClient {
     }
     let actual: string;
     try {
-      const parsed: unknown = parseGitHubJson(
-        runResult.output,
-        runResult.origin,
-      );
+      const parsed: unknown = parseGitHubJson(runResult.output, runResult.origin);
       if (
         typeof parsed !== "object" ||
         parsed === null ||
-        typeof (parsed as { nameWithOwner?: unknown }).nameWithOwner !==
-          "string"
+        typeof (parsed as { nameWithOwner?: unknown }).nameWithOwner !== "string"
       )
         throw new Error("malformed repository identity response");
-      actual = canonicalizeGitHubRepository(
-        (parsed as { nameWithOwner: string }).nameWithOwner,
-      );
+      actual = canonicalizeGitHubRepository((parsed as { nameWithOwner: string }).nameWithOwner);
     } catch (error) {
       const safeError =
         error instanceof MalformedGitHubResponseError
           ? error
-          : new MalformedGitHubResponseError(
-              "repository identity response",
-              runResult.origin,
-            );
+          : new MalformedGitHubResponseError("repository identity response", runResult.origin);
       throw new ProjectResourceError(
         "invalid",
         `GitHub returned a malformed repository identity for project "${project.id}"`,

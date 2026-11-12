@@ -98,11 +98,7 @@ describe("pollProject authority routing", () => {
       updatedAt: new Date().toISOString(),
     });
     const authority = new ProjectRunAuthority(project.id, store, 1);
-    const legacyQueuePath = path.join(
-      runtime,
-      "task-mutation-queues",
-      `${project.id}.json`,
-    );
+    const legacyQueuePath = path.join(runtime, "task-mutation-queues", `${project.id}.json`);
     fs.mkdirSync(path.dirname(legacyQueuePath), { recursive: true });
     fs.writeFileSync(legacyQueuePath, "preserve legacy bytes");
     runWorkflow.mockImplementation(async () => {
@@ -132,13 +128,11 @@ describe("pollProject authority routing", () => {
     );
 
     expect(runWorkflow).toHaveBeenCalledOnce();
-    expect(
-      store.readCompatibility(1, "project-queue-project-one", (value) => value),
-    ).toMatchObject({
-      events: [expect.objectContaining({ eventId: "event-one" })],
-    });
-    expect(fs.readFileSync(legacyQueuePath, "utf8")).toBe(
-      "preserve legacy bytes",
+    expect(store.readCompatibility(1, "project-queue-project-one", (value) => value)).toMatchObject(
+      {
+        events: [expect.objectContaining({ eventId: "event-one" })],
+      },
     );
+    expect(fs.readFileSync(legacyQueuePath, "utf8")).toBe("preserve legacy bytes");
   });
 });

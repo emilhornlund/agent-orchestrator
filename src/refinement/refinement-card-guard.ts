@@ -25,10 +25,7 @@ export function isAbandonedRefinementWrite(
     return false;
   return (
     authority
-      .read(
-        refinementMutationSnapshotKey,
-        refinementMutationSnapshotSchema.parse,
-      )
+      .read(refinementMutationSnapshotKey, refinementMutationSnapshotSchema.parse)
       ?.reconciliation?.abandonedMutationIds?.includes(entry.id) ?? false
   );
 }
@@ -41,10 +38,7 @@ export const sameRefinementFields = (a: Fields, b: Fields): boolean =>
   a.title === b.title &&
   a.description === b.description &&
   JSON.stringify([...a.labels].sort()) === JSON.stringify([...b.labels].sort());
-export function writeRefinementSnapshot(
-  authority: ProjectRunAuthority,
-  snapshot: Snapshot,
-): void {
+export function writeRefinementSnapshot(authority: ProjectRunAuthority, snapshot: Snapshot): void {
   authority.mutate(
     refinementMutationSnapshotKey,
     snapshot,
@@ -58,9 +52,7 @@ export async function guardRefinementFields(
   trello: Pick<TrelloClient, "getCard" | "getRefinementHistory">,
   authority: ProjectRunAuthority,
   stage: "before" | "after" | "verify",
-  change?:
-    | { title: string; description: string }
-    | { labelId: string; present: boolean },
+  change?: { title: string; description: string } | { labelId: string; present: boolean },
 ): Promise<boolean> {
   const snapshot = authority.read(
     refinementMutationSnapshotKey,
@@ -74,9 +66,7 @@ export async function guardRefinementFields(
   if (state.conflict) throw new RefinementSetupAmbiguousError(state.conflict);
   const fail = (reason: string, evidence: unknown): never => {
     state.conflict = reason;
-    state.evidence = JSON.parse(
-      sanitizeControlledText(JSON.stringify(evidence)),
-    ) as unknown;
+    state.evidence = JSON.parse(sanitizeControlledText(JSON.stringify(evidence))) as unknown;
     writeRefinementSnapshot(authority, snapshot);
     throw new RefinementSetupAmbiguousError(reason);
   };
@@ -84,19 +74,19 @@ export async function guardRefinementFields(
   const card = await trello.getCard(snapshot.cardId);
   const fields = refinementCardFields(card);
   if (history.actorId !== state.actorId || card.id !== snapshot.cardId)
-    return fail(
-      "Refinement actor/card attribution changed; operator reconciliation required",
-      { history, card },
-    );
+    return fail("Refinement actor/card attribution changed; operator reconciliation required", {
+      history,
+      card,
+    });
   const boundary =
     state.cursor === null
       ? history.actions.length
       : history.actions.findIndex((a) => a.id === state.cursor);
   if (boundary < 0 || (state.cursor === null && history.actions.length >= 1000))
-    return fail(
-      "Refinement history continuity is unavailable; preserving current fields",
-      { history, card },
-    );
+    return fail("Refinement history continuity is unavailable; preserving current fields", {
+      history,
+      card,
+    });
   const actions = history.actions.slice(0, boundary).reverse();
   if (stage === "before" || stage === "verify") {
     const exhausted =
@@ -127,10 +117,7 @@ export async function guardRefinementFields(
           { history, card },
         );
       state.mode = "restoring";
-      state.abandonedMutationIds = [
-        ...(state.abandonedMutationIds ?? []),
-        exhausted.id,
-      ];
+      state.abandonedMutationIds = [...(state.abandonedMutationIds ?? []), exhausted.id];
       delete state.pending;
       writeRefinementSnapshot(authority, snapshot);
       throw new RefinementSetupAmbiguousError(
@@ -162,10 +149,10 @@ export async function guardRefinementFields(
             description: change.description,
           };
     if (state.pending && !sameRefinementFields(state.pending, after))
-      return fail(
-        "Refinement pending write differs from immutable intended fields",
-        { history, card },
-      );
+      return fail("Refinement pending write differs from immutable intended fields", {
+        history,
+        card,
+      });
     state.pending = after;
     writeRefinementSnapshot(authority, snapshot);
     return true;
@@ -184,16 +171,12 @@ export async function guardRefinementFields(
   const expected = { ...state.verified, labels: [...state.verified.labels] };
   const touched = new Set<string>();
   const apply = (action: RefinementHistoryAction): boolean => {
-    if (
-      action.idMemberCreator !== state.actorId ||
-      action.data.card.id !== snapshot.cardId
-    )
+    if (action.idMemberCreator !== state.actorId || action.data.card.id !== snapshot.cardId)
       return false;
     if (action.type === "updateCard") {
       if (
         !action.data.old ||
-        (!Object.hasOwn(action.data.old, "name") &&
-          !Object.hasOwn(action.data.old, "desc"))
+        (!Object.hasOwn(action.data.old, "name") && !Object.hasOwn(action.data.old, "desc"))
       )
         return false;
       for (const [remote, local] of [
@@ -217,10 +200,7 @@ export async function guardRefinementFields(
     const label = action.data.label?.id;
     if (!label || touched.has(label)) return false;
     const present = action.type === "addLabelToCard";
-    if (
-      expected.labels.includes(label) === present ||
-      target.labels.includes(label) !== present
-    )
+    if (expected.labels.includes(label) === present || target.labels.includes(label) !== present)
       return false;
     touched.add(label);
     expected.labels = present

@@ -19,8 +19,7 @@ import {
 
 const roots: string[] = [];
 afterEach(() => {
-  for (const root of roots.splice(0))
-    fs.rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
 function fixture() {
@@ -55,29 +54,14 @@ describe("durable primary operation ledger", () => {
   it("persists the three-execution budget across store restart and session replacement", () => {
     const f = fixture();
     for (let n = 1; n <= 3; n++) {
-      const store = new TaskExecutionStore(
-        path.join(f.root, "state"),
-        f.project,
-      );
-      beginPrimaryExecution(
-        store,
-        "card",
-        "implementation",
-        "implementation",
-        `session-${n}`,
-      );
+      const store = new TaskExecutionStore(path.join(f.root, "state"), f.project);
+      beginPrimaryExecution(store, "card", "implementation", "implementation", `session-${n}`);
       completePrimaryExecution(store, "card", "implementation", "failed", {
         exitCode: 1,
         output: "failure",
         errorOutput: "",
       });
-      if (n < 3)
-        reconcilePendingPrimaryExecution(
-          store,
-          "card",
-          "implementation",
-          "stopped",
-        );
+      if (n < 3) reconcilePendingPrimaryExecution(store, "card", "implementation", "stopped");
     }
     expect(() =>
       beginPrimaryExecution(
@@ -88,56 +72,40 @@ describe("durable primary operation ledger", () => {
         "replacement-session",
       ),
     ).toThrow(PrimaryOperationBlockedError);
-    expect(
-      f.store.read("card")?.primaryOperations?.implementation,
-    ).toMatchObject({ executions: 3, lastSessionId: "session-3" });
+    expect(f.store.read("card")?.primaryOperations?.implementation).toMatchObject({
+      executions: 3,
+      lastSessionId: "session-3",
+    });
   });
 
   it("blocks unknown pending outcomes and completed operation replay", () => {
     const { store } = fixture();
     beginPrimaryExecution(store, "card", "op", "planning");
     reconcilePendingPrimaryExecution(store, "card", "op", "unknown");
-    expect(() =>
-      beginPrimaryExecution(store, "card", "op", "planning"),
-    ).toThrow(PrimaryOperationBlockedError);
+    expect(() => beginPrimaryExecution(store, "card", "op", "planning")).toThrow(
+      PrimaryOperationBlockedError,
+    );
     reconcilePendingPrimaryExecution(store, "card", "op", "completed", {
       exitCode: 0,
       output: "ok",
       errorOutput: "",
     });
-    expect(() =>
-      beginPrimaryExecution(store, "card", "op", "planning"),
-    ).toThrow(PrimaryOperationBlockedError);
+    expect(() => beginPrimaryExecution(store, "card", "op", "planning")).toThrow(
+      PrimaryOperationBlockedError,
+    );
   });
 
   it("does not let a reset correction counter bypass an ambiguous operation ID", () => {
     const { store } = fixture();
-    beginPrimaryExecution(
-      store,
-      "card",
-      "feedback-cycle:4:repair:1",
-      "feedback-repair",
-    );
-    reconcilePendingPrimaryExecution(
-      store,
-      "card",
-      "feedback-cycle:4:repair:1",
-      "unknown",
-    );
+    beginPrimaryExecution(store, "card", "feedback-cycle:4:repair:1", "feedback-repair");
+    reconcilePendingPrimaryExecution(store, "card", "feedback-cycle:4:repair:1", "unknown");
 
     // A later feedback cycle may restart its local pass counter at one. Its
     // distinct semantic ID must not dispatch while the old ID is unresolved.
     expect(() =>
-      beginPrimaryExecution(
-        store,
-        "card",
-        "feedback-cycle:5:repair:1",
-        "feedback-repair",
-      ),
+      beginPrimaryExecution(store, "card", "feedback-cycle:5:repair:1", "feedback-repair"),
     ).toThrow(PrimaryOperationBlockedError);
-    expect(
-      store.read("card")?.primaryOperations?.["feedback-cycle:5:repair:1"],
-    ).toBeUndefined();
+    expect(store.read("card")?.primaryOperations?.["feedback-cycle:5:repair:1"]).toBeUndefined();
   });
 
   it("releases only a proven never-dispatched reservation", () => {
@@ -192,45 +160,28 @@ describe("durable primary operation ledger", () => {
   it("requires stop proof before retry and atomically caches completed replay result", () => {
     const f = fixture();
     registerProcessSecrets(["token-secret"]);
-    beginPrimaryExecution(
-      f.store,
-      "card",
-      "work",
-      "implementation",
-      "session-a",
-    );
+    beginPrimaryExecution(f.store, "card", "work", "implementation", "session-a");
     completePrimaryExecution(f.store, "card", "work", "failed");
-    expect(() =>
-      beginPrimaryExecution(f.store, "card", "work", "implementation"),
-    ).toThrow(PrimaryOperationBlockedError);
-    reconcilePendingPrimaryExecution(f.store, "card", "work", "stopped");
-    beginPrimaryExecution(
-      f.store,
-      "card",
-      "work",
-      "implementation",
-      "session-b",
+    expect(() => beginPrimaryExecution(f.store, "card", "work", "implementation")).toThrow(
+      PrimaryOperationBlockedError,
     );
+    reconcilePendingPrimaryExecution(f.store, "card", "work", "stopped");
+    beginPrimaryExecution(f.store, "card", "work", "implementation", "session-b");
     completePrimaryExecution(f.store, "card", "work", "completed", {
       exitCode: 0,
       output: "token-secret",
       errorOutput: "",
       sessionId: "session-b",
     });
-    const restarted = new TaskExecutionStore(
-      path.join(f.root, "state"),
-      f.project,
-    );
-    expect(
-      getCompletedPrimaryExecutionResult(restarted, "card", "work"),
-    ).toMatchObject({
+    const restarted = new TaskExecutionStore(path.join(f.root, "state"), f.project);
+    expect(getCompletedPrimaryExecutionResult(restarted, "card", "work")).toMatchObject({
       exitCode: 0,
       output: "[REDACTED]",
       sessionId: "session-b",
     });
-    expect(() =>
-      beginPrimaryExecution(restarted, "card", "work", "implementation"),
-    ).toThrow(PrimaryOperationBlockedError);
+    expect(() => beginPrimaryExecution(restarted, "card", "work", "implementation")).toThrow(
+      PrimaryOperationBlockedError,
+    );
   });
 
   it("records exhausted outcome and evidence on the third failed execution", () => {
@@ -252,9 +203,7 @@ describe("durable primary operation ledger", () => {
     });
     const revision = store.read("card")!.revision;
     reconcilePendingPrimaryExecution(store, "card", "work", "stopped");
-    expect(store.read("card")?.primaryOperations?.work?.failureExecutions).toBe(
-      3,
-    );
+    expect(store.read("card")?.primaryOperations?.work?.failureExecutions).toBe(3);
     expect(store.read("card")!.revision).toBe(revision);
   });
 
@@ -284,31 +233,23 @@ describe("durable primary operation ledger", () => {
           activity: "work",
           executions: legacy.executions,
           status: legacy.status,
-          ...(legacy.retrySafe === undefined
-            ? {}
-            : { retrySafe: legacy.retrySafe }),
+          ...(legacy.retrySafe === undefined ? {} : { retrySafe: legacy.retrySafe }),
           updatedAt: record.updatedAt,
         },
       },
       revision: record.revision + 1,
     });
     const saved = store.read("card")!;
-    const reconciled = reconcilePendingPrimaryExecution(
-      store,
-      "card",
-      "op",
-      "stopped",
-    );
+    const reconciled = reconcilePendingPrimaryExecution(store, "card", "op", "stopped");
     expect(
       reconciled.primaryOperations?.op?.failureExecutions ??
         reconciled.primaryOperations?.op?.executions,
     ).toBe(legacy.expected);
     const revision = reconciled.revision;
     if (legacy.status === "failed" && legacy.retrySafe === true) {
-      expect(
-        reconcilePendingPrimaryExecution(store, "card", "op", "stopped")
-          .revision,
-      ).toBe(revision);
+      expect(reconcilePendingPrimaryExecution(store, "card", "op", "stopped").revision).toBe(
+        revision,
+      );
     }
     expect(saved.primaryOperations?.op?.failureExecutions).toBeUndefined();
     expect(reconciled.primaryOperations?.op?.status).toBe(

@@ -56,9 +56,7 @@ describe("failed feedback recovery eligibility", () => {
   it.each(["review", "implementation", "validation"] as const)(
     "selects a reserved feedback review in %s without assuming the execution stopped",
     (phase) => {
-      expect(
-        canResumeFeedbackReviewRepair({ ...ownedRecord, phase }, ownedEvent),
-      ).toBe(true);
+      expect(canResumeFeedbackReviewRepair({ ...ownedRecord, phase }, ownedEvent)).toBe(true);
     },
   );
 
@@ -98,12 +96,7 @@ describe("failed feedback recovery eligibility", () => {
         },
       },
     ])
-      expect(
-        canResumeFeedbackReviewRepair(
-          { ...ownedRecord, ...update },
-          ownedEvent,
-        ),
-      ).toBe(false);
+      expect(canResumeFeedbackReviewRepair({ ...ownedRecord, ...update }, ownedEvent)).toBe(false);
   });
 
   it("keeps failed exhausted review under the existing one-shot recovery rule", () => {
@@ -136,9 +129,7 @@ describe("failed feedback recovery eligibility", () => {
   it("does not retry after a failed attempt or simulated process restart", () => {
     const consumed = { ...record, feedbackRecoveryAttemptEventId: eventId };
     expect(canResumeFailedFeedbackReview(consumed, active)).toBe(false);
-    const restarted = JSON.parse(
-      JSON.stringify(consumed),
-    ) as TaskExecutionRecord;
+    const restarted = JSON.parse(JSON.stringify(consumed)) as TaskExecutionRecord;
     expect(canResumeFailedFeedbackReview(restarted, active)).toBe(false);
     // A later, distinct feedback round can still have its own single recovery.
     const laterEvent = { ...active, eventId: "feedback:new-head:round" };
@@ -150,18 +141,12 @@ describe("failed feedback recovery eligibility", () => {
       },
     };
     expect(canResumeFailedFeedbackReview(laterRecord, laterEvent)).toBe(true);
-    expect(
-      canResumeFailedFeedbackReview(record, { ...active, status: "active" }),
-    ).toBe(false);
+    expect(canResumeFailedFeedbackReview(record, { ...active, status: "active" })).toBe(false);
   });
 
   it("refuses mismatched event, project, or PR head", () => {
-    expect(
-      canResumeFailedFeedbackReview(record, { ...active, eventId: "other" }),
-    ).toBe(false);
-    expect(
-      canResumeFailedFeedbackReview(record, { ...active, projectId: "other" }),
-    ).toBe(false);
+    expect(canResumeFailedFeedbackReview(record, { ...active, eventId: "other" })).toBe(false);
+    expect(canResumeFailedFeedbackReview(record, { ...active, projectId: "other" })).toBe(false);
     expect(
       canResumeFailedFeedbackReview(
         {

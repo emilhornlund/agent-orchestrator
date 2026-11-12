@@ -43,9 +43,7 @@ export function buildPullRequestDescriptionPrompt(
     "",
     "Independently verified workflow evidence:",
     ...((context.verifiedFacts ?? []).length === 0
-      ? [
-          "- No independently verified validation or review details were supplied.",
-        ]
+      ? ["- No independently verified validation or review details were supplied."]
       : (context.verifiedFacts ?? []).map((fact) => `- ${fact}`)),
     "Configured validation command:",
     context.validationCommand === undefined

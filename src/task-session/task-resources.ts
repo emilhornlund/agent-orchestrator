@@ -8,12 +8,8 @@ export function runTaskResources(run: RunRecord): {
   path: string;
   branch: string;
 } {
-  const worktrees = run.resources.filter(
-    (r) => r.kind === "worktree" && r.id === run.cardId,
-  );
-  const branches = run.resources.filter(
-    (r) => r.kind === "branch" && r.id === run.cardId,
-  );
+  const worktrees = run.resources.filter((r) => r.kind === "worktree" && r.id === run.cardId);
+  const branches = run.resources.filter((r) => r.kind === "branch" && r.id === run.cardId);
   if (worktrees.length === 0 && branches.length === 0)
     return {
       path: path.join(run.pinned.worktreeRoot, run.cardId),
@@ -49,10 +45,7 @@ export function taskResources(
 export function assertTaskResourceProvenance(run: RunRecord): void {
   const resource = runTaskResources(run);
   const planned = run.resources.some(
-    (r) =>
-      r.kind === "worktree" &&
-      r.path === resource.path &&
-      r.provenance === "attempt-planned",
+    (r) => r.kind === "worktree" && r.path === resource.path && r.provenance === "attempt-planned",
   );
   if (
     planned &&
@@ -60,16 +53,12 @@ export function assertTaskResourceProvenance(run: RunRecord): void {
       (entry) =>
         entry.kind === "git-worktree" &&
         entry.status === "completed" &&
-        entry.mutation?.intent.target ===
-          `git:worktree:${encodeURIComponent(resource.path)}` &&
+        entry.mutation?.intent.target === `git:worktree:${encodeURIComponent(resource.path)}` &&
         entry.mutation.observations.some(
           (observation) =>
-            observation.outcome === "verified" &&
-            observation.resourceId === resource.path,
+            observation.outcome === "verified" && observation.resourceId === resource.path,
         ),
     )
   )
-    throw new Error(
-      "Existing worktree lacks verified attempt creation provenance",
-    );
+    throw new Error("Existing worktree lacks verified attempt creation provenance");
 }

@@ -51,10 +51,7 @@ export interface RunTaskSessionFeedbackRemediationOptions {
   >;
   openCode: OpenCodeClient;
   attachmentContext?: CardAttachmentPromptContext;
-  runOptions: Omit<
-    OpenCodeRunOptions,
-    "cwd" | "prompt" | "sessionId" | "captureSessionId"
-  >;
+  runOptions: Omit<OpenCodeRunOptions, "cwd" | "prompt" | "sessionId" | "captureSessionId">;
 }
 
 export interface TaskSessionFeedbackRemediationResult {
@@ -106,24 +103,17 @@ export async function runTaskSessionFeedbackRemediation(
   if (
     priorFeedback?.operationId === options.operationId &&
     (priorFeedback.status !== "active" ||
-      record.primaryOperations?.[options.operationId]?.activity !==
-        "feedback-remediation")
+      record.primaryOperations?.[options.operationId]?.activity !== "feedback-remediation")
   ) {
     throw new TaskSessionFeedbackRemediationError(
       `Feedback remediation operation ${options.operationId} is not authorized for exact primary-ledger continuation`,
     );
   }
-  if (
-    priorFeedback?.status === "active" &&
-    priorFeedback.operationId !== options.operationId
-  )
+  if (priorFeedback?.status === "active" && priorFeedback.operationId !== options.operationId)
     throw new TaskSessionFeedbackRemediationError(
       `Active feedback remediation operation ${priorFeedback.operationId} cannot be replaced`,
     );
-  if (
-    (await options.git.getCurrentBranch(options.worktreePath)) !==
-    options.expectedBranch
-  ) {
+  if ((await options.git.getCurrentBranch(options.worktreePath)) !== options.expectedBranch) {
     throw new TaskSessionFeedbackRemediationError(
       "Feedback remediation worktree branch does not match the owned task branch",
     );
@@ -131,8 +121,7 @@ export async function runTaskSessionFeedbackRemediation(
   const plan = options.planStore.read(options.card.id);
   if (
     plan !== null &&
-    (plan.plan.projectId !== options.project.id ||
-      plan.plan.cardId !== options.card.id)
+    (plan.plan.projectId !== options.project.id || plan.plan.cardId !== options.card.id)
   ) {
     throw new TaskSessionFeedbackRemediationError(
       "Feedback remediation task plan identity does not match task ownership",
@@ -149,8 +138,7 @@ export async function runTaskSessionFeedbackRemediation(
     );
   }
   const pending = ledger.entries.filter(
-    (entry) =>
-      entry.actionability === "actionable" && entry.status === "pending",
+    (entry) => entry.actionability === "actionable" && entry.status === "pending",
   );
   if (pending.length === 0) {
     throw new TaskSessionFeedbackRemediationError(
@@ -189,25 +177,18 @@ export async function runTaskSessionFeedbackRemediation(
       options.project.id,
       options.card.id,
       { ...options.runOptions, cwd: options.worktreePath, prompt },
-      options.inspectPrimarySession === undefined
-        ? {}
-        : { inspect: options.inspectPrimarySession },
+      options.inspectPrimarySession === undefined ? {} : { inspect: options.inspectPrimarySession },
       {
         role: "primary",
         operationId: options.operationId,
         activity: "feedback-remediation",
         inspectPending: (entry) =>
-          inspectPrimaryOperationEvidence(
-            options.taskRecordStore,
-            options.card.id,
-            entry.id,
-            {
-              trustedRoot:
-                ProjectRunAuthority.current(options.project.id)?.store
-                  .storageRoot ?? getProcessRuntime().artifactRoot,
-              cwd: options.worktreePath,
-            },
-          ),
+          inspectPrimaryOperationEvidence(options.taskRecordStore, options.card.id, entry.id, {
+            trustedRoot:
+              ProjectRunAuthority.current(options.project.id)?.store.storageRoot ??
+              getProcessRuntime().artifactRoot,
+            cwd: options.worktreePath,
+          }),
       },
     );
     if (runResult.exitCode !== 0)
@@ -255,14 +236,10 @@ export async function runTaskSessionFeedbackRemediation(
   );
   let latestLedger = options.feedbackLedgerStore.read(options.card.id);
   if (latestLedger === null)
-    throw new TaskSessionFeedbackRemediationError(
-      "Feedback ledger disappeared during remediation",
-    );
+    throw new TaskSessionFeedbackRemediationError("Feedback ledger disappeared during remediation");
   const feedbackChangedDuringRun = latestLedger.revision !== ledger.revision;
   if (beforeIdentity === afterIdentity) {
-    const attempted = new Map(
-      pending.map((entry) => [`${entry.kind}:${entry.id}`, entry]),
-    );
+    const attempted = new Map(pending.map((entry) => [`${entry.kind}:${entry.id}`, entry]));
     latestLedger = options.feedbackLedgerStore.compareAndSwap(
       options.card.id,
       latestLedger.revision,

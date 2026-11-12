@@ -4,27 +4,16 @@ import { RunStore } from "../../src/task-session/run-store.js";
 import { mutationIntentSchema } from "../../src/task-session/durable-mutation.js";
 
 const [root, barrier, serializedIntent] = process.argv.slice(2);
-if (!root || !barrier || !serializedIntent)
-  throw new Error("Missing fixture arguments");
+if (!root || !barrier || !serializedIntent) throw new Error("Missing fixture arguments");
 const intent = mutationIntentSchema.parse(JSON.parse(serializedIntent));
-const store = RunStore.openWithPersistedIdentity(
-  path.join(root, "state"),
-  "attempt",
-  {
-    integrationId: "integration",
-    instanceId: "owner",
-    token: "lease",
-    assertHeld() {},
-  },
-)!;
+const store = RunStore.openWithPersistedIdentity(path.join(root, "state"), "attempt", {
+  integrationId: "integration",
+  instanceId: "owner",
+  token: "lease",
+  assertHeld() {},
+})!;
 const at = (seconds: number) => new Date(seconds * 1000).toISOString();
-let run = store.persistMutationIntent(
-  store.read()!.revision,
-  1,
-  "effect",
-  intent,
-  at(0),
-);
+let run = store.persistMutationIntent(store.read()!.revision, 1, "effect", intent, at(0));
 const evidence = (seconds: number) => ({
   observationId: `read-${seconds}`,
   observedAt: at(seconds),

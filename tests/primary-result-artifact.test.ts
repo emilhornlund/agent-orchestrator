@@ -9,8 +9,7 @@ import { ProjectRunAuthority } from "../src/task-session/project-run-authority.j
 
 const roots: string[] = [];
 afterEach(() => {
-  for (const root of roots.splice(0))
-    fs.rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
 function makeStore(): TaskExecutionStore {
@@ -42,9 +41,7 @@ describe("primary result artifacts", () => {
   it("rejects invalid and oversized identifiers", () => {
     const store = makeStore();
     expect(() => store.writePrimaryResultArtifact("../bad", {})).toThrow();
-    expect(() =>
-      store.writePrimaryResultArtifact("x".repeat(1025), {}),
-    ).toThrow();
+    expect(() => store.writePrimaryResultArtifact("x".repeat(1025), {})).toThrow();
   });
 
   it("rejects corrupt artifacts and symlink paths", () => {
@@ -62,21 +59,15 @@ describe("primary result artifacts", () => {
     expect(fs.statSync(path.dirname(actualPath)).mode & 0o077).toBe(0);
     expect(fs.statSync(actualPath).mode & 0o077).toBe(0);
     fs.writeFileSync(actualPath, Buffer.from('{"ok":false}'));
-    expect(() => store.readPrimaryResultArtifact(ref)).toThrow(
-      /digest|corrupt/i,
-    );
-    expect(() =>
-      store.readPrimaryResultArtifact("sha256:" + "0".repeat(64)),
-    ).toThrow();
+    expect(() => store.readPrimaryResultArtifact(ref)).toThrow(/digest|corrupt/i);
+    expect(() => store.readPrimaryResultArtifact("sha256:" + "0".repeat(64))).toThrow();
     fs.rmSync(actualPath);
     fs.symlinkSync(path.join(path.dirname(actualPath), "missing"), actualPath);
     expect(() => store.readPrimaryResultArtifact(ref)).toThrow();
   });
 
   it("round-trips through canonical attempt storage and rejects corruption and ancestor/final symlinks", () => {
-    const root = fs.mkdtempSync(
-      path.join(os.tmpdir(), "primary-result-authority-"),
-    );
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "primary-result-authority-"));
     roots.push(root);
     const project = {
       id: "p",
@@ -162,10 +153,7 @@ describe("primary result artifacts", () => {
       updatedAt: now,
     });
     const result = { output: "canonical bytes" };
-    const reference = taskStore.writePrimaryResultArtifact(
-      "canonical-result",
-      result,
-    );
+    const reference = taskStore.writePrimaryResultArtifact("canonical-result", result);
     expect(taskStore.readPrimaryResultArtifact(reference)).toEqual(result);
     const artifactPath = path.join(
       storageRoot,
@@ -174,9 +162,7 @@ describe("primary result artifacts", () => {
       `sha256-${reference.reference.slice(7)}`,
     );
     fs.writeFileSync(artifactPath, Buffer.from("corrupt bytes"));
-    expect(() => taskStore.readPrimaryResultArtifact(reference)).toThrow(
-      /digest/i,
-    );
+    expect(() => taskStore.readPrimaryResultArtifact(reference)).toThrow(/digest/i);
     fs.rmSync(artifactPath);
     fs.symlinkSync(path.join(root, "missing-target"), artifactPath);
     expect(() => taskStore.readPrimaryResultArtifact(reference)).toThrow();

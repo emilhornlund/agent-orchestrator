@@ -201,16 +201,11 @@ describe("Human Review attachment preparation", () => {
 
   it("persists semantic discussion classification instead of parking a general PR comment for attention", async () => {
     const f = fixture();
-    vi.spyOn(f.common.openCode, "run").mockImplementation(
-      async ({ prompt }) => ({
-        exitCode: 0,
-        errorOutput: "",
-        output: actionableFeedbackResponse(prompt).replaceAll(
-          '"actionable"',
-          '"discussion"',
-        ),
-      }),
-    );
+    vi.spyOn(f.common.openCode, "run").mockImplementation(async ({ prompt }) => ({
+      exitCode: 0,
+      errorOutput: "",
+      output: actionableFeedbackResponse(prompt).replaceAll('"actionable"', '"discussion"'),
+    }));
     const observation = {
       ...f.observation,
       conversationComments: [

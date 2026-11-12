@@ -4,11 +4,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  RunStore,
-  RunRegistry,
-  type RunStoreLease,
-} from "../src/task-session/run-store.js";
+import { RunStore, RunRegistry, type RunStoreLease } from "../src/task-session/run-store.js";
 import { NotificationOutbox } from "../src/notifications/notification-outbox.js";
 import {
   parseRunRecord,
@@ -24,8 +20,7 @@ import { ProjectRunAuthority } from "../src/task-session/project-run-authority.j
 
 const roots: string[] = [];
 afterEach(() => {
-  for (const root of roots.splice(0))
-    fs.rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 const at = (seconds: number) => new Date(seconds * 1000).toISOString();
 function fixture(lifecycle: "publication" | "human-review" = "publication") {
@@ -54,8 +49,7 @@ function fixture(lifecycle: "publication" | "human-review" = "publication") {
     worktreeRoot: path.join(root, "work"),
     storageRoot: path.join(root, "state"),
   };
-  const reopen = () =>
-    new RunStore(pinned.storageRoot, "attempt", pinned, lease);
+  const reopen = () => new RunStore(pinned.storageRoot, "attempt", pinned, lease);
   const store = reopen();
   store.create({
     version: 1,
@@ -85,14 +79,10 @@ function fixture(lifecycle: "publication" | "human-review" = "publication") {
     updatedAt: at(0),
   });
   const artifact = store.writeArtifact(
-    Buffer.from(
-      JSON.stringify({ sanitized: "outbound body / authoritative fields" }),
-    ),
+    Buffer.from(JSON.stringify({ sanitized: "outbound body / authoritative fields" })),
   );
   store.referenceMutationArtifact(1, 1, artifact);
-  const intent = (
-    kind: MutationIntent["kind"] = "trello-comment",
-  ): MutationIntent => ({
+  const intent = (kind: MutationIntent["kind"] = "trello-comment"): MutationIntent => ({
     kind,
     target: "card",
     correlationId: "attempt-comment-1",
@@ -104,13 +94,7 @@ function fixture(lifecycle: "publication" | "human-review" = "publication") {
     artifactId: artifact.id,
   });
   const add = (kind?: MutationIntent["kind"], id = "effect") =>
-    store.persistMutationIntent(
-      store.read()!.revision,
-      1,
-      id,
-      intent(kind),
-      at(0),
-    );
+    store.persistMutationIntent(store.read()!.revision, 1, id, intent(kind), at(0));
   const event = (
     event: MutationEvent,
     seconds: number,
@@ -203,9 +187,9 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
         });
         if (barrier === "terminal") {
           await expect(authority.releaseVerifiedTerminal()).rejects.toThrow();
-          expect(() =>
-            f.event({ type: "dispatch", nextRecheckAt: at(10) }, 2, store, 2),
-          ).toThrow(/Terminal/);
+          expect(() => f.event({ type: "dispatch", nextRecheckAt: at(10) }, 2, store, 2)).toThrow(
+            /Terminal/,
+          );
           expect(() =>
             f.event(
               {
@@ -240,9 +224,7 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
         expect(resolved.mutation!.cancellation!.ownerGeneration).toBe(
           barrier === "terminal" ? 2 : 1,
         );
-        expect(resolved.mutation!.cancellation!.evidence).toEqual(
-          f.evidence(2),
-        );
+        expect(resolved.mutation!.cancellation!.evidence).toEqual(f.evidence(2));
         expect(() =>
           f.event(
             {
@@ -258,12 +240,9 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
         await authority.releaseVerifiedTerminal();
         expect(released).toBe(true);
         expect(fs.existsSync(path.join(f.root, "service.jsonl"))).toBe(false);
-        expect(fs.existsSync(path.join(f.root, "service-resource.json"))).toBe(
-          false,
-        );
+        expect(fs.existsSync(path.join(f.root, "service-resource.json"))).toBe(false);
       } finally {
-        if (child.exitCode === null && child.signalCode === null)
-          child.kill("SIGKILL");
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
       }
     },
   );
@@ -277,9 +256,9 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
       evidence: f.evidence(1),
     } as const;
     expect(() => f.event(cancel, 1)).toThrow(/superseding execution/);
-    expect(() =>
-      f.event({ ...cancel, reason: "terminal-observed" }, 1),
-    ).toThrow(/terminal observation/);
+    expect(() => f.event({ ...cancel, reason: "terminal-observed" }, 1)).toThrow(
+      /terminal observation/,
+    );
     f.store.mutateCompatibility({
       expectedRevision: original.revision,
       expectedOwnerGeneration: 1,
@@ -291,33 +270,13 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
     const store = f.reopen();
     const superseded = store.read()!;
     expect(() =>
-      store.persistMutationIntent(
-        superseded.revision,
-        1,
-        "effect",
-        f.intent(),
-        at(1),
-      ),
+      store.persistMutationIntent(superseded.revision, 1, "effect", f.intent(), at(1)),
     ).toThrow(/rebind/);
     expect(() =>
-      store.recordMutationEvent(
-        original.revision,
-        1,
-        "effect",
-        1,
-        cancel,
-        at(1),
-      ),
+      store.recordMutationEvent(original.revision, 1, "effect", 1, cancel, at(1)),
     ).toThrow(/revision/);
     expect(() =>
-      store.recordMutationEvent(
-        superseded.revision,
-        1,
-        "effect",
-        2,
-        cancel,
-        at(1),
-      ),
+      store.recordMutationEvent(superseded.revision, 1, "effect", 2, cancel, at(1)),
     ).toThrow(/generation/);
     f.event(cancel, 1, store);
     const cancelled = f.reopen().read()!.pendingOperations[0]!;
@@ -329,9 +288,7 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
       generation: 1,
     });
     expect(cancelled.status).toBe("cancelled");
-    expect(() =>
-      f.event({ type: "dispatch", nextRecheckAt: at(10) }, 2, store),
-    ).toThrow();
+    expect(() => f.event({ type: "dispatch", nextRecheckAt: at(10) }, 2, store)).toThrow();
     const current = store.read()!;
     store.transition(
       current.revision,
@@ -392,13 +349,7 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
         ),
       ).toThrow(/dispatch/);
       expect(() =>
-        store.persistMutationIntent(
-          before.revision,
-          1,
-          "effect",
-          f.intent(),
-          at(11),
-        ),
+        store.persistMutationIntent(before.revision, 1, "effect", f.intent(), at(11)),
       ).toThrow(/rebind/);
       const forged = structuredClone(before);
       forged.pendingOperations[0]!.mutation!.cancellation = {
@@ -415,36 +366,22 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
   );
   it("rejects dispatch without intent, outcomes without dispatch, and unsubstantiated non-delivery", () => {
     const f = fixture();
-    expect(() =>
-      f.event({ type: "dispatch", nextRecheckAt: at(10) }, 0, f.store, 1, 1),
-    ).toThrow(/operation generation/);
+    expect(() => f.event({ type: "dispatch", nextRecheckAt: at(10) }, 0, f.store, 1, 1)).toThrow(
+      /operation generation/,
+    );
     f.add();
     expect(() =>
-      f.event(
-        { type: "response", outcome: "accepted", evidence: f.evidence(1) },
-        1,
-      ),
+      f.event({ type: "response", outcome: "accepted", evidence: f.evidence(1) }, 1),
     ).toThrow(/durable dispatch/);
-    expect(() =>
-      f.event({ type: "dispatch", nextRecheckAt: at(0) }, 0),
-    ).toThrow(/future/);
+    expect(() => f.event({ type: "dispatch", nextRecheckAt: at(0) }, 0)).toThrow(/future/);
     f.dispatch();
     const before = f.store.read();
     expect(() =>
-      f.event(
-        { type: "response", outcome: "not-delivered", evidence: f.evidence(1) },
-        1,
-      ),
+      f.event({ type: "response", outcome: "not-delivered", evidence: f.evidence(1) }, 1),
     ).toThrow(/proof/);
     expect(f.reopen().read()).toEqual(before);
   });
-  it.each([
-    "intent",
-    "dispatch",
-    "acceptance",
-    "response",
-    "completion",
-  ] as const)(
+  it.each(["intent", "dispatch", "acceptance", "response", "completion"] as const)(
     "survives SIGKILL at the %s barrier with independently stored service state",
     async (barrier) => {
       const f = fixture();
@@ -474,17 +411,14 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
         const restarted = f.reopen();
         const entry = restarted.read()!.pendingOperations[0]!;
         expect(entry.status).toBe(
-          barrier === "intent"
-            ? "pending"
-            : barrier === "completion"
-              ? "completed"
-              : "ambiguous",
+          barrier === "intent" ? "pending" : barrier === "completion" ? "completed" : "ambiguous",
         );
         const resourceFile = path.join(f.root, "service-resource.json");
         if (["acceptance", "response", "completion"].includes(barrier)) {
-          const resource = JSON.parse(
-            fs.readFileSync(resourceFile, "utf8"),
-          ) as { id: string; correlationId: string };
+          const resource = JSON.parse(fs.readFileSync(resourceFile, "utf8")) as {
+            id: string;
+            correlationId: string;
+          };
           expect(resource.correlationId).toBe(f.intent().correlationId);
           if (barrier !== "completion")
             f.event(
@@ -503,13 +437,10 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
             .trim()
             .split("\n");
           expect(ledger).toHaveLength(2);
-          expect(restarted.read()!.pendingOperations[0]!.status).toBe(
-            "completed",
-          );
+          expect(restarted.read()!.pendingOperations[0]!.status).toBe("completed");
         } else expect(fs.existsSync(resourceFile)).toBe(false);
       } finally {
-        if (child.exitCode === null && child.signalCode === null)
-          child.kill("SIGKILL");
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
       }
     },
   );
@@ -539,13 +470,7 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
     ).toThrow(/artifact/);
     expect(f.reopen().read()).toEqual(completed);
     expect(() =>
-      f.store.persistMutationIntent(
-        completed.revision,
-        1,
-        "duplicate",
-        f.intent(),
-        at(10),
-      ),
+      f.store.persistMutationIntent(completed.revision, 1, "duplicate", f.intent(), at(10)),
     ).toThrow(/correlation/);
     expect(f.reopen().read()).toEqual(completed);
   });
@@ -585,10 +510,7 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
       runState: { operation: { id: "replacement", kind: "ci", generation: 1 } },
     });
     expect(() =>
-      f.event(
-        { type: "response", outcome: "accepted", evidence: f.evidence(1) },
-        1,
-      ),
+      f.event({ type: "response", outcome: "accepted", evidence: f.evidence(1) }, 1),
     ).toThrow(/Superseded/);
     f.event(
       {
@@ -620,17 +542,9 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
     (kind) => {
       const f = fixture();
       const run = f.add(kind);
-      expect(run.pendingOperations[0]!.mutation!.policy).toBe(
-        mutationPolicies[kind],
-      );
+      expect(run.pendingOperations[0]!.mutation!.policy).toBe(mutationPolicies[kind]);
       expect(
-        f.store.persistMutationIntent(
-          run.revision,
-          1,
-          "effect",
-          f.intent(kind),
-          at(0),
-        ),
+        f.store.persistMutationIntent(run.revision, 1, "effect", f.intent(kind), at(0)),
       ).toEqual(run);
       expect(() =>
         f.store.persistMutationIntent(
@@ -644,13 +558,7 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
     },
   );
 
-  it.each([
-    "intent",
-    "dispatch",
-    "acceptance",
-    "response",
-    "completion",
-  ] as const)(
+  it.each(["intent", "dispatch", "acceptance", "response", "completion"] as const)(
     "preserves independently observed effect across %s boundary restart",
     (barrier) => {
       const f = fixture();
@@ -662,10 +570,7 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
         service.accept();
       }
       if (["response", "completion"].includes(barrier))
-        f.event(
-          { type: "response", outcome: "accepted", evidence: f.evidence(1) },
-          1,
-        );
+        f.event({ type: "response", outcome: "accepted", evidence: f.evidence(1) }, 1);
       if (barrier === "completion")
         f.event(
           {
@@ -695,14 +600,12 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
           10,
           restarted,
         );
-        expect(() =>
-          f.event({ type: "dispatch", nextRecheckAt: at(30) }, 20, restarted),
-        ).toThrow(/discovery/);
-        expect(
-          isConclusiveOperationResolution(
-            restarted.read()!.pendingOperations[0]!,
-          ),
-        ).toBe(false);
+        expect(() => f.event({ type: "dispatch", nextRecheckAt: at(30) }, 20, restarted)).toThrow(
+          /discovery/,
+        );
+        expect(isConclusiveOperationResolution(restarted.read()!.pendingOperations[0]!)).toBe(
+          false,
+        );
         expect(service.effects.size).toBe(0);
         return;
       }
@@ -719,22 +622,15 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
           restarted,
         );
       expect(service.effects.size).toBe(1);
-      expect(
-        service.ledger.filter((entry) => entry === "request"),
-      ).toHaveLength(1);
+      expect(service.ledger.filter((entry) => entry === "request")).toHaveLength(1);
       expect(restarted.read()!.pendingOperations[0]!.status).toBe("completed");
-      expect(() =>
-        f.event({ type: "dispatch", nextRecheckAt: at(30) }, 20, restarted),
-      ).toThrow(/immutable/);
+      expect(() => f.event({ type: "dispatch", nextRecheckAt: at(30) }, 20, restarted)).toThrow(
+        /immutable/,
+      );
     },
   );
 
-  it.each([
-    "trello-comment",
-    "github-reply",
-    "github-pr-create",
-    "trello-move",
-  ] as const)(
+  it.each(["trello-comment", "github-reply", "github-pr-create", "trello-move"] as const)(
     "does not resend %s after timeout/negative read and late acceptance",
     (kind) => {
       const f = fixture();
@@ -742,10 +638,7 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
       f.add(kind);
       f.dispatch();
       service.request(f.intent().correlationId);
-      f.event(
-        { type: "response", outcome: "unknown", evidence: f.evidence(1) },
-        1,
-      );
+      f.event({ type: "response", outcome: "unknown", evidence: f.evidence(1) }, 1);
       expect(service.observe(f.intent().correlationId)).toBeUndefined();
       f.event(
         {
@@ -758,9 +651,9 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
         10,
       );
       const restarted = f.reopen();
-      expect(() =>
-        f.event({ type: "dispatch", nextRecheckAt: at(30) }, 20, restarted),
-      ).toThrow(/discovery/);
+      expect(() => f.event({ type: "dispatch", nextRecheckAt: at(30) }, 20, restarted)).toThrow(
+        /discovery/,
+      );
       expect(() =>
         f.event(
           {
@@ -830,13 +723,9 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
       1,
     );
     expect(f.store.read()!.pendingOperations[0]!.status).toBe("failed");
-    expect(() =>
-      f.event({ type: "dispatch", nextRecheckAt: at(20) }, 2),
-    ).toThrow(/not due/);
+    expect(() => f.event({ type: "dispatch", nextRecheckAt: at(20) }, 2)).toThrow(/not due/);
     f.event({ type: "dispatch", nextRecheckAt: at(20) }, 10);
-    expect(
-      f.store.read()!.pendingOperations[0]!.mutation!.dispatches,
-    ).toHaveLength(2);
+    expect(f.store.read()!.pendingOperations[0]!.mutation!.dispatches).toHaveLength(2);
     expect(() =>
       f.event(
         { type: "response", outcome: "accepted", evidence: f.evidence(11) },
@@ -855,18 +744,10 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
     f.lease.token = "new-token";
     f.store.takeOwnership(dispatched.revision, 1, "new-token");
     expect(() =>
-      f.event(
-        { type: "response", outcome: "accepted", evidence: f.evidence(1) },
-        1,
-      ),
+      f.event({ type: "response", outcome: "accepted", evidence: f.evidence(1) }, 1),
     ).toThrow(/generation/);
     expect(() =>
-      f.event(
-        { type: "response", outcome: "accepted", evidence: f.evidence(1) },
-        1,
-        f.store,
-        2,
-      ),
+      f.event({ type: "response", outcome: "accepted", evidence: f.evidence(1) }, 1, f.store, 2),
     ).toThrow(/Stale/);
     f.event(
       {
@@ -938,37 +819,23 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
     const f = fixture("human-review");
     f.add();
     f.dispatch();
-    f.event(
-      { type: "response", outcome: "accepted", evidence: f.evidence(1) },
-      1,
-    );
+    f.event({ type: "response", outcome: "accepted", evidence: f.evidence(1) }, 1);
     expect(f.store.read()!.pendingOperations[0]!.status).toBe("ambiguous");
     // Terminal PR/Trello evidence does not erase already-dispatched effects.
     const current = f.store.read()!;
-    f.store.transition(
-      current.revision,
-      1,
-      null,
-      "merged",
-      "human-review",
-      "done",
-      (run) => run,
-      {
-        prOutcome: "merged",
-        prObservationId: "pr",
-        prVerifiedAt: at(10),
-        trelloListId: "done",
-        trelloObservationId: "card",
-        trelloVerifiedAt: at(10),
-      },
-    );
+    f.store.transition(current.revision, 1, null, "merged", "human-review", "done", (run) => run, {
+      prOutcome: "merged",
+      prObservationId: "pr",
+      prVerifiedAt: at(10),
+      trelloListId: "done",
+      trelloObservationId: "card",
+      trelloVerifiedAt: at(10),
+    });
     let released = false;
     const authority = new ProjectRunAuthority("p", f.store, 1, async () => {
       released = true;
     });
-    await expect(authority.releaseVerifiedTerminal()).rejects.toThrow(
-      /synchronization/,
-    );
+    await expect(authority.releaseVerifiedTerminal()).rejects.toThrow(/synchronization/);
     expect(released).toBe(false);
     f.event(
       {
@@ -983,8 +850,7 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
     await authority.releaseVerifiedTerminal();
     expect(released).toBe(true);
     expect(
-      f.reopen().read()!.pendingOperations[0]!.mutation!.dispatches[0]!
-        .response!.outcome,
+      f.reopen().read()!.pendingOperations[0]!.mutation!.dispatches[0]!.response!.outcome,
     ).toBe("accepted");
   });
 
@@ -1029,11 +895,7 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
     }).releaseVerifiedTerminal();
     expect(released).toBe(true);
     expect(terminal.pendingOperations).toEqual([]);
-    const registry = new RunRegistry(
-      f.pinned.storageRoot,
-      "integration",
-      f.lease,
-    );
+    const registry = new RunRegistry(f.pinned.storageRoot, "integration", f.lease);
     registry.handoff(f.store, null, 1);
     const next = new RunStore(f.pinned.storageRoot, "next", f.pinned, f.lease);
     next.create({
@@ -1058,11 +920,7 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
       () => 15_000,
     );
     let sends = 0;
-    reopened.enqueue(
-      "next:failed",
-      { subject: "Failed", text: "Next task" },
-      "failed",
-    );
+    reopened.enqueue("next:failed", { subject: "Failed", text: "Next task" }, "failed");
     await reopened.drain(
       {
         send: async () => {
@@ -1073,8 +931,8 @@ describe("durable workflow mutation foundation (REQ-WF-001)", () => {
     );
     expect(sends).toBe(1);
     expect(
-      reopened.records().find((entry) => entry.eventKey === "attempt:ready")
-        ?.dispatches[0]?.outcome,
+      reopened.records().find((entry) => entry.eventKey === "attempt:ready")?.dispatches[0]
+        ?.outcome,
     ).toBe("ambiguous");
   });
 });

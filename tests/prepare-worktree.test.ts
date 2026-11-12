@@ -5,11 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ProjectConfig } from "../src/config/config.js";
-import {
-  GitClient,
-  type GitRebaseState,
-  type RunGit,
-} from "../src/git/git-client.js";
+import { GitClient, type GitRebaseState, type RunGit } from "../src/git/git-client.js";
 import {
   getExistingPreparedConflictWorktree,
   getExistingWorktree,
@@ -19,9 +15,7 @@ import {
 const temporaryDirectories: string[] = [];
 
 function createTemporaryDirectory(): string {
-  const directory = fs.mkdtempSync(
-    path.join(os.tmpdir(), "agent-orchestrator-"),
-  );
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "agent-orchestrator-"));
 
   temporaryDirectories.push(directory);
 
@@ -192,10 +186,7 @@ describe("prepareWorktree", () => {
       initialStatus: "",
     });
 
-    expect(runGit).toHaveBeenNthCalledWith(1, worktreePath, [
-      "branch",
-      "--show-current",
-    ]);
+    expect(runGit).toHaveBeenNthCalledWith(1, worktreePath, ["branch", "--show-current"]);
 
     expect(runGit).toHaveBeenNthCalledWith(2, worktreePath, [
       "status",
@@ -258,10 +249,7 @@ describe("prepareWorktree", () => {
       initialStatus: " M src/example.ts\n?? src/new-file.ts",
     });
 
-    expect(runGit).toHaveBeenNthCalledWith(1, worktreePath, [
-      "branch",
-      "--show-current",
-    ]);
+    expect(runGit).toHaveBeenNthCalledWith(1, worktreePath, ["branch", "--show-current"]);
 
     expect(runGit).toHaveBeenNthCalledWith(2, worktreePath, [
       "status",
@@ -269,11 +257,7 @@ describe("prepareWorktree", () => {
       "--untracked-files=all",
     ]);
 
-    expect(runGit).not.toHaveBeenCalledWith(worktreePath, [
-      "reset",
-      "--hard",
-      "HEAD",
-    ]);
+    expect(runGit).not.toHaveBeenCalledWith(worktreePath, ["reset", "--hard", "HEAD"]);
 
     expect(runGit).not.toHaveBeenCalledWith(worktreePath, ["clean", "-fd"]);
   });
@@ -317,14 +301,9 @@ describe("prepareWorktree", () => {
     const runGit = vi.fn<RunGit>().mockRejectedValue(gitError);
     const git = new GitClient(runGit);
 
-    await expect(prepareWorktree(git, project, "card-123")).rejects.toBe(
-      gitError,
-    );
+    await expect(prepareWorktree(git, project, "card-123")).rejects.toBe(gitError);
 
-    expect(runGit).toHaveBeenCalledWith(worktreePath, [
-      "branch",
-      "--show-current",
-    ]);
+    expect(runGit).toHaveBeenCalledWith(worktreePath, ["branch", "--show-current"]);
   });
 
   it("rejects a card ID that escapes the worktree root", async () => {
@@ -383,32 +362,24 @@ describe("existing worktree lookup", () => {
     ["original HEAD", { originalHead: "c".repeat(40) }],
     ["backend", { backend: "apply" }],
     ["total steps", { totalSteps: 5 }],
-  ] as const)(
-    "rejects a prepared rebase with mismatched %s metadata",
-    async (_label, change) => {
-      const worktreeRoot = createTemporaryDirectory();
-      fs.mkdirSync(path.join(worktreeRoot, "card-123"));
-      const expectedRebase = createRebaseState();
-      const actualRebase = { ...expectedRebase, ...change };
-      const project = createProject(worktreeRoot);
-      const git = {
-        isValidRepository: vi.fn().mockResolvedValue(true),
-        getRebaseState: vi.fn().mockResolvedValue(actualRebase),
-        getCurrentBranch: vi.fn(),
-      } as unknown as GitClient;
+  ] as const)("rejects a prepared rebase with mismatched %s metadata", async (_label, change) => {
+    const worktreeRoot = createTemporaryDirectory();
+    fs.mkdirSync(path.join(worktreeRoot, "card-123"));
+    const expectedRebase = createRebaseState();
+    const actualRebase = { ...expectedRebase, ...change };
+    const project = createProject(worktreeRoot);
+    const git = {
+      isValidRepository: vi.fn().mockResolvedValue(true),
+      getRebaseState: vi.fn().mockResolvedValue(actualRebase),
+      getCurrentBranch: vi.fn(),
+    } as unknown as GitClient;
 
-      await expect(
-        getExistingPreparedConflictWorktree(
-          git,
-          project,
-          "card-123",
-          expectedRebase,
-        ),
-      ).resolves.toBeNull();
+    await expect(
+      getExistingPreparedConflictWorktree(git, project, "card-123", expectedRebase),
+    ).resolves.toBeNull();
 
-      expect(git.getCurrentBranch).not.toHaveBeenCalled();
-    },
-  );
+    expect(git.getCurrentBranch).not.toHaveBeenCalled();
+  });
 
   it("accepts a prepared rebase at the captured or a later conflict stop", async () => {
     const worktreeRoot = createTemporaryDirectory();
@@ -425,20 +396,10 @@ describe("existing worktree lookup", () => {
     } as unknown as GitClient;
 
     await expect(
-      getExistingPreparedConflictWorktree(
-        git,
-        project,
-        "card-123",
-        expectedRebase,
-      ),
+      getExistingPreparedConflictWorktree(git, project, "card-123", expectedRebase),
     ).resolves.not.toBeNull();
     await expect(
-      getExistingPreparedConflictWorktree(
-        git,
-        project,
-        "card-123",
-        expectedRebase,
-      ),
+      getExistingPreparedConflictWorktree(git, project, "card-123", expectedRebase),
     ).resolves.not.toBeNull();
   });
 
@@ -446,30 +407,22 @@ describe("existing worktree lookup", () => {
     ["regressed current step", { currentStep: 1 }],
     ["current step beyond total", { currentStep: 5 }],
     ["total below captured current step", { totalSteps: 1 }],
-  ] as const)(
-    "rejects prepared rebase with %s progress metadata",
-    async (_label, change) => {
-      const worktreeRoot = createTemporaryDirectory();
-      fs.mkdirSync(path.join(worktreeRoot, "card-123"));
-      const expectedRebase = createRebaseState();
-      const project = createProject(worktreeRoot);
-      const actualRebase = { ...expectedRebase, ...change };
-      const git = {
-        isValidRepository: vi.fn().mockResolvedValue(true),
-        getRebaseState: vi.fn().mockResolvedValue(actualRebase),
-        getCurrentBranch: vi.fn(),
-      } as unknown as GitClient;
+  ] as const)("rejects prepared rebase with %s progress metadata", async (_label, change) => {
+    const worktreeRoot = createTemporaryDirectory();
+    fs.mkdirSync(path.join(worktreeRoot, "card-123"));
+    const expectedRebase = createRebaseState();
+    const project = createProject(worktreeRoot);
+    const actualRebase = { ...expectedRebase, ...change };
+    const git = {
+      isValidRepository: vi.fn().mockResolvedValue(true),
+      getRebaseState: vi.fn().mockResolvedValue(actualRebase),
+      getCurrentBranch: vi.fn(),
+    } as unknown as GitClient;
 
-      await expect(
-        getExistingPreparedConflictWorktree(
-          git,
-          project,
-          "card-123",
-          expectedRebase,
-        ),
-      ).resolves.toBeNull();
-    },
-  );
+    await expect(
+      getExistingPreparedConflictWorktree(git, project, "card-123", expectedRebase),
+    ).resolves.toBeNull();
+  });
 
   it("accepts unavailable optional progress metadata", async () => {
     const worktreeRoot = createTemporaryDirectory();
@@ -487,12 +440,7 @@ describe("existing worktree lookup", () => {
     } as unknown as GitClient;
 
     await expect(
-      getExistingPreparedConflictWorktree(
-        git,
-        project,
-        "card-123",
-        expectedRebase,
-      ),
+      getExistingPreparedConflictWorktree(git, project, "card-123", expectedRebase),
     ).resolves.not.toBeNull();
   });
 
@@ -527,12 +475,7 @@ describe("existing worktree lookup", () => {
     } as unknown as GitClient;
 
     await expect(
-      getExistingPreparedConflictWorktree(
-        git,
-        project,
-        "card-123",
-        createRebaseState(),
-      ),
+      getExistingPreparedConflictWorktree(git, project, "card-123", createRebaseState()),
     ).resolves.toBeNull();
 
     expect(git.isValidRepository).not.toHaveBeenCalled();
@@ -549,12 +492,7 @@ describe("existing worktree lookup", () => {
     } as unknown as GitClient;
 
     await expect(
-      getExistingPreparedConflictWorktree(
-        git,
-        project,
-        "card-123",
-        createRebaseState(),
-      ),
+      getExistingPreparedConflictWorktree(git, project, "card-123", createRebaseState()),
     ).resolves.toBeNull();
 
     expect(git.getRebaseState).not.toHaveBeenCalled();
@@ -568,12 +506,8 @@ describe("existing worktree lookup", () => {
       getCurrentBranch: vi.fn().mockResolvedValue(""),
     } as unknown as GitClient;
 
-    await expect(
-      getExistingWorktree(git, project, "card-123"),
-    ).resolves.toBeNull();
-    expect(git.getCurrentBranch).toHaveBeenCalledWith(
-      path.join(worktreeRoot, "card-123"),
-    );
+    await expect(getExistingWorktree(git, project, "card-123")).resolves.toBeNull();
+    expect(git.getCurrentBranch).toHaveBeenCalledWith(path.join(worktreeRoot, "card-123"));
   });
 
   it("accepts an existing worktree with an active rebase for the expected branch", async () => {
@@ -592,9 +526,7 @@ describe("existing worktree lookup", () => {
       } satisfies GitRebaseState),
     } as unknown as GitClient;
 
-    await expect(
-      getExistingWorktree(git, project, "card-123"),
-    ).resolves.toEqual({
+    await expect(getExistingWorktree(git, project, "card-123")).resolves.toEqual({
       path: worktreePath,
       branch: "agent/card-123",
     });
@@ -616,8 +548,6 @@ describe("existing worktree lookup", () => {
       } satisfies GitRebaseState),
     } as unknown as GitClient;
 
-    await expect(
-      getExistingWorktree(git, project, "card-123"),
-    ).resolves.toBeNull();
+    await expect(getExistingWorktree(git, project, "card-123")).resolves.toBeNull();
   });
 });

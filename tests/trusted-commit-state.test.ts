@@ -56,9 +56,7 @@ describe("trusted commit state", () => {
         defaultBranch: project.repository.defaultBranch,
         commitSha: "orchestrator-commit",
       });
-      expect(fs.existsSync(getTrustedCommitStatePath(project, "card-1"))).toBe(
-        true,
-      );
+      expect(fs.existsSync(getTrustedCommitStatePath(project, "card-1"))).toBe(true);
     } finally {
       fs.rmSync(worktreeRoot, { recursive: true, force: true });
     }
@@ -98,9 +96,7 @@ describe("trusted commit state", () => {
       expect(() => readTrustedCommitState(project, "card-1")).toThrow(
         "Trusted commit state does not match project project-1",
       );
-      expect(() =>
-        readTrustedCommitState(project, "different-card"),
-      ).not.toThrow();
+      expect(() => readTrustedCommitState(project, "different-card")).not.toThrow();
 
       writeTrustedCommitState(project, "card-1", {
         version: 1,
@@ -152,9 +148,7 @@ describe("trusted commit state", () => {
         defaultBranch: project.repository.defaultBranch,
         commitSha: "rejected-commit",
       });
-      expect(fs.existsSync(getRejectedCommitStatePath(project, "card-1"))).toBe(
-        true,
-      );
+      expect(fs.existsSync(getRejectedCommitStatePath(project, "card-1"))).toBe(true);
       expect(readTrustedCommitState(project, "card-1")).toBeNull();
     } finally {
       fs.rmSync(worktreeRoot, { recursive: true, force: true });

@@ -48,10 +48,7 @@ function projectFixture() {
     },
   } as ProjectConfig;
   const taskStore = new TaskExecutionStore(path.join(root, "state"), project);
-  const ledgerStore = new FeedbackLedgerStore(
-    path.join(root, "state"),
-    project,
-  );
+  const ledgerStore = new FeedbackLedgerStore(path.join(root, "state"), project);
   const headA = "a".repeat(40);
   const headB = "b".repeat(40);
   const record: TaskExecutionRecord = {
@@ -129,10 +126,7 @@ function projectFixture() {
   };
 }
 
-const ciEvaluation = (
-  headSha: string,
-  status: "failed" | "passed",
-): CiCheckEvaluation =>
+const ciEvaluation = (headSha: string, status: "failed" | "passed"): CiCheckEvaluation =>
   status === "passed"
     ? {
         status,
@@ -173,9 +167,7 @@ const feedback = (id: string): FeedbackLedgerEntry => ({
 describe("mocked task-session lifecycle scenarios", () => {
   it("blocks failed validation/coverage evidence before publication readiness", () => {
     const f = projectFixture();
-    expect(
-      decideVerifiedPublication({ ...f.quality, validation: null }).allowed,
-    ).toBe(false);
+    expect(decideVerifiedPublication({ ...f.quality, validation: null }).allowed).toBe(false);
     expect(
       decideVerifiedPublication({
         ...f.quality,
@@ -203,11 +195,9 @@ describe("mocked task-session lifecycle scenarios", () => {
       enqueuedAt: "2026-10-24T09:00:00.000Z",
     });
     expect(queue.claimNext()?.eventId).toBe("ci-event");
-    const repairPrimarySession = vi.fn(
-      async (_diagnostics, _attempt, session) => {
-        expect(session).toBe("primary-session");
-      },
-    );
+    const repairPrimarySession = vi.fn(async (_diagnostics, _attempt, session) => {
+      expect(session).toBe("primary-session");
+    });
     const rerunLocalGatesAndReview = vi.fn(async () =>
       expect(decideVerifiedPublication(f.quality).allowed).toBe(true),
     );
@@ -218,14 +208,10 @@ describe("mocked task-session lifecycle scenarios", () => {
       operationKey: "operation",
       expectedPrimarySessionId: "primary-session",
       headSha: f.headA,
-      observeChecks: async (head) =>
-        ciEvaluation(head, head === f.headA ? "failed" : "passed"),
+      observeChecks: async (head) => ciEvaluation(head, head === f.headA ? "failed" : "passed"),
       collectDiagnostics: async (_head, failures) => [
         {
-          name:
-            failures[0]?.source === "check-run"
-              ? failures[0].name
-              : failures[0]!.context,
+          name: failures[0]?.source === "check-run" ? failures[0].name : failures[0]!.context,
           checkRunId: 1,
           headSha: _head,
           logUrl: null,
@@ -268,9 +254,7 @@ describe("mocked task-session lifecycle scenarios", () => {
       observedHeadSha: f.headB,
       newlyObservedFeedback: [feedback("old-inline"), feedback("late-inline")],
     });
-    expect(lateRound.newActionableFeedbackIds).toEqual([
-      "inline-comment:late-inline",
-    ]);
+    expect(lateRound.newActionableFeedbackIds).toEqual(["inline-comment:late-inline"]);
     const selection = selectActionableFeedback({
       currentHeadSha: f.headB,
       botAuthor: "agent[bot]",
@@ -304,11 +288,9 @@ describe("mocked task-session lifecycle scenarios", () => {
       sendReply,
     });
     expect(replyResult.publishedReplyIds).toHaveLength(2);
-    expect(
-      f.ledgerStore
-        .read("card")
-        ?.entries.every((item) => item.status === "published"),
-    ).toBe(true);
+    expect(f.ledgerStore.read("card")?.entries.every((item) => item.status === "published")).toBe(
+      true,
+    );
   });
 
   it("holds multiple review cards independently and fails closed on interrupted ambiguous replies", async () => {
@@ -369,14 +351,12 @@ describe("mocked task-session lifecycle scenarios", () => {
       recursive: true,
     });
     const github = {
-      findPullRequestState: vi.fn(
-        async ({ headBranch }: { headBranch: string }) => ({
-          url: `https://github.com/owner/repo/pull/${headBranch === "agent/card" ? 1 : 2}`,
-          state: "OPEN",
-          mergedAt: null,
-          headRefOid: headBranch === "agent/card" ? f.headA : secondHead,
-        }),
-      ),
+      findPullRequestState: vi.fn(async ({ headBranch }: { headBranch: string }) => ({
+        url: `https://github.com/owner/repo/pull/${headBranch === "agent/card" ? 1 : 2}`,
+        state: "OPEN",
+        mergedAt: null,
+        headRefOid: headBranch === "agent/card" ? f.headA : secondHead,
+      })),
       getCiObservations: vi.fn(async ({ headSha }: { headSha: string }) => ({
         headSha,
         checks: [

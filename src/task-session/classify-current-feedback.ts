@@ -50,17 +50,14 @@ export async function classifyCurrentFeedback(options: {
   openCode: OpenCodeClient;
   signal: AbortSignal;
 }): Promise<FeedbackLedgerEntry[]> {
-  const previous = new Map(
-    options.previous.map((entry) => [`${entry.kind}:${entry.id}`, entry]),
-  );
+  const previous = new Map(options.previous.map((entry) => [`${entry.kind}:${entry.id}`, entry]));
   const candidates = options.incoming.filter((entry) => {
     if (entry.actionability === "not-actionable") return false;
     const old = previous.get(`${entry.kind}:${entry.id}`);
     return (
       old === undefined ||
       old.actionability === "unclassified" ||
-      (old.sourceRevision ?? feedbackSourceRevision(old)) !==
-        feedbackSourceRevision(entry)
+      (old.sourceRevision ?? feedbackSourceRevision(old)) !== feedbackSourceRevision(entry)
     );
   });
   if (candidates.length === 0) return [...options.incoming];
@@ -89,40 +86,26 @@ export async function classifyCurrentFeedback(options: {
     ].join("\n\n"),
   });
   if (response.exitCode !== 0)
-    throw new Error(
-      "Human feedback classification unavailable; current requests retained",
-    );
+    throw new Error("Human feedback classification unavailable; current requests retained");
   const result = resultSchema.parse(JSON.parse(response.output) as unknown);
   const expected = new Map(
-    candidates.map((entry) => [
-      `${entry.kind}:${entry.id}`,
-      feedbackSourceRevision(entry),
-    ]),
+    candidates.map((entry) => [`${entry.kind}:${entry.id}`, feedbackSourceRevision(entry)]),
   );
   if (
     result.projectId !== options.project.id ||
     result.cardId !== options.cardId ||
     result.assessments.length !== expected.size ||
-    new Set(result.assessments.map((item) => item.feedbackId)).size !==
-      expected.size ||
-    result.assessments.some(
-      (item) => expected.get(item.feedbackId) !== item.sourceRevision,
-    )
+    new Set(result.assessments.map((item) => item.feedbackId)).size !== expected.size ||
+    result.assessments.some((item) => expected.get(item.feedbackId) !== item.sourceRevision)
   )
-    throw new Error(
-      "Human feedback classification does not match the current sources",
-    );
-  const assessments = new Map(
-    result.assessments.map((item) => [item.feedbackId, item]),
-  );
+    throw new Error("Human feedback classification does not match the current sources");
+  const assessments = new Map(result.assessments.map((item) => [item.feedbackId, item]));
   return options.incoming.map((entry) => {
     const assessment = assessments.get(`${entry.kind}:${entry.id}`);
     if (!assessment) return entry;
     const old = previous.get(`${entry.kind}:${entry.id}`);
     const changed =
-      old === undefined ||
-      assessment.substantiveChange ||
-      old.author !== entry.author;
+      old === undefined || assessment.substantiveChange || old.author !== entry.author;
     return {
       ...entry,
       sourceRevision: assessment.sourceRevision,
