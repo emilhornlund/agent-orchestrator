@@ -68,3 +68,12 @@ evaluation; they never count as passes. Unknown expectation completeness, stale 
 observations still fail closed. Unit coverage and the production active-PR observer verify mixed
 results enqueue one repair across repeated polling/reopening. Existing episode budgets remain
 unchanged. This is simulated provider evidence, not a live CI qualification.
+
+## AUD-005 — Corrected: bounded cleanup diagnostics
+
+REQ-LOG-002/AC-02–03: dirty status, unmerged paths and observed branch text are no longer copied
+from Git stdout into cleanup exceptions. Typed diagnostics contain a fixed reason, numeric size or
+count and a process-artifact directory reference. Raw command output remains in child evidence. The
+terminal production path is tested with real Git and a synthetic dirty-path canary: the warning
+omits raw status/path text, remains bounded, identifies preserved work and leaves its contents
+intact.

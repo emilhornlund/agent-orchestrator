@@ -18,6 +18,23 @@ export interface CleanupWorktreeOptions {
   signal?: AbortSignal;
 }
 
+export class CleanupWorktreeSafetyError extends Error {
+  readonly diagnostic: {
+    reason: "dirty-worktree" | "unmerged-paths" | "unexpected-branch";
+    observedCount: number;
+    artifactReferences: readonly string[];
+  };
+
+  constructor(reason: CleanupWorktreeSafetyError["diagnostic"]["reason"], observedCount: number) {
+    const diagnostic = { reason, observedCount, artifactReferences: ["process-executions/"] };
+    super(
+      `Refusing to remove ${reason === "dirty-worktree" ? "dirty worktree" : reason === "unmerged-paths" ? "worktree with unmerged paths" : "worktree on unexpected branch"}; ${JSON.stringify(diagnostic)}`,
+    );
+    this.name = "CleanupWorktreeSafetyError";
+    this.diagnostic = diagnostic;
+  }
+}
+
 export async function cleanupWorktree({
   git,
   project,
@@ -104,9 +121,7 @@ export async function cleanupWorktree({
     }
 
     if (currentBranch !== branch) {
-      throw new Error(
-        `Refusing to clean worktree ${worktreePath} on branch "${currentBranch}", expected "${branch}"`,
-      );
+      throw new CleanupWorktreeSafetyError("unexpected-branch", 1);
     }
 
     if (preserveRecoveryState) {
@@ -127,9 +142,7 @@ export async function cleanupWorktree({
       }
 
       if (conflictedPaths.length > 0) {
-        throw new Error(
-          `Refusing to remove worktree ${worktreePath} with unmerged paths: ${conflictedPaths.join(", ")}`,
-        );
+        throw new CleanupWorktreeSafetyError("unmerged-paths", conflictedPaths.length);
       }
     }
 
@@ -142,7 +155,7 @@ export async function cleanupWorktree({
     }
 
     if (status.length > 0) {
-      throw new Error(`Refusing to remove dirty worktree ${worktreePath}:\n${status}`);
+      throw new CleanupWorktreeSafetyError("dirty-worktree", Buffer.byteLength(status));
     }
 
     if (signal?.aborted) {

@@ -197,7 +197,7 @@ describe("cleanupWorktree", () => {
         branch: "agent/card-1",
         preserveRecoveryState: true,
       }),
-    ).rejects.toThrow('on branch "agent/other-card"');
+    ).rejects.toThrow("unexpected-branch");
 
     expect(git.getStatus).not.toHaveBeenCalled();
     expect(git.removeWorktree).not.toHaveBeenCalled();
