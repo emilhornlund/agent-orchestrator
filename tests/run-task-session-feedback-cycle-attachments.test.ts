@@ -168,6 +168,7 @@ describe("Human Review attachment preparation", () => {
     const prepareAttachmentContext = vi.fn(async () => undefined);
     const comments = [
       { id: 1, author: "automation", body: "Fix something" },
+      { id: 4, author: "agent[bot]", body: "Fix something" },
       {
         id: 2,
         author: "other-bot",
