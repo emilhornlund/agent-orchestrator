@@ -48,3 +48,14 @@ REQ-HR-001/AC-01 and AC-05: production feedback conversion now filters by author
 provenance, not body marker bytes. Regression coverage calls `refreshCurrentTaskFeedback` with human
 review, inline and conversation requests quoting a marker, and retains the existing self/bot
 exclusion test. Semantic discussion classification remains responsible for non-requests.
+
+## AUD-002 — Corrected: queue lifetime history
+
+REQ-HR-005/AC-01 and REQ-HR-006/AC-04: terminal descriptors are archived before snapshot compaction,
+with durable per-event identities for deduplication and later prerequisites. Pending/active/failed
+work and prerequisite closure are never discarded. Snapshots retain recent outcomes, not the entire
+task lifetime; the existing 10,000 bound now constrains simultaneous retained work rather than
+ordinary sequential human rounds. History grows on disk for traceability, not in every queue read.
+The CI observer uses historical lookup to avoid re-enqueuing compacted observations. Regression
+coverage processes 10,005 distinct rounds with periodic reopening, then verifies archived duplicate
+suppression, identity-conflict rejection, prerequisites and interrupted-writer recovery.

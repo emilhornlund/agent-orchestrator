@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import {
   TaskMutationQueue,
@@ -45,6 +45,64 @@ const legacyProductionRetirements = [
 ];
 
 describe("TaskMutationQueue", () => {
+  it("preserves the complete queue when history persistence fails during compaction", () => {
+    const queue = queueFor("archive-failure");
+    const first = task("archive-failure", "first", "card", "2026-10-24T09:00:00.000Z");
+    for (let index = 0; index < 256; index++) {
+      const event = { ...first, eventId: index === 0 ? "first" : `event-${index}` };
+      queue.enqueue(event);
+      queue.claimNext();
+      queue.complete(event.eventId);
+    }
+    const snapshot = queue.list();
+    const sync = vi.spyOn(fs, "fsyncSync").mockImplementationOnce(() => {
+      throw new Error("history sync failed");
+    });
+    try {
+      expect(() => queue.enqueue({ ...first, eventId: "next" })).toThrow(/history sync failed/);
+    } finally {
+      sync.mockRestore();
+    }
+    expect(queueFor("archive-failure").list()).toEqual(snapshot);
+    queue.enqueue({ ...first, eventId: "next" });
+    expect(queue.get("first")?.status).toBe("completed");
+    expect(queue.claimNext()?.eventId).toBe("next");
+    queue.complete("next");
+  });
+
+  it("processes more than 10000 human rounds with bounded snapshots and durable deduplication", () => {
+    let queue = queueFor("long-lived");
+    const first = task("long-lived", "round-0", "card", "2026-10-24T09:00:00.000Z");
+    for (let round = 0; round < 10_005; round++) {
+      const event = {
+        ...first,
+        eventId: `round-${round}`,
+        operationKey: `operation-round-${round}`,
+      };
+      queue.enqueue(event);
+      expect(queue.claimNext()?.eventId).toBe(event.eventId);
+      queue.complete(event.eventId);
+      if (round % 1000 === 0) queue = queueFor("long-lived");
+    }
+    expect(queue.list().length).toBeLessThanOrEqual(256);
+    queue = queueFor("long-lived");
+    expect(queue.get(first.eventId)?.status).toBe("completed");
+    expect(queue.enqueue(first).status).toBe("completed");
+    expect(queue.claimNext()).toBeNull();
+    expect(() => queue.enqueue({ ...first, operationKey: "different" })).toThrow(/reused/);
+    queue.enqueue({
+      ...first,
+      eventId: "later",
+      operationKey: "later",
+      prerequisites: [first.eventId],
+    });
+    expect(queue.claimNext()?.eventId).toBe("later");
+    queue.releaseForRecovery("later");
+    const restarted = queueFor("long-lived");
+    expect(restarted.claimForRecovery("later")?.eventId).toBe("later");
+    restarted.complete("later");
+  }, 120_000);
+
   it("persists human/CI/maintenance priority and prevents specific-claim callers bypassing it", () => {
     const queue = queueFor("project-a");
     queue.enqueue({

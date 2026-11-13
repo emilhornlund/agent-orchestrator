@@ -195,7 +195,7 @@ export async function observeActivePullRequest(options: {
     if (
       ci.status === "failed" &&
       !["exhausted", "stopped"].includes(task.ciRepair?.status ?? "") &&
-      !queue.list().some((entry) => entry.eventId === ciRepairEventId(task, pr.headRefOid!))
+      !queue.get(ciRepairEventId(task, pr.headRefOid!))
     )
       queue.enqueue({
         projectId: project.id,
