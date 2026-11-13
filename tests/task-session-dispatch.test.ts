@@ -1438,9 +1438,12 @@ describe("task-session production dispatch", () => {
                 id: 43,
                 name: "Tests",
                 head_sha: observedHead,
-                status: "completed",
-                conclusion:
-                  observedHead === "b".repeat(40) || failAllChecks ? "failure" : "success",
+                status: failAllChecks ? "in_progress" : "completed",
+                conclusion: failAllChecks
+                  ? null
+                  : observedHead === "b".repeat(40)
+                    ? "failure"
+                    : "success",
                 created_at: "2026-10-24T10:00:01Z",
                 html_url: "https://github.com/owner/repo/actions/runs/43",
               },
@@ -1960,6 +1963,7 @@ describe("task-session production dispatch", () => {
       phase: "human-feedback",
       retryCounters: { ci: 2 },
       ciRepair: { status: "stopped", stopReason: "no-change" },
+      reviewObservation: { ciEvaluation: { status: "failed", pendingChecks: ["Tests"] } },
     });
     expect(git.commit).toHaveBeenCalledTimes(4);
     expect(new TaskMutationQueue(project.contextRoot, project).list().at(-1)?.status).toBe(
@@ -2070,7 +2074,7 @@ describe("task-session production dispatch", () => {
     expect(store.read(card.id)?.phase).toBe("attention-required");
   });
 
-  it("waits for delayed registrations and mixed pending/failing CI without consuming repair attempts", async () => {
+  it("waits for delayed registrations and fails closed for uncertain mixed-check expectations", async () => {
     const { project, worktreeRoot } = projectFixture();
     project.autoMerge = true;
     const card = createCard();
@@ -2122,6 +2126,7 @@ describe("task-session production dispatch", () => {
         url: null,
       },
     ];
+    let expectationsComplete = true;
     const github = {
       findPullRequestState: vi.fn(async () => ({
         url: "https://github.com/owner/repo/pull/9",
@@ -2136,7 +2141,7 @@ describe("task-session production dispatch", () => {
           {
             kind: "repository-rules" as const,
             sourceId: "rules",
-            complete: true,
+            complete: expectationsComplete,
             checkNames: ["Build", "Tests", "Security"],
           },
         ],
@@ -2167,6 +2172,7 @@ describe("task-session production dispatch", () => {
       },
     });
 
+    expectationsComplete = false;
     checks = [
       {
         source: "check-run",
@@ -2206,8 +2212,8 @@ describe("task-session production dispatch", () => {
       new AbortController().signal,
     );
     expect(recordStore.read(card.id)?.reviewObservation?.ciEvaluation).toMatchObject({
-      status: "waiting",
-      pendingChecks: ["Tests"],
+      status: "uncertain",
+      pendingChecks: [],
       missingChecks: [],
     });
     expect(recordStore.read(card.id)?.retryCounters.ci).toBe(0);
