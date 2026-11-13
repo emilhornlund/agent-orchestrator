@@ -125,3 +125,19 @@ repository/worktree roots. Diagnosed the explicit storage-separation error and c
 to use disjoint roots; the focused four-case rerun passed. This was a fixture error, not a product
 defect. The remaining groups are retained verification work, not reclassified as resolved merely
 because validation passes. No live-service or real-model judgment qualification was performed.
+
+## Integrated review corrections
+
+The first integrated `yarn validate` passed lint, formatting and typecheck, but reported two failing
+dispatch assertions (2,286 tests passed). Investigation found a bot reply fixture without explicit
+bot-type metadata, and an old assertion requiring mixed CI failures to wait. Reserved GitHub `[bot]`
+identities now remain excluded even without type metadata; human body markers still do not filter
+feedback. The production CI projection now retains pending/missing names for failed evaluations. The
+dispatch lifecycle regression exercises bounded repair with a permanently pending peer check; the
+unknown-expectation case still consumes no repair attempts. Focused reruns passed: 7 feedback tests
+and all 14 production-dispatch tests, plus typecheck and focused lint.
+
+Final integrated validation/build and changes-mode audit results are reported in the delivery and
+retained changes-audit artifacts under `.local/spec-audits/`. This status page does not supersede
+the historical matrix or assert full compliance. AUD-004, AUD-006 and the remaining evidence gaps
+above are open; this campaign is a partial remediation, not a release qualification.
