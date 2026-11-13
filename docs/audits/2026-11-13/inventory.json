@@ -1,0 +1,3371 @@
+{
+  "auditedCommit": "2aa7561743add264eb8eb00c29993721630cbedf",
+  "hashes": {
+    "requirements": "fb0bf8debffb34654290de80d8ce367f0c8f12588de0b94663023735f09a3930",
+    "specification": "ec72ee878f18e962802a688710c6bbed4e2d467c0965ca4237f75d2f7edfff6e"
+  },
+  "ids": [
+    "REQ-WF-001",
+    "REQ-WF-002",
+    "REQ-WF-003",
+    "REQ-PR-001",
+    "REQ-PR-002",
+    "REQ-PR-003",
+    "REQ-PR-004",
+    "REQ-PR-005",
+    "REQ-PR-006",
+    "REQ-PR-007",
+    "REQ-PR-008",
+    "REQ-TR-001",
+    "REQ-TR-002",
+    "REQ-TR-003",
+    "REQ-TR-004",
+    "REQ-REF-001",
+    "REQ-REF-002",
+    "REQ-REF-003",
+    "REQ-REF-004",
+    "REQ-REF-005",
+    "REQ-IMP-001",
+    "REQ-IMP-002",
+    "REQ-IMP-003",
+    "REQ-IMP-004",
+    "REQ-IMP-005",
+    "REQ-VAL-001",
+    "REQ-VAL-002",
+    "REQ-VAL-003",
+    "REQ-VAL-004",
+    "REQ-VAL-005",
+    "REQ-HR-001",
+    "REQ-HR-002",
+    "REQ-HR-003",
+    "REQ-HR-004",
+    "REQ-HR-005",
+    "REQ-HR-006",
+    "REQ-CI-001",
+    "REQ-CI-002",
+    "REQ-MNT-001",
+    "REQ-MNT-002",
+    "REQ-MNT-003",
+    "REQ-MNT-004",
+    "REQ-REC-001",
+    "REQ-REC-002",
+    "REQ-REC-003",
+    "REQ-REC-004",
+    "REQ-REC-005",
+    "REQ-REC-006",
+    "REQ-GIT-001",
+    "REQ-GIT-002",
+    "REQ-GIT-003",
+    "REQ-GIT-004",
+    "REQ-GIT-005",
+    "REQ-GIT-006",
+    "REQ-CFG-001",
+    "REQ-CFG-002",
+    "REQ-CFG-003",
+    "REQ-CFG-004",
+    "REQ-CFG-005",
+    "REQ-CFG-006",
+    "REQ-SCH-001",
+    "REQ-SCH-002",
+    "REQ-SCH-003",
+    "REQ-SCH-004",
+    "REQ-LOG-001",
+    "REQ-LOG-002",
+    "REQ-LOG-003",
+    "REQ-NOT-001",
+    "REQ-NOT-002",
+    "REQ-SEC-001",
+    "REQ-SEC-002",
+    "REQ-SEC-003",
+    "REQ-ENV-001",
+    "REQ-ENV-002",
+    "REQ-ENV-003",
+    "REQ-CTX-001",
+    "REQ-CTX-002",
+    "REQ-CTX-003",
+    "REQ-CTX-004",
+    "REQ-TST-001",
+    "REQ-TST-002",
+    "REQ-TST-003"
+  ],
+  "statements": [
+    {
+      "key": "requirements:L17",
+      "section": "Guaranteed workflow progress — critical invariant",
+      "line": 17,
+      "text": "The orchestrator must never enter an infinite execution, remediation, or recovery loop. Each active operation must make progress, complete, or reach a defined and observable outcome."
+    },
+    {
+      "key": "requirements:L19",
+      "section": "Guaranteed workflow progress — critical invariant",
+      "line": 19,
+      "text": "Cards must not remain indefinitely in intermediate states such as `Working` because of internal defects, stale ownership, orphaned processes, invalid records, or exhausted attempts."
+    },
+    {
+      "key": "requirements:L21",
+      "section": "Guaranteed workflow progress — critical invariant",
+      "line": 21,
+      "text": "Detect stalled work and reconcile abandoned sessions, locks, and execution records automatically. Internal failures must not permanently block a project or prevent later tasks from running."
+    },
+    {
+      "key": "requirements:L23",
+      "section": "Guaranteed workflow progress — critical invariant",
+      "line": 23,
+      "text": "Always prioritize safe draft PR delivery when implementation quality gates cannot pass; do not use repeated validation or AI reviews as a reason to stall publication."
+    },
+    {
+      "key": "requirements:L25",
+      "section": "Guaranteed workflow progress — critical invariant",
+      "line": 25,
+      "text": "Distinguish intentional waiting (such as `Human Review` or an external service outage) from a stuck workflow. Recheck waiting conditions and resume once they clear; do not spin indefinitely or send repeated alerts."
+    },
+    {
+      "key": "requirements:L28",
+      "section": "Guaranteed workflow progress — critical invariant",
+      "line": 28,
+      "text": "Genuine external dependencies or safety uncertainty may prevent immediate resolution, but such conditions must remain explicit, observable, and recoverable rather than silently stuck. No automated system can guarantee that an unavailable external service or a human decision will eventually arrive."
+    },
+    {
+      "key": "requirements:L32",
+      "section": "Guaranteed workflow progress — critical invariant",
+      "line": 32,
+      "text": "A dedicated live-service testing environment is a future improvement, not a prerequisite to addressing current robustness defects."
+    },
+    {
+      "key": "requirements:L34",
+      "section": "Guaranteed workflow progress — critical invariant",
+      "line": 34,
+      "text": "If an internal error remains unrecoverable after bounded recovery attempts, terminate that attempt safely instead of leaving the card in `Working` or retrying indefinitely."
+    },
+    {
+      "key": "requirements:L36",
+      "section": "Guaranteed workflow progress — critical invariant",
+      "line": 36,
+      "text": "Move the card to `Failed`, explain the reason in a Trello comment, preserve work and diagnostics, and release the project to process subsequent tasks once the terminal transition is confirmed."
+    },
+    {
+      "key": "requirements:L38",
+      "section": "Guaranteed workflow progress — critical invariant",
+      "line": 38,
+      "text": "This applies only when the workflow genuinely cannot continue or safely produce a PR; exhausted quality checks alone must instead lead to draft PR delivery whenever possible."
+    },
+    {
+      "key": "requirements:L40",
+      "section": "Guaranteed workflow progress — critical invariant",
+      "line": 40,
+      "text": "If Trello is unavailable and the terminal move cannot be confirmed, retain and retry that pending transition safely. Never pretend the card reached `Failed` or release ownership before the state is reconciled."
+    },
+    {
+      "key": "requirements:L43",
+      "section": "Guaranteed workflow progress — critical invariant",
+      "line": 43,
+      "text": "Prevent stuck workflows by designing every operation with explicit success, failure, and recovery paths. Do not rely on periodic stall detection as the normal way to make progress."
+    },
+    {
+      "key": "requirements:L45",
+      "section": "Guaranteed workflow progress — critical invariant",
+      "line": 45,
+      "text": "If unexpected inconsistent state still arises, use periodic monitoring as a last-resort safety net to detect and safely recover it, including after restarts."
+    },
+    {
+      "key": "requirements:L47",
+      "section": "Guaranteed workflow progress — critical invariant",
+      "line": 47,
+      "text": "Every workflow state has explicitly allowed transitions. An external transition is only considered complete after its outcome is verified; never advance internal state merely because Trello, GitHub, or another service was assumed to succeed."
+    },
+    {
+      "key": "requirements:L53",
+      "section": "Advisory quality steps — critical invariant",
+      "line": 53,
+      "text": "All planning, plan review, validation, coverage, implementation review, and remediation inside the `Working` phase exist to guide and improve the agent's work, **never to approve, reject, or block progress to PR publication**."
+    },
+    {
+      "key": "requirements:L56",
+      "section": "Advisory quality steps — critical invariant",
+      "line": 56,
+      "text": "The implementation agent may evaluate, adapt, or disregard any advisory feedback, including all of it. The orchestrator does not require agreement from an AI reviewer and does not force the agent to apply recommendations."
+    },
+    {
+      "key": "requirements:L59",
+      "section": "Advisory quality steps — critical invariant",
+      "line": 59,
+      "text": "An agent may finish remediation early when further changes would not be useful. Existing attempt limits are maximums, not required counts; no additional configuration or approval mechanism is needed."
+    },
+    {
+      "key": "requirements:L62",
+      "section": "Advisory quality steps — critical invariant",
+      "line": 62,
+      "text": "If an advisory remediation attempt produces no implementation changes, stop that remediation cycle and proceed toward publishing the existing meaningful changes. Do not repeatedly request review of unchanged code merely because the AI reviewer remains dissatisfied."
+    },
+    {
+      "key": "requirements:L65",
+      "section": "Advisory quality steps — critical invariant",
+      "line": 65,
+      "text": "Advisory stages have bounded execution and correction attempts. Negative findings, failed validation, exhausted correction attempts, or an unrecoverable crash of an advisory stage must not block publication; record the outcome, skip that stage when necessary, and continue toward publishing meaningful implementation changes."
+    },
+    {
+      "key": "requirements:L69",
+      "section": "Advisory quality steps — critical invariant",
+      "line": 69,
+      "text": "A crash must be established using execution evidence, not an unsatisfactory result. Negative AI feedback, failing tests, and normal nonzero validation results are not implementation crashes."
+    },
+    {
+      "key": "requirements:L71",
+      "section": "Advisory quality steps — critical invariant",
+      "line": 71,
+      "text": "A genuine crash of the primary implementation process is different: first attempt safe recovery, including restoring the existing session or reconstructing context when possible. If primary execution remains unrecoverable **before a PR has been published**, move the card to `Failed`, even when partial code changes exist. Preserve changes and diagnostics; do not automatically publish interrupted implementation work as a draft PR. **After a PR has been published**, an unrecoverable primary session or correction operation is an operation failure, not a terminal task failure: preserve the existing PR, unshipped work, and project ownership; report the blockage, make bounded safe recovery attempts, and remain in an explicit recoverable waiting state or await a human merge/closure. Never move an open-PR card to `Failed` or claim a new task simply because post-publication automation failed. A temporary external outage follows the separate preservation-and-retry policy."
+    },
+    {
+      "key": "requirements:L82",
+      "section": "Advisory quality steps — critical invariant",
+      "line": 82,
+      "text": "Use the existing bounded operation retry configuration for primary implementation crash recovery; do not add a separate implementation-crash retry setting. The approved limit is three verified genuine failures per primary operation, not three total outage-related process dispatches. Record actual dispatches truthfully and temporary outages separately, using bounded immediate attempts and paced rechecks. Reconstruction acknowledgement uses separate role accounting with the same existing recovery limit; validation/review improvement budgets remain separate."
+    },
+    {
+      "key": "requirements:L88",
+      "section": "Advisory quality steps — critical invariant",
+      "line": 88,
+      "text": "Reports must accurately distinguish what ran, what passed, what failed, what was skipped, and what remains uncertain. Publish a draft PR when significant unresolved quality problems remain; never misrepresent readiness."
+    },
+    {
+      "key": "requirements:L91",
+      "section": "Advisory quality steps — critical invariant",
+      "line": 91,
+      "text": "Unresolved validation failures after remediation, including repeated failures of the same checks, must be captured in the PR description and available diagnostics. Stop correction attempts at their configured limit and publish a draft PR; passing tests or eliminating validation errors is never a prerequisite for publication."
+    },
+    {
+      "key": "requirements:L95",
+      "section": "Advisory quality steps — critical invariant",
+      "line": 95,
+      "text": "Operational safety constraints remain mandatory: no loss of unrelated work, unsafe Git mutations, duplicate side effects, or exposure of credentials. These constraints are distinct from quality assessments and cannot be bypassed to force publication."
+    },
+    {
+      "key": "requirements:L101",
+      "section": "Projects and task concurrency",
+      "line": 101,
+      "text": "At least one project must be configured; multiple projects are supported."
+    },
+    {
+      "key": "requirements:L102",
+      "section": "Projects and task concurrency",
+      "line": 102,
+      "text": "Each project has its own Trello board, Git repository, GitHub repository, and configuration."
+    },
+    {
+      "key": "requirements:L103",
+      "section": "Projects and task concurrency",
+      "line": 103,
+      "text": "Projects are independent and may process tasks concurrently without interfering with one another."
+    },
+    {
+      "key": "requirements:L104",
+      "section": "Projects and task concurrency",
+      "line": 104,
+      "text": "Each project processes only one task at a time. The current task must reach a terminal outcome before the project starts another."
+    },
+    {
+      "key": "requirements:L106",
+      "section": "Projects and task concurrency",
+      "line": 106,
+      "text": "A pull request awaiting `Human Review` is still active and blocks the next task, since later work may depend on its merge."
+    },
+    {
+      "key": "requirements:L111",
+      "section": "Trello lifecycle",
+      "line": 111,
+      "text": "A merged pull request moves its card to `Done`."
+    },
+    {
+      "key": "requirements:L112",
+      "section": "Trello lifecycle",
+      "line": 112,
+      "text": "A pull request closed without merging moves its card to `Backlog`. The orchestrator posts a Trello comment explaining the closure and linking to the PR. The task can be revised and explicitly queued again later; closure is not an orchestrator failure."
+    },
+    {
+      "key": "requirements:L115",
+      "section": "Trello lifecycle",
+      "line": 115,
+      "text": "An unrecoverable automated failure moves its card to `Failed`, with an explanatory Trello comment and an email notification when configured. Failure conditions are defined in the recovery, PR-delivery exception, and advisory-step requirements below."
+    },
+    {
+      "key": "requirements:L118",
+      "section": "Trello lifecycle",
+      "line": 118,
+      "text": "After a task reaches `Done`, `Failed`, or the cancelled `Backlog` outcome, the project may process its next task."
+    },
+    {
+      "key": "requirements:L120",
+      "section": "Trello lifecycle",
+      "line": 120,
+      "text": "Cards in `Failed` are not automatically retried. To try again, the user explicitly returns the card to `Ready for Agent`."
+    },
+    {
+      "key": "requirements:L125",
+      "section": "Task selection",
+      "line": 125,
+      "text": "The orchestrator selects new tasks only from `Ready for Agent`, in top-to-bottom Trello card order."
+    },
+    {
+      "key": "requirements:L127",
+      "section": "Task selection",
+      "line": 127,
+      "text": "The first eligible card takes priority regardless of task type."
+    },
+    {
+      "key": "requirements:L128",
+      "section": "Task selection",
+      "line": 128,
+      "text": "Cards with future start dates are skipped until eligible; skipped or otherwise ineligible cards do not block cards farther down the list."
+    },
+    {
+      "key": "requirements:L133",
+      "section": "Task types and refinement",
+      "line": 133,
+      "text": "Supported task types are `Feature`, `Improvement`, `Bug`, and `Refinement`."
+    },
+    {
+      "key": "requirements:L134",
+      "section": "Task types and refinement",
+      "line": 134,
+      "text": "Refinement improves a card's title, description, and classification without implementing code."
+    },
+    {
+      "key": "requirements:L135",
+      "section": "Task types and refinement",
+      "line": 135,
+      "text": "After successful refinement, the card returns to `Backlog` for human review, and the project may take its next task."
+    },
+    {
+      "key": "requirements:L137",
+      "section": "Task types and refinement",
+      "line": 137,
+      "text": "Refinement must use the current state of the project's repository, with access to its source code, tests, configuration, documentation, and other relevant files."
+    },
+    {
+      "key": "requirements:L139",
+      "section": "Task types and refinement",
+      "line": 139,
+      "text": "The agent must use repository evidence to judge what needs to be done and how, rather than making assumptions."
+    },
+    {
+      "key": "requirements:L141",
+      "section": "Task types and refinement",
+      "line": 141,
+      "text": "Refined tasks should be actionable and technically grounded, without becoming detailed implementation plans."
+    },
+    {
+      "key": "requirements:L143",
+      "section": "Task types and refinement",
+      "line": 143,
+      "text": "Refinement must not modify source files or other repository content."
+    },
+    {
+      "key": "requirements:L144",
+      "section": "Task types and refinement",
+      "line": 144,
+      "text": "We will agree on a consistent Trello task template separately."
+    },
+    {
+      "key": "requirements:L148",
+      "section": "Unexpected manual Trello moves",
+      "line": 148,
+      "text": "A manual card move must not be mistaken for a successful orchestrator workflow transition."
+    },
+    {
+      "key": "requirements:L149",
+      "section": "Unexpected manual Trello moves",
+      "line": 149,
+      "text": "If an active card is moved unexpectedly, preserve its execution state and pause further work for that project rather than guessing what happened."
+    },
+    {
+      "key": "requirements:L151",
+      "section": "Unexpected manual Trello moves",
+      "line": 151,
+      "text": "Moving the card back to its expected list may allow automatic resumption, but only after the orchestrator verifies it is safe."
+    },
+    {
+      "key": "requirements:L153",
+      "section": "Unexpected manual Trello moves",
+      "line": 153,
+      "text": "Other projects must remain unaffected. We may refine the precise recovery rules later."
+    },
+    {
+      "key": "requirements:L157",
+      "section": "Trello attachments",
+      "line": 157,
+      "text": "Agents must have access to all supported attachments on their Trello cards during refinement and implementation, including relevant images, documents, and logs."
+    },
+    {
+      "key": "requirements:L159",
+      "section": "Trello attachments",
+      "line": 159,
+      "text": "Current attachments must be available when work starts or resumes."
+    },
+    {
+      "key": "requirements:L160",
+      "section": "Trello attachments",
+      "line": 160,
+      "text": "Store downloaded attachment context separately from the Git repository."
+    },
+    {
+      "key": "requirements:L161",
+      "section": "Trello attachments",
+      "line": 161,
+      "text": "Attachment access failures must be reported rather than silently ignored."
+    },
+    {
+      "key": "requirements:L165",
+      "section": "Implementation planning and boundaries",
+      "line": 165,
+      "text": "Before modifying code, the implementation agent analyzes the task, attachments, and current repository state, then prepares an implementation plan."
+    },
+    {
+      "key": "requirements:L167",
+      "section": "Implementation planning and boundaries",
+      "line": 167,
+      "text": "An independent AI agent reviews the plan for correctness, completeness, and alignment with the task."
+    },
+    {
+      "key": "requirements:L169",
+      "section": "Implementation planning and boundaries",
+      "line": 169,
+      "text": "Planning and independent review are advisory. The implementation agent may adapt or disregard the plan or its feedback; failed or exhausted planning/review attempts must not prevent implementation from proceeding."
+    },
+    {
+      "key": "requirements:L172",
+      "section": "Implementation planning and boundaries",
+      "line": 172,
+      "text": "Implementation takes place in an isolated Git worktree on a task-specific branch, never in the original source checkout."
+    },
+    {
+      "key": "requirements:L174",
+      "section": "Implementation planning and boundaries",
+      "line": 174,
+      "text": "The agent may modify source code, tests, configuration, and documentation as necessary for the task."
+    },
+    {
+      "key": "requirements:L176",
+      "section": "Implementation planning and boundaries",
+      "line": 176,
+      "text": "The plan guides implementation but is not a mandatory approval gate. Repository safety instructions and task scope still apply; avoid unrelated modifications."
+    },
+    {
+      "key": "requirements:L183",
+      "section": "Primary delivery requirement",
+      "line": 183,
+      "text": "Every implementation task must result in a pull request, even when validation, tests, or independent AI review have unresolved failures."
+    },
+    {
+      "key": "requirements:L185",
+      "section": "Primary delivery requirement",
+      "line": 185,
+      "text": "The orchestrator attempts to resolve problems automatically within configured limits, but those limits must not create an endless loop or prevent delivery."
+    },
+    {
+      "key": "requirements:L187",
+      "section": "Primary delivery requirement",
+      "line": 187,
+      "text": "Any unresolved failures or review findings must be disclosed clearly in the pull request; an incomplete implementation must never be represented as validated or ready to merge."
+    },
+    {
+      "key": "requirements:L189",
+      "section": "Primary delivery requirement",
+      "line": 189,
+      "text": "A failure to produce a pull request is exceptional and must have a genuine safety or external-operation reason, such as unavailable Git/GitHub services or a repository state that cannot be published safely."
+    },
+    {
+      "key": "requirements:L192",
+      "section": "Primary delivery requirement",
+      "line": 192,
+      "text": "Producing a pull request is not the same as approving it for merge. Review, validation, and publication behavior are defined below; advisory quality assessments are never publication gates."
+    },
+    {
+      "key": "requirements:L197",
+      "section": "Validation, review, and PR readiness",
+      "line": 197,
+      "text": "The orchestrator runs configured validation commands itself, rather than relying on an agent's claim that they passed."
+    },
+    {
+      "key": "requirements:L199",
+      "section": "Validation, review, and PR readiness",
+      "line": 199,
+      "text": "Validation failures and independent AI review findings have separate configurable improvement-attempt limits. These steps provide information to the agent, which decides what feedback to act on. Relevant checks may be rerun to report the latest results."
+    },
+    {
+      "key": "requirements:L202",
+      "section": "Validation, review, and PR readiness",
+      "line": 202,
+      "text": "Exhausting either limit must not prevent PR delivery."
+    },
+    {
+      "key": "requirements:L203",
+      "section": "Validation, review, and PR readiness",
+      "line": 203,
+      "text": "Create a normal pull request when configured checks have demonstrably passed and no known material unresolved quality or human-review issues remain. Otherwise publish a draft pull request and accurately disclose failures, skipped or uncertain checks, and material outstanding findings. AI feedback is advisory: reviewer approval is never required, and declining a suggestion is not by itself a blocker; determine draft status from recorded evidence of material unresolved issues, not an AI approval decision."
+    },
+    {
+      "key": "requirements:L209",
+      "section": "Validation, review, and PR readiness",
+      "line": 209,
+      "text": "Both normal and draft pull requests move the Trello card to `Human Review`. If email notifications are configured, a PR notification is sent, explicitly identifying draft PRs and their outstanding issues."
+    },
+    {
+      "key": "requirements:L212",
+      "section": "Validation, review, and PR readiness",
+      "line": 212,
+      "text": "A draft PR may be marked ready for review when outstanding issues are addressed and its reported status is accurate; advisory review itself cannot veto delivery."
+    },
+    {
+      "key": "requirements:L214",
+      "section": "Validation, review, and PR readiness",
+      "line": 214,
+      "text": "The orchestrator never automatically merges pull requests; merging or closing is a human decision. A project cannot start its next task while its PR remains open."
+    },
+    {
+      "key": "requirements:L219",
+      "section": "Human review and requested changes",
+      "line": 219,
+      "text": "GitHub reviews requesting changes are handled automatically; no manual Trello action is necessary. Actionable human requests may also arrive as standalone PR comments or inline discussions. Exclude orchestrator-authored replies, its own bot-generated status updates, and non-actionable discussion from triggers. Edited comments become new work only when their substantive requested action changes; incidental edits and previously exhausted unchanged feedback must not restart remediation."
+    },
+    {
+      "key": "requirements:L225",
+      "section": "Human review and requested changes",
+      "line": 225,
+      "text": "The orchestrator collects all outstanding actionable feedback, including review summaries, inline comments, and general PR comments, retaining file and line context when available."
+    },
+    {
+      "key": "requirements:L227",
+      "section": "Human review and requested changes",
+      "line": 227,
+      "text": "It moves the card from `Human Review` to `Working`, addresses feedback on the existing task branch, and updates the same pull request rather than creating a replacement."
+    },
+    {
+      "key": "requirements:L229",
+      "section": "Human review and requested changes",
+      "line": 229,
+      "text": "It offers validation and independent AI review as bounded, advisory follow-up steps. Failed, unavailable, or negative checks cannot prevent publishing available changes to the existing PR and returning the card to `Human Review` with accurate outstanding-issue information. A bounded advisory-stage dependency outage is skipped and reported after its attempts are exhausted; preserve-and-wait applies instead when the unavailable dependency is essential to unfinished primary execution or safe Git/GitHub publication."
+    },
+    {
+      "key": "requirements:L235",
+      "section": "Human review and requested changes",
+      "line": 235,
+      "text": "Publish available changes to the existing PR regardless of independent AI verification findings. Replies must accurately describe what changed and must not claim unresolved or uncertain feedback is fulfilled."
+    },
+    {
+      "key": "requirements:L238",
+      "section": "Human review and requested changes",
+      "line": 238,
+      "text": "Feedback arriving during remediation must not be lost. After the current cycle, the orchestrator checks for newly actionable feedback and processes it without repeating unchanged remediation. Previously reported unresolved feedback alone must not trigger a perpetual new cycle; return to `Human Review` and await new or changed human input."
+    },
+    {
+      "key": "requirements:L242",
+      "section": "Human review and requested changes",
+      "line": 242,
+      "text": "Human review cycles are unlimited: new requests for changes can be submitted as often as needed. Configurable limits apply only to internal automated validation, review, and correction attempts within a cycle, never to the number of human-requested-change cycles."
+    },
+    {
+      "key": "requirements:L245",
+      "section": "Human review and requested changes",
+      "line": 245,
+      "text": "A verified human merge or unmerged closure of an existing PR takes precedence over all ongoing or queued remediation, CI repair, and branch maintenance. Stop scheduling mutations, safely interrupt work where possible, and preserve unshipped changes and diagnostics. Reconcile already-dispatched effects before terminal release; no stale operation completion may push to a closed PR, recreate a deleted branch, or move the card back to `Human Review`."
+    },
+    {
+      "key": "requirements:L250",
+      "section": "Human review and requested changes",
+      "line": 250,
+      "text": "Check the authoritative PR outcome before publishing an existing-PR correction and at other safe mutation boundaries. Because human actions may race with a check, handle late terminal outcomes and rejected pushes by reconciling the actual PR state rather than inferring that it remains open."
+    },
+    {
+      "key": "requirements:L253",
+      "section": "Human review and requested changes",
+      "line": 253,
+      "text": "The task remains active until its pull request is merged or closed."
+    },
+    {
+      "key": "requirements:L257",
+      "section": "GitHub CI",
+      "line": 257,
+      "text": "After a pull request is created or updated, the orchestrator observes expected GitHub CI checks within bounded waiting periods and evaluates available results. Missing, pending, failed, or timed-out checks must never prevent PR delivery or cause an indefinite working-phase wait."
+    },
+    {
+      "key": "requirements:L260",
+      "section": "GitHub CI",
+      "line": 260,
+      "text": "It automatically attempts to fix failed checks within a separately configurable correction limit, publishing fixes to the same PR and rerunning checks."
+    },
+    {
+      "key": "requirements:L262",
+      "section": "GitHub CI",
+      "line": 262,
+      "text": "A CI repair episode begins for actionable failed checks and retains one correction-attempt budget across all commits and check reruns produced by that episode. The agent's own commits, new SHAs, repeated polling, and routine target-branch synchronization never renew the exhausted budget for the same unresolved failure."
+    },
+    {
+      "key": "requirements:L266",
+      "section": "GitHub CI",
+      "line": 266,
+      "text": "A genuinely new human-requested-change cycle, including an explicit human request to retry a previously exhausted failure, or a materially new CI failure caused by an independent external change may begin a new episode. The orchestrator must distinguish the new trigger from previously exhausted failures and must not restart correction attempts merely because an existing check is still failing."
+    },
+    {
+      "key": "requirements:L271",
+      "section": "GitHub CI",
+      "line": 271,
+      "text": "Unresolved CI failures leave the PR as a draft with clear diagnostics, not an indefinitely blocked delivery."
+    },
+    {
+      "key": "requirements:L273",
+      "section": "GitHub CI",
+      "line": 273,
+      "text": "Checks that never start or finish must not leave the workflow waiting indefinitely; the uncertainty must be reported rather than treated as a pass."
+    },
+    {
+      "key": "requirements:L278",
+      "section": "Automatic PR maintenance",
+      "line": 278,
+      "text": "While a PR awaits human review, the orchestrator automatically detects when its branch needs updating or has merge conflicts with the target branch."
+    },
+    {
+      "key": "requirements:L280",
+      "section": "Automatic PR maintenance",
+      "line": 280,
+      "text": "For an already-published PR branch, update it by merging the latest target branch into the task branch without rewriting published commits; use an AI agent to resolve merge conflicts when needed, preserving existing work. Rebasing is allowed only before the task branch has been published or when it does not rewrite any previously published commit."
+    },
+    {
+      "key": "requirements:L284",
+      "section": "Automatic PR maintenance",
+      "line": 284,
+      "text": "After changes, it runs validation, independent review, and CI again and updates the same PR."
+    },
+    {
+      "key": "requirements:L285",
+      "section": "Automatic PR maintenance",
+      "line": 285,
+      "text": "The orchestrator must not force-push, discard work, or create replacement PRs to bypass conflicts."
+    },
+    {
+      "key": "requirements:L286",
+      "section": "Automatic PR maintenance",
+      "line": 286,
+      "text": "Problems it cannot safely resolve must be reported clearly with enough state preserved for recovery."
+    },
+    {
+      "key": "requirements:L291",
+      "section": "Restart and crash recovery",
+      "line": 291,
+      "text": "After a crash, shutdown, or container restart, the orchestrator must automatically resume interrupted work from its last verified state whenever safe."
+    },
+    {
+      "key": "requirements:L293",
+      "section": "Restart and crash recovery",
+      "line": 293,
+      "text": "Preserve worktrees, code changes, AI sessions, task ownership, and workflow progress; never silently start over or duplicate commits, pull requests, Trello actions, or other side effects."
+    },
+    {
+      "key": "requirements:L295",
+      "section": "Restart and crash recovery",
+      "line": 295,
+      "text": "If the previous state cannot be established safely, preserve evidence and notify the operator. Attempt bounded automatic reconciliation; when the active attempt is genuinely unrecoverable, record a failure outcome and reconcile its Trello transition before releasing project ownership. If the external state cannot be verified, keep the project in an explicit recoverable waiting state with controlled rechecks rather than silently locking it forever."
+    },
+    {
+      "key": "requirements:L300",
+      "section": "Restart and crash recovery",
+      "line": 300,
+      "text": "Recovery problems in one project must not stop unrelated projects."
+    },
+    {
+      "key": "requirements:L301",
+      "section": "Restart and crash recovery",
+      "line": 301,
+      "text": "Temporary unavailability, timeouts, and transient failures in Trello, GitHub, OpenCode, or other dependencies must not permanently fail a task."
+    },
+    {
+      "key": "requirements:L303",
+      "section": "Restart and crash recovery",
+      "line": 303,
+      "text": "Retry transient failures with sensible bounded attempts and delays. If the dependency remains unavailable, preserve task state and periodically check for safe recovery rather than repeatedly restarting or failing the implementation."
+    },
+    {
+      "key": "requirements:L306",
+      "section": "Restart and crash recovery",
+      "line": 306,
+      "text": "Resume automatically when the dependency recovers and task state is verified. Never interpret an unavailable service as proof that a resource was deleted or an operation failed."
+    },
+    {
+      "key": "requirements:L308",
+      "section": "Restart and crash recovery",
+      "line": 308,
+      "text": "Notify the operator when intervention is needed without repeatedly sending duplicate alerts. Unaffected projects continue operating."
+    },
+    {
+      "key": "requirements:L313",
+      "section": "Email notifications",
+      "line": 313,
+      "text": "Email notifications are optional and configurable. Support these four events: refinement completed, PR ready for human review (normal or draft, with outstanding issues), attention required, and task failed."
+    },
+    {
+      "key": "requirements:L316",
+      "section": "Email notifications",
+      "line": 316,
+      "text": "Notifications identify the project and task, provide relevant links and useful details, and never expose secrets."
+    },
+    {
+      "key": "requirements:L318",
+      "section": "Email notifications",
+      "line": 318,
+      "text": "Email delivery is non-blocking: a notification failure must never undo successful work, change the task's workflow outcome, or prevent a PR from being delivered."
+    },
+    {
+      "key": "requirements:L320",
+      "section": "Email notifications",
+      "line": 320,
+      "text": "Failed deliveries are logged and retried safely when delivery is known not to have occurred; confirmed events are deduplicated. If the transport may have accepted a message but its acknowledgment was lost, preserve the uncertain delivery outcome and do not blindly resend it: reconcile through an available provider delivery identifier or report the uncertainty for operator attention. Exactly-once receipt cannot be guaranteed without transport support."
+    },
+    {
+      "key": "requirements:L328",
+      "section": "Logging and diagnostics",
+      "line": 328,
+      "text": "Every task has a traceable execution history, including workflow progress, state transitions, errors, retries, recovery decisions, validation and review results, and task duration."
+    },
+    {
+      "key": "requirements:L330",
+      "section": "Logging and diagnostics",
+      "line": 330,
+      "text": "Orchestrator logs contain structured workflow events and concise, sanitized diagnostic summaries; raw child-process output must never leak into orchestrator logs."
+    },
+    {
+      "key": "requirements:L332",
+      "section": "Logging and diagnostics",
+      "line": 332,
+      "text": "OpenCode, Git, validation commands, and other child processes have their stdout, stderr, and streaming output recorded separately, including when they fail."
+    },
+    {
+      "key": "requirements:L334",
+      "section": "Logging and diagnostics",
+      "line": 334,
+      "text": "Orchestrator diagnostics may refer to the relevant child-process log without reproducing its raw output."
+    },
+    {
+      "key": "requirements:L336",
+      "section": "Logging and diagnostics",
+      "line": 336,
+      "text": "Logs are organized by project and task and remain available after completion, failure, or restart, subject to retention."
+    },
+    {
+      "key": "requirements:L338",
+      "section": "Logging and diagnostics",
+      "line": 338,
+      "text": "Log retention is configurable globally, with a default of 30 days. Expired logs are cleaned up automatically, but logs belonging to active tasks must never be deleted."
+    },
+    {
+      "key": "requirements:L340",
+      "section": "Logging and diagnostics",
+      "line": 340,
+      "text": "OpenCode sessions, validation commands, and other long-running operations have configurable timeouts."
+    },
+    {
+      "key": "requirements:L342",
+      "section": "Logging and diagnostics",
+      "line": 342,
+      "text": "When a timeout is reached, stop the affected process and its child processes safely, preserving existing code changes, task state, and logs."
+    },
+    {
+      "key": "requirements:L344",
+      "section": "Logging and diagnostics",
+      "line": 344,
+      "text": "Attempt bounded recovery when safe. A timeout alone must not unnecessarily prevent eventual PR delivery."
+    },
+    {
+      "key": "requirements:L349",
+      "section": "Git safety and cleanup",
+      "line": 349,
+      "text": "Never modify the configured original source checkout. All agent changes belong in isolated task worktrees and branches."
+    },
+    {
+      "key": "requirements:L351",
+      "section": "Git safety and cleanup",
+      "line": 351,
+      "text": "Never force-push, overwrite unrelated remote changes, or automatically discard uncommitted work."
+    },
+    {
+      "key": "requirements:L352",
+      "section": "Git safety and cleanup",
+      "line": 352,
+      "text": "Never delete branches or worktrees without verifying that they belong to the task and are safe to remove."
+    },
+    {
+      "key": "requirements:L354",
+      "section": "Git safety and cleanup",
+      "line": 354,
+      "text": "After a PR is merged, automatically clean up the owned task branch and worktree when safe. If cleanup cannot be verified as safe, preserve them and report the problem."
+    },
+    {
+      "key": "requirements:L359",
+      "section": "Pull request descriptions and working status",
+      "line": 359,
+      "text": "The orchestrator generates a useful PR description from the actual implementation, covering the purpose and summary, significant changes, validation and test results (including failures), outstanding issues, and a link to the Trello task."
+    },
+    {
+      "key": "requirements:L362",
+      "section": "Pull request descriptions and working status",
+      "line": 362,
+      "text": "The description is refreshed after significant changes, including human-review remediation, CI repairs, and target-branch synchronization, so it describes the current PR rather than its original implementation only."
+    },
+    {
+      "key": "requirements:L365",
+      "section": "Pull request descriptions and working status",
+      "line": 365,
+      "text": "Whenever the agent works on an existing PR, the orchestrator prominently displays a temporary status **at the top of the PR description**, similar to Dependabot's rebase status."
+    },
+    {
+      "key": "requirements:L367",
+      "section": "Pull request descriptions and working status",
+      "line": 367,
+      "text": "The status identifies the current activity (such as requested changes, CI repair, branch synchronization, or validation), is updated as work progresses, and is cleared when the activity finishes. It must not obscure or overwrite the underlying PR description."
+    },
+    {
+      "key": "requirements:L370",
+      "section": "Pull request descriptions and working status",
+      "line": 370,
+      "text": "The initial implementation produces one clean commit with an automatically generated, descriptive message."
+    },
+    {
+      "key": "requirements:L372",
+      "section": "Pull request descriptions and working status",
+      "line": 372,
+      "text": "Later review corrections, CI repairs, and other changes are recorded in additional commits on the same task branch. The orchestrator does not amend or rewrite previous commits."
+    },
+    {
+      "key": "requirements:L374",
+      "section": "Pull request descriptions and working status",
+      "line": 374,
+      "text": "Humans may choose to squash commits when merging the pull request."
+    },
+    {
+      "key": "requirements:L378",
+      "section": "GitHub authentication",
+      "line": 378,
+      "text": "Support both GitHub App authentication and personal credentials, such as a personal access token."
+    },
+    {
+      "key": "requirements:L379",
+      "section": "GitHub authentication",
+      "line": 379,
+      "text": "Each project independently chooses its GitHub authentication method."
+    },
+    {
+      "key": "requirements:L380",
+      "section": "GitHub authentication",
+      "line": 380,
+      "text": "GitHub App authentication is preferred for its dedicated bot identity and scoped permissions, but is not mandatory."
+    },
+    {
+      "key": "requirements:L385",
+      "section": "Project setup and quality commands",
+      "line": 385,
+      "text": "Each project may optionally configure a setup command, run in its isolated task worktree before refinement or implementation begins. If no command is configured, setup is skipped."
+    },
+    {
+      "key": "requirements:L387",
+      "section": "Project setup and quality commands",
+      "line": 387,
+      "text": "Setup is a prerequisite to starting refinement or primary implementation when configured: a nonzero exit or timeout prevents the agent from starting, preserves setup-produced changes and diagnostics, and uses bounded safe recovery; if setup cannot recover, record a genuine task failure when no PR exists, or preserve the open PR and ownership as an operational blockage. A successful setup need not be repeated unnecessarily when recovering an interrupted task. Setup output is captured separately from orchestrator logs, and failures are reported and handled safely. For refinement, setup may create necessary ignored or generated worktree files, but the refinement agent itself must not change repository content; record setup's before/after worktree effects separately and never attribute setup-generated changes to refinement."
+    },
+    {
+      "key": "requirements:L396",
+      "section": "Project setup and quality commands",
+      "line": 396,
+      "text": "Record setup changes independently of agent changes, including tracked files such as lockfiles. For implementation, include setup-produced tracked changes in a task commit only when reviewed as necessary for the task; preserve but exclude unrelated setup modifications without silently discarding them. If their disposition cannot be established safely, stop publication and report the blocker rather than committing unrelated changes."
+    },
+    {
+      "key": "requirements:L401",
+      "section": "Project setup and quality commands",
+      "line": 401,
+      "text": "Each project may optionally and independently configure a validation command and a test coverage command."
+    },
+    {
+      "key": "requirements:L403",
+      "section": "Project setup and quality commands",
+      "line": 403,
+      "text": "The orchestrator runs each configured command itself and accurately reports its results. An unconfigured command is skipped and must not be represented as having passed."
+    },
+    {
+      "key": "requirements:L405",
+      "section": "Project setup and quality commands",
+      "line": 405,
+      "text": "Not configuring either quality command must not prevent implementation or pull request delivery."
+    },
+    {
+      "key": "requirements:L409",
+      "section": "AI model configuration",
+      "line": 409,
+      "text": "Each project may independently configure the OpenCode model and reasoning variant for each AI activity, such as refinement, planning, implementation, independent review, remediation, and commit message generation."
+    },
+    {
+      "key": "requirements:L412",
+      "section": "AI model configuration",
+      "line": 412,
+      "text": "If a model or variant is not specified, let OpenCode use its own configured default rather than imposing an orchestrator-specific fallback."
+    },
+    {
+      "key": "requirements:L414",
+      "section": "AI model configuration",
+      "line": 414,
+      "text": "Respect explicitly configured models and report an unavailable model clearly rather than silently substituting another."
+    },
+    {
+      "key": "requirements:L419",
+      "section": "AI session continuity and context",
+      "line": 419,
+      "text": "Each implementation task maintains a persistent primary OpenCode session across implementation, local validation repairs, CI repairs, human-requested changes, and subsequent remediation cycles."
+    },
+    {
+      "key": "requirements:L421",
+      "section": "AI session continuity and context",
+      "line": 421,
+      "text": "The agent should retain or have access to as much relevant task and repository context as practical across the full lifecycle, including the task, attachments, available advisory plan, earlier work, feedback, and outcomes."
+    },
+    {
+      "key": "requirements:L424",
+      "section": "AI session continuity and context",
+      "line": 424,
+      "text": "Restart recovery must resume the correct task session where safe, rather than silently starting a context-free replacement."
+    },
+    {
+      "key": "requirements:L426",
+      "section": "AI session continuity and context",
+      "line": 426,
+      "text": "Independent planning and implementation reviews use separate sessions to preserve independent judgment."
+    },
+    {
+      "key": "requirements:L428",
+      "section": "AI session continuity and context",
+      "line": 428,
+      "text": "When OpenCode fails or a session becomes unavailable, first attempt to reconnect to the original task session."
+    },
+    {
+      "key": "requirements:L430",
+      "section": "AI session continuity and context",
+      "line": 430,
+      "text": "If the session is confirmed unrecoverable, the orchestrator may create a replacement session only when it can safely reconstruct the relevant context from the task, available advisory plan, repository, attachments, earlier changes, execution history, and feedback."
+    },
+    {
+      "key": "requirements:L433",
+      "section": "AI session continuity and context",
+      "line": 433,
+      "text": "Preserve completed work and workflow progress; never restart from scratch or repeat completed operations unnecessarily."
+    },
+    {
+      "key": "requirements:L435",
+      "section": "AI session continuity and context",
+      "line": 435,
+      "text": "Apply the same recovery-first approach to other components, including Git, GitHub, Trello, child processes, and persistent workflow state."
+    },
+    {
+      "key": "requirements:L437",
+      "section": "AI session continuity and context",
+      "line": 437,
+      "text": "Recovery must remain safe and evidence-based. If the correct state cannot be established, preserve evidence and report the blockage instead of guessing."
+    },
+    {
+      "key": "requirements:L442",
+      "section": "Application upgrades and shutdown",
+      "line": 442,
+      "text": "New versions must safely resume tasks started by earlier versions. Persisted workflow state must remain backward-compatible or be migrated safely, preserving task ownership, AI sessions, Git state, and progress."
+    },
+    {
+      "key": "requirements:L445",
+      "section": "Application upgrades and shutdown",
+      "line": 445,
+      "text": "Failed or unsupported migrations must preserve the original state and report the problem rather than corrupting it. Unaffected projects continue where safe."
+    },
+    {
+      "key": "requirements:L447",
+      "section": "Application upgrades and shutdown",
+      "line": 447,
+      "text": "On shutdown or deployment restart, including Docker termination signals, stop claiming new tasks, safely interrupt active child processes, and preserve the execution state necessary for recovery."
+    },
+    {
+      "key": "requirements:L449",
+      "section": "Application upgrades and shutdown",
+      "line": 449,
+      "text": "Release resources only when safe and automatically resume interrupted work on the next startup."
+    },
+    {
+      "key": "requirements:L453",
+      "section": "Configuration and instance ownership",
+      "line": 453,
+      "text": "Validate configuration before any tasks are processed. At least one valid project must be configured; missing required settings, invalid values, and unsupported options cause startup to fail with a clear, actionable error."
+    },
+    {
+      "key": "requirements:L456",
+      "section": "Configuration and instance ownership",
+      "line": 456,
+      "text": "Verify required configured external resources, including Trello boards and lists, before processing tasks. Invalid configuration must not result in partial task execution."
+    },
+    {
+      "key": "requirements:L458",
+      "section": "Configuration and instance ownership",
+      "line": 458,
+      "text": "Support Trello Free only; no required functionality may depend on paid Trello features."
+    },
+    {
+      "key": "requirements:L459",
+      "section": "Configuration and instance ownership",
+      "line": 459,
+      "text": "Only one orchestrator instance may actively own and process a given project at a time, including when another instance is running locally or in Docker on the same machine. Define project ownership by canonical integration identity, not an arbitrary local project alias, and require a common host-visible coordination namespace for instances that may access the same project. Local and Docker deployments must mount or configure that namespace consistently; incompatible coordination setup must fail safely rather than permit competing owners."
+    },
+    {
+      "key": "requirements:L465",
+      "section": "Configuration and instance ownership",
+      "line": 465,
+      "text": "A second instance must respect existing project ownership rather than claiming tasks. Crash recovery and ownership release must be safe; ambiguous ownership must prevent competing execution."
+    },
+    {
+      "key": "requirements:L467",
+      "section": "Configuration and instance ownership",
+      "line": 467,
+      "text": "Multiple-machine coordination is out of scope for now and can be considered later. Ordinary single-machine operation must not require a shared database."
+    },
+    {
+      "key": "requirements:L469",
+      "section": "Configuration and instance ownership",
+      "line": 469,
+      "text": "Configuration is loaded and validated at startup. Changes made while the orchestrator is running only take effect after a restart; live configuration reload is not supported."
+    },
+    {
+      "key": "requirements:L471",
+      "section": "Configuration and instance ownership",
+      "line": 471,
+      "text": "Active tasks must be preserved across restarts and resumed safely with compatible new operational settings, such as models, commands, or polling intervals. Pin active attempts to their original project identity, Trello board/list mapping, Git repository, GitHub repository, and state location. Renaming/removing an active project, redirecting its integrations, or relocating its state must be rejected or deferred until the attempt reaches a verified terminal outcome; never silently treat the old task as absent or migrate it to new resources. Compatible state-schema upgrades at the pinned location remain permitted; they do not authorize storage relocation during an active attempt."
+    },
+    {
+      "key": "requirements:L479",
+      "section": "Configuration and instance ownership",
+      "line": 479,
+      "text": "Runtime failures affecting one project, such as unavailable Trello resources or expired GitHub credentials, must not unnecessarily stop other healthy projects from operating."
+    },
+    {
+      "key": "requirements:L484",
+      "section": "Refinement templates and scope",
+      "line": 484,
+      "text": "Refinement uses distinct default templates for `Feature`, `Improvement`, and `Bug`, based on the existing templates. The agent may adapt or omit sections that do not apply; their detailed content can be reviewed separately."
+    },
+    {
+      "key": "requirements:L487",
+      "section": "Refinement templates and scope",
+      "line": 487,
+      "text": "Preserve the original task's intent and scope. Use current repository evidence to clarify the requested work, and include additional work only where strictly necessary to achieve its objective."
+    },
+    {
+      "key": "requirements:L490",
+      "section": "Refinement templates and scope",
+      "line": 490,
+      "text": "Identify larger dependencies or related opportunities without silently expanding the task or introducing unrelated refactoring."
+    },
+    {
+      "key": "requirements:L492",
+      "section": "Refinement templates and scope",
+      "line": 492,
+      "text": "When a task is overly large or complex, recommend splitting it into smaller tasks, but still refine the original card. Do not automatically create or split Trello cards; that capability may be considered later."
+    },
+    {
+      "key": "requirements:L495",
+      "section": "Refinement templates and scope",
+      "line": 495,
+      "text": "If refinement fails or produces an invalid result, the orchestrator first attempts safe recovery and bounded correction."
+    },
+    {
+      "key": "requirements:L497",
+      "section": "Refinement templates and scope",
+      "line": 497,
+      "text": "Validate the complete refinement result before changing the Trello card. Persist the original values and intended complete update before the first external write. If refinement cannot complete, reconcile or restore the original title, description, and classification rather than leaving a partial final result; move the card to `Failed` with an explanation only after that outcome is verified. If Trello is unavailable or an earlier write has an uncertain outcome, retain ownership and a pending recovery state until it can be safely reconciled; never report successful refinement or confirmed restoration without verification. Before refinement writes, including completion or rollback, compare current fields with the saved originals and verified orchestrator writes, and do not knowingly overwrite detected human changes. After writes, verify the resulting fields and inspect available change history for concurrent edits, including edits accepted between the final read and the write. Preserve recoverable human content and evidence; on conflicting or unattributable changes, pause further writes with retained project ownership and explicitly reconcile or request operator resolution before declaring completion or restoration. These checks detect and reconcile conflicts conservatively; without a supported conditional-write or serialization mechanism, they do not provide atomic compare-and-write behavior or guarantee that every concurrent overwrite can be prevented."
+    },
+    {
+      "key": "requirements:L513",
+      "section": "Refinement templates and scope",
+      "line": 513,
+      "text": "After successful refinement, return the updated card to `Backlog` and post a concise Trello comment confirming completion, the selected task type, and the total refinement duration when available."
+    },
+    {
+      "key": "requirements:L516",
+      "section": "Refinement templates and scope",
+      "line": 516,
+      "text": "The completion comment must not repeat the refined description already present on the card."
+    },
+    {
+      "key": "requirements:L520",
+      "section": "Incomplete tasks and Trello comments",
+      "line": 520,
+      "text": "An incomplete or unclear task must not be rejected automatically. The planning agent first examines the card, current repository, and attachments to determine whether the intended work can be understood without inventing requirements."
+    },
+    {
+      "key": "requirements:L523",
+      "section": "Incomplete tasks and Trello comments",
+      "line": 523,
+      "text": "If essential information is still missing, post an actionable Trello comment explaining what needs clarification and move the card to `Failed`. The user may clarify it and explicitly return it to `Ready for Agent` later."
+    },
+    {
+      "key": "requirements:L526",
+      "section": "Incomplete tasks and Trello comments",
+      "line": 526,
+      "text": "Routine operations such as validation, AI reviews, and retries belong in execution logs rather than generating noisy card comments."
+    },
+    {
+      "key": "requirements:L528",
+      "section": "Incomplete tasks and Trello comments",
+      "line": 528,
+      "text": "Implementation, validation, review, CI repair, and PR maintenance must never change a Trello card's title or description. Only an explicit refinement workflow may update them."
+    },
+    {
+      "key": "requirements:L530",
+      "section": "Incomplete tasks and Trello comments",
+      "line": 530,
+      "text": "Trello comments are limited to meaningful events, such as failure and clarification requests, PR publication or transition to human review, and PR closure. Do not comment on every internal activity or progress step; keep detailed progress in execution logs."
+    },
+    {
+      "key": "requirements:L536",
+      "section": "Cross-service consistency",
+      "line": 536,
+      "text": "Successfully completed external operations must be preserved even when subsequent steps fail. For example, if GitHub creates a PR but Trello cannot move the card to `Human Review`, retain the PR identity and retry the Trello transition safely."
+    },
+    {
+      "key": "requirements:L539",
+      "section": "Cross-service consistency",
+      "line": 539,
+      "text": "Never duplicate pull requests, commits, or other completed side effects merely because later workflow updates fail."
+    },
+    {
+      "key": "requirements:L541",
+      "section": "Cross-service consistency",
+      "line": 541,
+      "text": "Keep the affected project's next task blocked until GitHub, Trello, and persisted execution state are safely reconciled; automatically resume once consistency is verified."
+    },
+    {
+      "key": "requirements:L543",
+      "section": "Cross-service consistency",
+      "line": 543,
+      "text": "Apply this principle to all cross-service workflow transitions, not just PR publication."
+    },
+    {
+      "key": "requirements:L544",
+      "section": "Cross-service consistency",
+      "line": 544,
+      "text": "For each external mutation, distinguish operations that are safely repeatable, operations discoverable by a stable resource identity or correlation marker, and non-idempotent writes whose acceptance may remain ambiguous (such as Trello comments and GitHub review replies). Persist the operation identity and intent before dispatching it; use provider-supported idempotency when available."
+    },
+    {
+      "key": "requirements:L549",
+      "section": "Cross-service consistency",
+      "line": 549,
+      "text": "A timeout or a negative immediate read does not prove that an in-flight write will never complete. Do not blindly resend an ambiguous non-idempotent write: retain the pending operation and project ownership, reconcile with controlled rechecks, and report uncertainty or request operator intervention when the service cannot establish the outcome. Do not claim unconditional exactly-once effects that the service cannot guarantee. Other projects remain unaffected."
+    },
+    {
+      "key": "requirements:L557",
+      "section": "Failed task preservation and retryability",
+      "line": 557,
+      "text": "Preserve failed tasks' worktrees, code changes, execution records, and logs for diagnosis instead of automatically discarding them."
+    },
+    {
+      "key": "requirements:L559",
+      "section": "Failed task preservation and retryability",
+      "line": 559,
+      "text": "Preserved artifacts must never prevent a deliberate retry. Moving a card from `Failed` to `Ready for Agent` starts a fresh attempt in a clean worktree from the latest default branch; preserve and isolate prior unfinished code and diagnostics, without automatically reusing that code."
+    },
+    {
+      "key": "requirements:L563",
+      "section": "Failed task preservation and retryability",
+      "line": 563,
+      "text": "Stale worktrees, locks, AI sessions, and workflow records must not permanently trap a task. Supported Trello moves should allow the user to recover blocked states without hand-editing runtime data."
+    },
+    {
+      "key": "requirements:L566",
+      "section": "Failed task preservation and retryability",
+      "line": 566,
+      "text": "Retries and recovery actions must be bounded and must never enter uncontrolled infinite loops."
+    },
+    {
+      "key": "requirements:L567",
+      "section": "Failed task preservation and retryability",
+      "line": 567,
+      "text": "Never bypass safety checks or assume an uncertain external operation succeeded. Where safe recovery is temporarily impossible, preserve state, explain the blocker, and resume when it can be resolved."
+    },
+    {
+      "key": "requirements:L573",
+      "section": "Resolving incomplete implementations",
+      "line": 573,
+      "text": "Pull request delivery takes precedence over quality assessments. Failed validation, unresolved AI review findings, exhausted remediation attempts, and crashes in advisory steps must not block publication when Git and GitHub can safely publish meaningful work. An unrecoverable crash of the primary implementation process is a genuine execution failure and may instead end in `Failed` after bounded recovery."
+    },
+    {
+      "key": "requirements:L578",
+      "section": "Resolving incomplete implementations",
+      "line": 578,
+      "text": "Publish incomplete or failing implementations as draft pull requests, describing unresolved problems accurately. Move the Trello card to `Human Review` once the PR is published."
+    },
+    {
+      "key": "requirements:L580",
+      "section": "Resolving incomplete implementations",
+      "line": 580,
+      "text": "An implementation task must not silently remain stuck in `Working`. Prolonged GitHub unavailability is an explicit, observable waiting condition: preserve work and retry publication at controlled intervals until recovery, rather than marking the task `Failed` solely because of the outage. An unrecoverable unsafe Git state may lead to `Failed` after bounded recovery."
+    },
+    {
+      "key": "requirements:L584",
+      "section": "Resolving incomplete implementations",
+      "line": 584,
+      "text": "Moving to `Failed` is exceptional for implementation tasks, not the default response to an exhausted validation or review limit. Preserve work and make deliberate retries possible."
+    },
+    {
+      "key": "requirements:L589",
+      "section": "Exceptional PR delivery outcomes",
+      "line": 589,
+      "text": "Move an implementation task to `Failed` only when its intended workflow genuinely cannot continue, not merely because generated code, validation, or AI review is imperfect. Preserve work and explain the failure in a Trello comment."
+    },
+    {
+      "key": "requirements:L592",
+      "section": "Exceptional PR delivery outcomes",
+      "line": 592,
+      "text": "Never create meaningless changes or artificial commits solely to force a pull request. If the task is already implemented or otherwise produces no meaningful changes despite appropriate attempts, move the card to `Failed` with an explanatory Trello comment and preserve diagnostics for a deliberate retry. An already-satisfied task uses `Failed`, not `Done`, because no PR was delivered."
+    },
+    {
+      "key": "requirements:L597",
+      "section": "Exceptional PR delivery outcomes",
+      "line": 597,
+      "text": "If meaningful implementation changes are ready but GitHub remains temporarily unavailable, keep the work and retry PR publication automatically at controlled intervals until the service recovers. Notify the operator when prolonged unavailability needs attention without abandoning the implementation or creating duplicate PRs."
+    },
+    {
+      "key": "requirements:L604",
+      "section": "Coordinating work on an active PR",
+      "line": 604,
+      "text": "Each project has one execution queue coordinating all operations on its active task, including human-requested changes, CI repairs, rebasing, and conflict resolution. Never run concurrent operations that modify the same project or lose pending work."
+    },
+    {
+      "key": "requirements:L607",
+      "section": "Coordinating work on an active PR",
+      "line": 607,
+      "text": "Prioritize queued operations by default: human-requested changes first, CI repairs second, and routine PR maintenance third."
+    },
+    {
+      "key": "requirements:L609",
+      "section": "Coordinating work on an active PR",
+      "line": 609,
+      "text": "Prerequisite operations may run ahead of that order when necessary to safely complete higher-priority work, such as rebasing before applying requested changes."
+    },
+    {
+      "key": "requirements:L611",
+      "section": "Coordinating work on an active PR",
+      "line": 611,
+      "text": "Additional human feedback arriving while the agent is working is recorded and queued without interrupting the active OpenCode operation."
+    },
+    {
+      "key": "requirements:L613",
+      "section": "Coordinating work on an active PR",
+      "line": 613,
+      "text": "After the current operation, process newly actionable feedback automatically without losing requests. Do not repeatedly restart remediation solely for unchanged, previously attempted unresolved feedback; publish the current result and return to `Human Review`."
+    },
+    {
+      "key": "requirements:L616",
+      "section": "Coordinating work on an active PR",
+      "line": 616,
+      "text": "Independent AI verification of requested changes is advisory: its findings may guide further edits and inform PR descriptions and replies, but it must never veto publishing the implementation agent's available changes. Claims that a request was fulfilled must remain evidence-based and accurate."
+    },
+    {
+      "key": "requirements:L620",
+      "section": "Coordinating work on an active PR",
+      "line": 620,
+      "text": "The agent may use bounded internal correction attempts and choose which findings to act on; remaining findings must be reported clearly on the existing PR rather than silently marked complete."
+    },
+    {
+      "key": "requirements:L626",
+      "section": "Partial human-review remediation and thread ownership",
+      "line": 626,
+      "text": "Publish the implementation agent's available corrections to the existing PR even when some feedback remains unresolved or the independent review is negative."
+    },
+    {
+      "key": "requirements:L628",
+      "section": "Partial human-review remediation and thread ownership",
+      "line": 628,
+      "text": "Clearly distinguish resolved, unresolved, and uncertain requests. Only claim a fix with adequate supporting evidence; independent AI review is advisory and never a publication gate."
+    },
+    {
+      "key": "requirements:L630",
+      "section": "Partial human-review remediation and thread ownership",
+      "line": 630,
+      "text": "Keep the PR as a draft while unresolved requests remain, and return the Trello card to `Human Review` for further human feedback."
+    },
+    {
+      "key": "requirements:L632",
+      "section": "Partial human-review remediation and thread ownership",
+      "line": 632,
+      "text": "The orchestrator may reply to review threads describing verified fixes, but must not automatically resolve GitHub conversations. The human reviewer decides when a thread is resolved."
+    },
+    {
+      "key": "requirements:L634",
+      "section": "Partial human-review remediation and thread ownership",
+      "line": 634,
+      "text": "Before each human-feedback remediation cycle, refresh review feedback from GitHub. Edited comments use their latest content; deleted or superseded comments must no longer be treated as outstanding requests. Preserve prior handling history for traceability."
+    },
+    {
+      "key": "requirements:L637",
+      "section": "Partial human-review remediation and thread ownership",
+      "line": 637,
+      "text": "A GitHub PR approval does not complete a task or authorize a merge. Keep the card in `Human Review` until the PR is actually merged or closed."
+    },
+    {
+      "key": "requirements:L639",
+      "section": "Partial human-review remediation and thread ownership",
+      "line": 639,
+      "text": "While an approved PR remains open, continue monitoring its state and performing necessary safe maintenance. Do not start another task in that project."
+    },
+    {
+      "key": "requirements:L644",
+      "section": "Idempotent cleanup after merging",
+      "line": 644,
+      "text": "After a PR is merged, cleanup must be safe and idempotent. A remote branch already deleted by GitHub counts as successfully cleaned up, not a failure."
+    },
+    {
+      "key": "requirements:L646",
+      "section": "Idempotent cleanup after merging",
+      "line": 646,
+      "text": "Remove only verified, owned local worktrees and branches when safe, move the Trello card to `Done`, and allow the next task to start."
+    },
+    {
+      "key": "requirements:L648",
+      "section": "Idempotent cleanup after merging",
+      "line": 648,
+      "text": "Repeating a cleanup operation must not cause errors solely because that cleanup already happened."
+    },
+    {
+      "key": "requirements:L649",
+      "section": "Idempotent cleanup after merging",
+      "line": 649,
+      "text": "When a PR is closed without merging, move its card to `Backlog` and safely clean up the task's owned local worktree and branch after verifying that the implementation remains available through the closed GitHub PR."
+    },
+    {
+      "key": "requirements:L652",
+      "section": "Idempotent cleanup after merging",
+      "line": 652,
+      "text": "A later move back to `Ready for Agent` starts a fresh implementation attempt from the latest accepted default branch, using the current card and attachments rather than automatically reusing rejected changes."
+    },
+    {
+      "key": "requirements:L655",
+      "section": "Idempotent cleanup after merging",
+      "line": 655,
+      "text": "The agent may inspect the closed PR as historical context but must not assume that its code or decisions were correct."
+    },
+    {
+      "key": "requirements:L657",
+      "section": "Idempotent cleanup after merging",
+      "line": 657,
+      "text": "For tasks that fail without a PR, preserve diagnostic evidence, but ensure a new attempt can begin safely without inheriting unwanted changes."
+    },
+    {
+      "key": "requirements:L659",
+      "section": "Idempotent cleanup after merging",
+      "line": 659,
+      "text": "Manually retrying a failed task starts a fresh attempt in a clean worktree from the latest default branch, based on the current Trello card and attachments."
+    },
+    {
+      "key": "requirements:L661",
+      "section": "Idempotent cleanup after merging",
+      "line": 661,
+      "text": "Preserve logs and diagnostics from earlier attempts, but never automatically reuse their unfinished code."
+    },
+    {
+      "key": "requirements:L663",
+      "section": "Idempotent cleanup after merging",
+      "line": 663,
+      "text": "Old worktrees, sessions, and execution records must not block a new, safely reconciled attempt."
+    },
+    {
+      "key": "requirements:L667",
+      "section": "Runtime state storage",
+      "line": 667,
+      "text": "Store durable task progress, AI session references, recovery information, and other execution state outside Git repositories and worktrees."
+    },
+    {
+      "key": "requirements:L669",
+      "section": "Runtime state storage",
+      "line": 669,
+      "text": "The runtime storage location is configurable for both local and Docker installations, and its data survives restarts and application upgrades."
+    },
+    {
+      "key": "requirements:L671",
+      "section": "Runtime state storage",
+      "line": 671,
+      "text": "The orchestrator manages runtime state automatically; routine operation and recovery must not require users to edit internal files manually."
+    },
+    {
+      "key": "requirements:L676",
+      "section": "Global execution concurrency",
+      "line": 676,
+      "text": "Support an optional global limit on how many projects can actively execute AI work at once, in addition to the one-active-task-per-project rule."
+    },
+    {
+      "key": "requirements:L678",
+      "section": "Global execution concurrency",
+      "line": 678,
+      "text": "Projects waiting for available execution capacity retain their task order and state. When no global limit is configured, there is no orchestrator-imposed cross-project concurrency limit."
+    },
+    {
+      "key": "requirements:L680",
+      "section": "Global execution concurrency",
+      "line": 680,
+      "text": "Waiting for human review does not consume a global execution slot. Such a project still cannot start another task until its PR reaches a terminal outcome, but other projects may use the available execution capacity."
+    },
+    {
+      "key": "requirements:L683",
+      "section": "Global execution concurrency",
+      "line": 683,
+      "text": "When the global execution limit is reached, waiting projects receive available capacity in first-come, first-served order. A busy project must not repeatedly bypass waiting projects; configurable project priorities are not required."
+    },
+    {
+      "key": "requirements:L686",
+      "section": "Global execution concurrency",
+      "line": 686,
+      "text": "The orchestrator automatically polls Trello and GitHub for new tasks, feedback, CI results, and PR state changes without requiring a restart."
+    },
+    {
+      "key": "requirements:L688",
+      "section": "Global execution concurrency",
+      "line": 688,
+      "text": "Use one optional global polling interval, defaulting to 15 seconds. Separate per-project polling intervals are not required."
+    },
+    {
+      "key": "requirements:L690",
+      "section": "Global execution concurrency",
+      "line": 690,
+      "text": "Temporary API failures use controlled backoff. Polling must not interfere with an operation already running."
+    },
+    {
+      "key": "requirements:L695",
+      "section": "Task duration and stalled execution",
+      "line": 695,
+      "text": "There is no overall timeout for an entire task. Long-running tasks may continue as needed, while individual operations retain configurable timeouts."
+    },
+    {
+      "key": "requirements:L697",
+      "section": "Task duration and stalled execution",
+      "line": 697,
+      "text": "Track meaningful progress for active work and detect operations that are genuinely stalled, without treating a long task as stalled merely because it has been running for hours."
+    },
+    {
+      "key": "requirements:L699",
+      "section": "Task duration and stalled execution",
+      "line": 699,
+      "text": "Attempt automatic, safe recovery of stalled operations, preserving existing work and continuing toward PR delivery rather than waiting indefinitely."
+    },
+    {
+      "key": "requirements:L704",
+      "section": "Secrets and credentials",
+      "line": 704,
+      "text": "Load sensitive credentials from environment variables or protected secret files, never directly from project configuration committed to source control."
+    },
+    {
+      "key": "requirements:L706",
+      "section": "Secrets and credentials",
+      "line": 706,
+      "text": "Never expose secrets in orchestrator or child-process logs, AI prompts, Trello comments, GitHub pull requests, or email notifications. Enforce least-privilege credential access, avoid forwarding configured secrets into unrelated processes or prompts, redact registered secret values and recognized encodings from outputs under orchestrator control, and treat attachments or repository content that may contain sensitive data as untrusted. Unknown or arbitrarily transformed secrets cannot be proven absent by finite scanners: verification must report which controlled channels and known-secret forms were actually checked without claiming universal detection."
+    },
+    {
+      "key": "requirements:L713",
+      "section": "Secrets and credentials",
+      "line": 713,
+      "text": "Provide child processes only the credentials they need for their assigned operation."
+    },
+    {
+      "key": "requirements:L714",
+      "section": "Secrets and credentials",
+      "line": 714,
+      "text": "Report authentication and authorization failures clearly without revealing sensitive values."
+    },
+    {
+      "key": "requirements:L718",
+      "section": "Supported execution environments",
+      "line": 718,
+      "text": "Local installations and Docker deployments are equally supported, with the same capabilities and workflow behavior."
+    },
+    {
+      "key": "requirements:L720",
+      "section": "Supported execution environments",
+      "line": 720,
+      "text": "The application must run without requiring Docker, and runtime paths must be configurable rather than tied to container-specific locations."
+    },
+    {
+      "key": "requirements:L722",
+      "section": "Supported execution environments",
+      "line": 722,
+      "text": "Persistent state, restart recovery, logging, Git operations, and task execution must work consistently in both environments."
+    },
+    {
+      "key": "requirements:L727",
+      "section": "Startup dependency checks",
+      "line": 727,
+      "text": "Before processing tasks, verify that required external tools, such as Git, OpenCode, and GitHub CLI, are installed, accessible, and compatible with the application's requirements."
+    },
+    {
+      "key": "requirements:L729",
+      "section": "Startup dependency checks",
+      "line": 729,
+      "text": "Check optional dependencies only when the relevant functionality is enabled."
+    },
+    {
+      "key": "requirements:L730",
+      "section": "Startup dependency checks",
+      "line": 730,
+      "text": "If a required dependency is missing or incompatible, prevent task execution and report a clear, actionable startup error rather than failing midway through a task."
+    },
+    {
+      "key": "requirements:L735",
+      "section": "Automated verification and baseline",
+      "line": 735,
+      "text": "Every important workflow must have automated tests covering normal behavior, failures, interruptions, and recovery."
+    },
+    {
+      "key": "requirements:L737",
+      "section": "Automated verification and baseline",
+      "line": 737,
+      "text": "Passing unit tests alone is insufficient. Verify complete workflows, from Trello task selection through implementation, pull request delivery, human review, and final card outcomes."
+    },
+    {
+      "key": "requirements:L739",
+      "section": "Automated verification and baseline",
+      "line": 739,
+      "text": "Routine tests should simulate Trello, GitHub, OpenCode, and other external failures without requiring live services."
+    },
+    {
+      "key": "requirements:L741",
+      "section": "Automated verification and baseline",
+      "line": 741,
+      "text": "Establish a trustworthy baseline with realistic end-to-end verification in addition to mocked and unit tests."
+    }
+  ],
+  "criteria": [
+    {
+      "key": "REQ-WF-001/AC-01",
+      "id": "REQ-WF-001",
+      "line": 26,
+      "text": "An unconfirmed Trello or GitHub operation is not recorded as a successful transition."
+    },
+    {
+      "key": "REQ-WF-001/AC-02",
+      "id": "REQ-WF-001",
+      "line": 27,
+      "text": "The orchestrator retains enough state to reconcile an uncertain outcome without duplicating external side effects."
+    },
+    {
+      "key": "REQ-WF-001/AC-03",
+      "id": "REQ-WF-001",
+      "line": 29,
+      "text": "A subsequent retry or restart reconciles the original operation before advancing."
+    },
+    {
+      "key": "REQ-WF-001/AC-04",
+      "id": "REQ-WF-001",
+      "line": 30,
+      "text": "Each non-idempotent external write has a persisted operation intent and stable correlation identity where supported; safely repeatable operations are distinguished from writes that require outcome discovery."
+    },
+    {
+      "key": "REQ-WF-001/AC-05",
+      "id": "REQ-WF-001",
+      "line": 33,
+      "text": "A negative read immediately after a timeout does not prove non-acceptance. An ambiguous non-idempotent write is not blindly resent; controlled reconciliation preserves ownership and exposes unresolved uncertainty without claiming unsupported exactly-once guarantees."
+    },
+    {
+      "key": "REQ-WF-002/AC-01",
+      "id": "REQ-WF-002",
+      "line": 44,
+      "text": "Each active operation has a defined completion, recovery, or failure path."
+    },
+    {
+      "key": "REQ-WF-002/AC-02",
+      "id": "REQ-WF-002",
+      "line": 45,
+      "text": "Exhausted internal recovery leads to a documented terminal failure when the task cannot safely continue, subject to verified Trello synchronization."
+    },
+    {
+      "key": "REQ-WF-002/AC-03",
+      "id": "REQ-WF-002",
+      "line": 47,
+      "text": "Stale locks, abandoned sessions, and inconsistent execution records are detected and reconciled automatically; monitoring is a fallback, not the primary means of progress."
+    },
+    {
+      "key": "REQ-WF-003/AC-01",
+      "id": "REQ-WF-003",
+      "line": 56,
+      "text": "An open PR awaiting human review remains an explicitly active task, without consuming a global AI execution slot."
+    },
+    {
+      "key": "REQ-WF-003/AC-02",
+      "id": "REQ-WF-003",
+      "line": 58,
+      "text": "An unavailable external service leads to a preserved, observable waiting state with controlled rechecks rather than a busy retry loop or an assumed failure."
+    },
+    {
+      "key": "REQ-WF-003/AC-03",
+      "id": "REQ-WF-003",
+      "line": 60,
+      "text": "When the waiting condition clears, processing resumes after verifying the relevant external and persisted state."
+    },
+    {
+      "key": "REQ-PR-001/AC-01",
+      "id": "REQ-PR-001",
+      "line": 76,
+      "text": "An implementation that produces meaningful changes and fails configured validation can still publish a draft PR."
+    },
+    {
+      "key": "REQ-PR-001/AC-02",
+      "id": "REQ-PR-001",
+      "line": 78,
+      "text": "Negative AI review, exhausted remediation, or unavailable advisory checks do not prevent publishing available changes."
+    },
+    {
+      "key": "REQ-PR-001/AC-03",
+      "id": "REQ-PR-001",
+      "line": 80,
+      "text": "Failed or skipped checks and unresolved concerns are disclosed accurately; no successful result is fabricated."
+    },
+    {
+      "key": "REQ-PR-002/AC-01",
+      "id": "REQ-PR-002",
+      "line": 90,
+      "text": "Configured remediation limits are maximum attempts, not mandatory iterations."
+    },
+    {
+      "key": "REQ-PR-002/AC-02",
+      "id": "REQ-PR-002",
+      "line": 91,
+      "text": "An agent may end remediation early."
+    },
+    {
+      "key": "REQ-PR-002/AC-03",
+      "id": "REQ-PR-002",
+      "line": 92,
+      "text": "A remediation attempt that makes no implementation changes ends that remediation cycle without reviewing unchanged code repeatedly."
+    },
+    {
+      "key": "REQ-PR-002/AC-04",
+      "id": "REQ-PR-002",
+      "line": 94,
+      "text": "Exhaustion advances toward publication rather than moving the task to `Failed` because of review dissatisfaction."
+    },
+    {
+      "key": "REQ-PR-003/AC-01",
+      "id": "REQ-PR-003",
+      "line": 104,
+      "text": "Crash classification relies on execution evidence, not failed tests, nonzero test results, or negative review findings."
+    },
+    {
+      "key": "REQ-PR-003/AC-02",
+      "id": "REQ-PR-003",
+      "line": 106,
+      "text": "The primary implementation process receives bounded recovery attempts using the existing operation retry configuration: three verified genuine failures per semantic primary operation. Actual dispatches are recorded truthfully; recognized temporary outages do not consume that failure allowance. Separate reconstruction-role accounting uses the same existing limit without consuming primary implementation attempts; no new crash setting is introduced."
+    },
+    {
+      "key": "REQ-PR-003/AC-03",
+      "id": "REQ-PR-003",
+      "line": 111,
+      "text": "Before PR publication, unrecoverable primary execution moves the card to `Failed` with preserved partial work and diagnostics rather than automatically publishing interrupted code."
+    },
+    {
+      "key": "REQ-PR-003/AC-04",
+      "id": "REQ-PR-003",
+      "line": 113,
+      "text": "After PR publication, an unrecoverable primary correction operation preserves the existing PR and project ownership, reports its failure, and enters explicit recovery/waiting without marking the task `Failed` or starting another task."
+    },
+    {
+      "key": "REQ-PR-003/AC-05",
+      "id": "REQ-PR-003",
+      "line": 116,
+      "text": "An advisory process crash is recorded and skipped after bounded recovery, allowing PR delivery to continue."
+    },
+    {
+      "key": "REQ-PR-004/AC-01",
+      "id": "REQ-PR-004",
+      "line": 126,
+      "text": "Failing validation, tests, AI review, or exhausted remediation do not prevent safe PR publication."
+    },
+    {
+      "key": "REQ-PR-004/AC-02",
+      "id": "REQ-PR-004",
+      "line": 127,
+      "text": "Both normal and draft PRs advance their Trello card to `Human Review` after publication is verified."
+    },
+    {
+      "key": "REQ-PR-004/AC-03",
+      "id": "REQ-PR-004",
+      "line": 129,
+      "text": "Draft PRs identify material unresolved findings and failed, skipped, or uncertain checks without claiming readiness to merge."
+    },
+    {
+      "key": "REQ-PR-004/AC-04",
+      "id": "REQ-PR-004",
+      "line": 131,
+      "text": "The configured PR-ready notification identifies the PR and any outstanding issues, including its draft status."
+    },
+    {
+      "key": "REQ-PR-005/AC-01",
+      "id": "REQ-PR-005",
+      "line": 141,
+      "text": "When GitHub creates a PR but the Trello transition fails, the orchestrator preserves the PR identity and retries reconciliation."
+    },
+    {
+      "key": "REQ-PR-005/AC-02",
+      "id": "REQ-PR-005",
+      "line": 143,
+      "text": "A retry does not create a duplicate PR or duplicate completed external side effects."
+    },
+    {
+      "key": "REQ-PR-005/AC-03",
+      "id": "REQ-PR-005",
+      "line": 144,
+      "text": "Late acceptance of an earlier timed-out request is handled without issuing an unsafe duplicate. The orchestrator uses discoverable PR identity and retained publication intent, and preserves pending uncertainty if the outcome cannot yet be determined."
+    },
+    {
+      "key": "REQ-PR-005/AC-04",
+      "id": "REQ-PR-005",
+      "line": 147,
+      "text": "The next project task remains blocked until the existing PR, Trello card, and persisted workflow state are reconciled."
+    },
+    {
+      "key": "REQ-PR-006/AC-01",
+      "id": "REQ-PR-006",
+      "line": 157,
+      "text": "The task branch, worktree, changes, and publication progress are preserved while GitHub is unavailable."
+    },
+    {
+      "key": "REQ-PR-006/AC-02",
+      "id": "REQ-PR-006",
+      "line": 159,
+      "text": "Publication is retried at controlled intervals after verifying earlier uncertain outcomes."
+    },
+    {
+      "key": "REQ-PR-006/AC-03",
+      "id": "REQ-PR-006",
+      "line": 160,
+      "text": "Prolonged outages are visible and can trigger an attention notification without repeated duplicate alerts."
+    },
+    {
+      "key": "REQ-PR-006/AC-04",
+      "id": "REQ-PR-006",
+      "line": 162,
+      "text": "Once GitHub recovers, the orchestrator resumes publication without creating another PR for the same attempt."
+    },
+    {
+      "key": "REQ-PR-007/AC-01",
+      "id": "REQ-PR-007",
+      "line": 171,
+      "text": "The description includes the task purpose, significant changes, validation and test results, unresolved issues, and a Trello link."
+    },
+    {
+      "key": "REQ-PR-007/AC-02",
+      "id": "REQ-PR-007",
+      "line": 173,
+      "text": "After relevant updates, including review corrections, CI fixes, and target-branch synchronization, the description is refreshed to describe the current PR."
+    },
+    {
+      "key": "REQ-PR-007/AC-03",
+      "id": "REQ-PR-007",
+      "line": 175,
+      "text": "While an agent works on an existing PR, a temporary activity status appears at the top of the description and is removed when the activity finishes without overwriting the underlying content."
+    },
+    {
+      "key": "REQ-PR-008/AC-01",
+      "id": "REQ-PR-008",
+      "line": 184,
+      "text": "The orchestrator never automatically merges a PR."
+    },
+    {
+      "key": "REQ-PR-008/AC-02",
+      "id": "REQ-PR-008",
+      "line": 185,
+      "text": "An open normal or draft PR remains associated with an active task in `Human Review`; the project does not claim another task."
+    },
+    {
+      "key": "REQ-PR-008/AC-03",
+      "id": "REQ-PR-008",
+      "line": 187,
+      "text": "A human merge leads to the verified `Done` outcome, while closure without merge leads to the verified `Backlog` outcome."
+    },
+    {
+      "key": "REQ-PR-008/AC-04",
+      "id": "REQ-PR-008",
+      "line": 189,
+      "text": "If a human merges or closes the PR during automation, that verified terminal outcome supersedes pending work. No stale completion may republish to the closed PR, recreate its branch, or return the card to `Human Review`."
+    },
+    {
+      "key": "REQ-PR-008/AC-05",
+      "id": "REQ-PR-008",
+      "line": 192,
+      "text": "Stop new automated mutations, safely interrupt ongoing work, preserve unshipped changes and diagnostics, and reconcile in-flight effects before confirming terminal Trello state or releasing ownership."
+    },
+    {
+      "key": "REQ-TR-001/AC-01",
+      "id": "REQ-TR-001",
+      "line": 208,
+      "text": "The PR is confirmed merged before completion is recorded."
+    },
+    {
+      "key": "REQ-TR-001/AC-02",
+      "id": "REQ-TR-001",
+      "line": 209,
+      "text": "The move to `Done` is verified before the project accepts its next task."
+    },
+    {
+      "key": "REQ-TR-001/AC-03",
+      "id": "REQ-TR-001",
+      "line": 210,
+      "text": "Retrying reconciliation does not duplicate or reverse a completed outcome."
+    },
+    {
+      "key": "REQ-TR-002/AC-01",
+      "id": "REQ-TR-002",
+      "line": 219,
+      "text": "The orchestrator verifies that the PR was closed without merging."
+    },
+    {
+      "key": "REQ-TR-002/AC-02",
+      "id": "REQ-TR-002",
+      "line": 220,
+      "text": "The card returns to `Backlog` with a concise comment explaining the closure and linking to the PR."
+    },
+    {
+      "key": "REQ-TR-002/AC-03",
+      "id": "REQ-TR-002",
+      "line": 221,
+      "text": "The project may take another task after the transition is confirmed; the closed task may be deliberately queued again later."
+    },
+    {
+      "key": "REQ-TR-003/AC-01",
+      "id": "REQ-TR-003",
+      "line": 231,
+      "text": "The orchestrator posts an explanatory Trello comment and sends a failure notification when configured."
+    },
+    {
+      "key": "REQ-TR-003/AC-02",
+      "id": "REQ-TR-003",
+      "line": 233,
+      "text": "A failed card is not automatically requeued as a new task."
+    },
+    {
+      "key": "REQ-TR-003/AC-03",
+      "id": "REQ-TR-003",
+      "line": 234,
+      "text": "Moving it from `Failed` to `Ready for Agent` requests a new attempt, with previous diagnostics preserved and no accidental reuse of unfinished code."
+    },
+    {
+      "key": "REQ-TR-004/AC-01",
+      "id": "REQ-TR-004",
+      "line": 244,
+      "text": "The first eligible card is selected ahead of lower cards, whether it is a feature, improvement, bug, or refinement."
+    },
+    {
+      "key": "REQ-TR-004/AC-02",
+      "id": "REQ-TR-004",
+      "line": 246,
+      "text": "Cards with future start dates are skipped until eligible."
+    },
+    {
+      "key": "REQ-TR-004/AC-03",
+      "id": "REQ-TR-004",
+      "line": 247,
+      "text": "An ineligible card does not prevent selection of an eligible card farther down the list."
+    },
+    {
+      "key": "REQ-REF-001/AC-01",
+      "id": "REQ-REF-001",
+      "line": 262,
+      "text": "Refinement has access to relevant source code, tests, configuration, documentation, and supported card attachments."
+    },
+    {
+      "key": "REQ-REF-001/AC-02",
+      "id": "REQ-REF-001",
+      "line": 264,
+      "text": "The resulting task is grounded in observed repository state rather than unsupported assumptions."
+    },
+    {
+      "key": "REQ-REF-001/AC-03",
+      "id": "REQ-REF-001",
+      "line": 265,
+      "text": "Refinement itself does not modify source files or other repository content; worktree changes caused by separately configured setup are distinguished from refinement actions."
+    },
+    {
+      "key": "REQ-REF-002/AC-01",
+      "id": "REQ-REF-002",
+      "line": 275,
+      "text": "The resulting classification is `Feature`, `Improvement`, or `Bug`."
+    },
+    {
+      "key": "REQ-REF-002/AC-02",
+      "id": "REQ-REF-002",
+      "line": 276,
+      "text": "Each classification uses its distinct default template, with sections adapted or omitted where they do not apply."
+    },
+    {
+      "key": "REQ-REF-002/AC-03",
+      "id": "REQ-REF-002",
+      "line": 278,
+      "text": "The description explains the intended work without becoming a detailed implementation plan."
+    },
+    {
+      "key": "REQ-REF-003/AC-01",
+      "id": "REQ-REF-003",
+      "line": 286,
+      "text": "The refined title and description preserve the original objective."
+    },
+    {
+      "key": "REQ-REF-003/AC-02",
+      "id": "REQ-REF-003",
+      "line": 287,
+      "text": "Additional work is included only when strictly necessary for that objective."
+    },
+    {
+      "key": "REQ-REF-003/AC-03",
+      "id": "REQ-REF-003",
+      "line": 288,
+      "text": "Larger dependencies and related improvements may be identified without adding unrelated refactoring."
+    },
+    {
+      "key": "REQ-REF-003/AC-04",
+      "id": "REQ-REF-003",
+      "line": 290,
+      "text": "For oversized tasks, the result may recommend splitting work but does not automatically create or split cards."
+    },
+    {
+      "key": "REQ-REF-004/AC-01",
+      "id": "REQ-REF-004",
+      "line": 301,
+      "text": "The complete refinement result is checked before changing the card's title, description, or classification."
+    },
+    {
+      "key": "REQ-REF-004/AC-02",
+      "id": "REQ-REF-004",
+      "line": 303,
+      "text": "Invalid results receive bounded, safe correction attempts."
+    },
+    {
+      "key": "REQ-REF-004/AC-03",
+      "id": "REQ-REF-004",
+      "line": 304,
+      "text": "Original card values and the intended complete update are preserved before mutation. If refinement cannot succeed, original title, description, and classification are restored or reconciled and verified before recording `Failed` with an explanation."
+    },
+    {
+      "key": "REQ-REF-004/AC-04",
+      "id": "REQ-REF-004",
+      "line": 307,
+      "text": "A partially accepted or uncertain Trello write stays in a pending reconciliation state with project ownership retained; it must not be reported as successful refinement, confirmed rollback, or completed failure."
+    },
+    {
+      "key": "REQ-REF-004/AC-05",
+      "id": "REQ-REF-004",
+      "line": 310,
+      "text": "An unsuccessful partial update is not represented as completed refinement."
+    },
+    {
+      "key": "REQ-REF-004/AC-06",
+      "id": "REQ-REF-004",
+      "line": 311,
+      "text": "Before refinement writes, including completion or restoration, current fields are compared with the original snapshot and verified orchestrator writes; detected human changes are not knowingly overwritten. After writes, resulting fields and available change history are checked for concurrent edits. Recoverable human content and evidence are preserved, and conflicting or unattributable changes pause further writes in explicit reconciliation with ownership retained and operator attention requested when needed. Read-before-write checks do not establish atomic compare-and-write behavior or absolute prevention of concurrent overwrites."
+    },
+    {
+      "key": "REQ-REF-005/AC-01",
+      "id": "REQ-REF-005",
+      "line": 325,
+      "text": "The validated title, description, and classification are applied to the card."
+    },
+    {
+      "key": "REQ-REF-005/AC-02",
+      "id": "REQ-REF-005",
+      "line": 326,
+      "text": "The card returns to `Backlog` after refinement succeeds."
+    },
+    {
+      "key": "REQ-REF-005/AC-03",
+      "id": "REQ-REF-005",
+      "line": 327,
+      "text": "The completion comment identifies the selected task type and includes total refinement duration when available, without repeating the refined description."
+    },
+    {
+      "key": "REQ-REF-005/AC-04",
+      "id": "REQ-REF-005",
+      "line": 329,
+      "text": "The project may select another eligible task only after the transition is verified."
+    },
+    {
+      "key": "REQ-IMP-001/AC-01",
+      "id": "REQ-IMP-001",
+      "line": 344,
+      "text": "Implementation changes are confined to the owned task worktree and branch."
+    },
+    {
+      "key": "REQ-IMP-001/AC-02",
+      "id": "REQ-IMP-001",
+      "line": 345,
+      "text": "The configured original checkout is not modified by the agent."
+    },
+    {
+      "key": "REQ-IMP-001/AC-03",
+      "id": "REQ-IMP-001",
+      "line": 346,
+      "text": "Source code, tests, configuration, and documentation may be changed when relevant to the task, without unrelated modifications."
+    },
+    {
+      "key": "REQ-IMP-002/AC-01",
+      "id": "REQ-IMP-002",
+      "line": 356,
+      "text": "The agent can use the current task description and relevant repository files when determining the work."
+    },
+    {
+      "key": "REQ-IMP-002/AC-02",
+      "id": "REQ-IMP-002",
+      "line": 358,
+      "text": "Supported Trello attachments, including relevant images, documents, and logs, are available when execution starts or resumes."
+    },
+    {
+      "key": "REQ-IMP-002/AC-03",
+      "id": "REQ-IMP-002",
+      "line": 360,
+      "text": "Downloaded attachment context is stored outside Git worktrees; access failures are reported instead of silently ignored."
+    },
+    {
+      "key": "REQ-IMP-003/AC-01",
+      "id": "REQ-IMP-003",
+      "line": 370,
+      "text": "Planning considers the task, attachments, and current repository before implementation."
+    },
+    {
+      "key": "REQ-IMP-003/AC-02",
+      "id": "REQ-IMP-003",
+      "line": 371,
+      "text": "An independent AI reviewer can provide feedback on correctness, completeness, and task alignment."
+    },
+    {
+      "key": "REQ-IMP-003/AC-03",
+      "id": "REQ-IMP-003",
+      "line": 372,
+      "text": "The implementation agent may adopt, adapt, or disregard the plan and feedback."
+    },
+    {
+      "key": "REQ-IMP-003/AC-04",
+      "id": "REQ-IMP-003",
+      "line": 373,
+      "text": "Rejection, negative feedback, or exhaustion of bounded advisory attempts does not prevent implementation from proceeding toward PR delivery."
+    },
+    {
+      "key": "REQ-IMP-004/AC-01",
+      "id": "REQ-IMP-004",
+      "line": 383,
+      "text": "Local validation repairs, CI repairs, human-requested changes, and later remediation cycles reuse the task's primary session when available."
+    },
+    {
+      "key": "REQ-IMP-004/AC-02",
+      "id": "REQ-IMP-004",
+      "line": 385,
+      "text": "The agent retains access to relevant task context, previous changes, feedback, and outcomes."
+    },
+    {
+      "key": "REQ-IMP-004/AC-03",
+      "id": "REQ-IMP-004",
+      "line": 386,
+      "text": "Independent planning and implementation reviews use separate sessions."
+    },
+    {
+      "key": "REQ-IMP-004/AC-04",
+      "id": "REQ-IMP-004",
+      "line": 387,
+      "text": "After interruption, the orchestrator first attempts to restore the original session; replacement is allowed only when relevant context can be safely reconstructed."
+    },
+    {
+      "key": "REQ-IMP-005/AC-01",
+      "id": "REQ-IMP-005",
+      "line": 397,
+      "text": "If the requested work is already implemented, the orchestrator does not introduce artificial modifications solely to produce a PR."
+    },
+    {
+      "key": "REQ-IMP-005/AC-02",
+      "id": "REQ-IMP-005",
+      "line": 399,
+      "text": "If no meaningful changes can be produced despite appropriate attempts, the card moves to `Failed` with an explanatory comment and preserved diagnostics."
+    },
+    {
+      "key": "REQ-IMP-005/AC-03",
+      "id": "REQ-IMP-005",
+      "line": 401,
+      "text": "Failed tasks remain eligible for a later deliberate retry under the separate clean-retry requirements."
+    },
+    {
+      "key": "REQ-VAL-001/AC-01",
+      "id": "REQ-VAL-001",
+      "line": 418,
+      "text": "Validation and coverage commands are independently optional per project."
+    },
+    {
+      "key": "REQ-VAL-001/AC-02",
+      "id": "REQ-VAL-001",
+      "line": 419,
+      "text": "Each configured command is run by the orchestrator rather than accepted as passed based only on an AI agent's claim."
+    },
+    {
+      "key": "REQ-VAL-001/AC-03",
+      "id": "REQ-VAL-001",
+      "line": 421,
+      "text": "An unconfigured command is recorded as skipped, not passed."
+    },
+    {
+      "key": "REQ-VAL-001/AC-04",
+      "id": "REQ-VAL-001",
+      "line": 422,
+      "text": "Results accurately distinguish passed, failed, skipped, and uncertain executions."
+    },
+    {
+      "key": "REQ-VAL-002/AC-01",
+      "id": "REQ-VAL-002",
+      "line": 431,
+      "text": "Review findings are available to the implementation agent as recommendations."
+    },
+    {
+      "key": "REQ-VAL-002/AC-02",
+      "id": "REQ-VAL-002",
+      "line": 432,
+      "text": "The agent may adopt, adapt, or disregard any or all findings."
+    },
+    {
+      "key": "REQ-VAL-002/AC-03",
+      "id": "REQ-VAL-002",
+      "line": 433,
+      "text": "Negative, malformed, missing, or unavailable reviewer output is recorded but never treated as an implementation failure or publication veto."
+    },
+    {
+      "key": "REQ-VAL-002/AC-04",
+      "id": "REQ-VAL-002",
+      "line": 435,
+      "text": "A reviewer is not required to approve the final implementation."
+    },
+    {
+      "key": "REQ-VAL-003/AC-01",
+      "id": "REQ-VAL-003",
+      "line": 444,
+      "text": "Repeated failures stop correction attempts when the relevant configured limit is reached."
+    },
+    {
+      "key": "REQ-VAL-003/AC-02",
+      "id": "REQ-VAL-003",
+      "line": 445,
+      "text": "The implementation agent may end remediation early when further changes would not be useful."
+    },
+    {
+      "key": "REQ-VAL-003/AC-03",
+      "id": "REQ-VAL-003",
+      "line": 446,
+      "text": "If remediation produces no implementation changes, its cycle stops without repeatedly reviewing unchanged code."
+    },
+    {
+      "key": "REQ-VAL-003/AC-04",
+      "id": "REQ-VAL-003",
+      "line": 448,
+      "text": "Exhaustion leads toward publishing the available implementation, not to `Failed` solely because quality findings remain."
+    },
+    {
+      "key": "REQ-VAL-004/AC-01",
+      "id": "REQ-VAL-004",
+      "line": 458,
+      "text": "A failed test or a normal nonzero validation exit status is reported as a quality result, not classified as an implementation crash."
+    },
+    {
+      "key": "REQ-VAL-004/AC-02",
+      "id": "REQ-VAL-004",
+      "line": 460,
+      "text": "A crashed, timed-out, or unavailable advisory step receives bounded safe recovery; if it cannot be recovered, the result is recorded and the step is skipped, even when the same service is also used by primary operations."
+    },
+    {
+      "key": "REQ-VAL-004/AC-03",
+      "id": "REQ-VAL-004",
+      "line": 463,
+      "text": "Only a dependency required to finish primary implementation or publish safely causes preserved waiting instead of skipping optional advice."
+    },
+    {
+      "key": "REQ-VAL-004/AC-04",
+      "id": "REQ-VAL-004",
+      "line": 465,
+      "text": "When meaningful implementation changes exist and Git/GitHub publication is safe, an advisory failure does not prevent PR creation."
+    },
+    {
+      "key": "REQ-VAL-005/AC-01",
+      "id": "REQ-VAL-005",
+      "line": 475,
+      "text": "A normal PR is permitted when configured checks demonstrably pass and no material unresolved issues are known; failing, skipped, or uncertain checks, or material outstanding findings, lead to a draft PR with those facts disclosed."
+    },
+    {
+      "key": "REQ-VAL-005/AC-02",
+      "id": "REQ-VAL-005",
+      "line": 478,
+      "text": "AI reviewer approval is not required. Disregarding an advisory suggestion alone does not force draft status, but recorded material unresolved concerns must not be represented as resolved."
+    },
+    {
+      "key": "REQ-VAL-005/AC-03",
+      "id": "REQ-VAL-005",
+      "line": 480,
+      "text": "Failed, skipped, and uncertain checks are not represented as successful."
+    },
+    {
+      "key": "REQ-VAL-005/AC-04",
+      "id": "REQ-VAL-005",
+      "line": 481,
+      "text": "Exhausted remediation attempts cannot postpone draft PR publication."
+    },
+    {
+      "key": "REQ-VAL-005/AC-05",
+      "id": "REQ-VAL-005",
+      "line": 482,
+      "text": "A draft PR may be marked ready for review after outstanding issues are addressed and its status is accurately reported, without requiring an AI reviewer's approval."
+    },
+    {
+      "key": "REQ-HR-001/AC-01",
+      "id": "REQ-HR-001",
+      "line": 498,
+      "text": "Review summaries, inline review comments, and general PR comments are considered."
+    },
+    {
+      "key": "REQ-HR-001/AC-02",
+      "id": "REQ-HR-001",
+      "line": 499,
+      "text": "File and line context is retained when available; feedback without inline context remains eligible."
+    },
+    {
+      "key": "REQ-HR-001/AC-03",
+      "id": "REQ-HR-001",
+      "line": 501,
+      "text": "Edited comments are read in their latest form, and deleted or superseded comments are not treated as active requests."
+    },
+    {
+      "key": "REQ-HR-001/AC-04",
+      "id": "REQ-HR-001",
+      "line": 503,
+      "text": "Previously handled feedback remains traceable without automatically restarting completed work."
+    },
+    {
+      "key": "REQ-HR-001/AC-05",
+      "id": "REQ-HR-001",
+      "line": 504,
+      "text": "Standalone human PR comments and actionable inline discussions can trigger remediation, but orchestrator-authored replies/status updates and non-request discussion cannot. Incidental comment edits do not restart exhausted work; substantive changed human requests may do so."
+    },
+    {
+      "key": "REQ-HR-002/AC-01",
+      "id": "REQ-HR-002",
+      "line": 514,
+      "text": "The card moves from `Human Review` to `Working` during remediation."
+    },
+    {
+      "key": "REQ-HR-002/AC-02",
+      "id": "REQ-HR-002",
+      "line": 515,
+      "text": "Available changes are published to the existing PR rather than opening a replacement PR."
+    },
+    {
+      "key": "REQ-HR-002/AC-03",
+      "id": "REQ-HR-002",
+      "line": 516,
+      "text": "Bounded advisory validation and independent AI verification can inform corrections but cannot veto publication."
+    },
+    {
+      "key": "REQ-HR-002/AC-04",
+      "id": "REQ-HR-002",
+      "line": 518,
+      "text": "After the cycle, the card returns to `Human Review` with remaining issues reported accurately."
+    },
+    {
+      "key": "REQ-HR-003/AC-01",
+      "id": "REQ-HR-003",
+      "line": 526,
+      "text": "Feedback received during an active operation is recorded and queued without interrupting that operation."
+    },
+    {
+      "key": "REQ-HR-003/AC-02",
+      "id": "REQ-HR-003",
+      "line": 528,
+      "text": "The orchestrator refreshes feedback after the current cycle and processes newly actionable requests."
+    },
+    {
+      "key": "REQ-HR-003/AC-03",
+      "id": "REQ-HR-003",
+      "line": 530,
+      "text": "Multiple operations do not concurrently modify the active task branch."
+    },
+    {
+      "key": "REQ-HR-003/AC-04",
+      "id": "REQ-HR-003",
+      "line": 531,
+      "text": "Existing unchanged, previously attempted unresolved comments do not cause an endless remediation loop."
+    },
+    {
+      "key": "REQ-HR-004/AC-01",
+      "id": "REQ-HR-004",
+      "line": 540,
+      "text": "Verified or otherwise available implementation corrections are pushed without waiting for every AI review finding to be resolved."
+    },
+    {
+      "key": "REQ-HR-004/AC-02",
+      "id": "REQ-HR-004",
+      "line": 542,
+      "text": "Replies distinguish addressed, unresolved, and uncertain feedback, and never claim a fix without adequate evidence."
+    },
+    {
+      "key": "REQ-HR-004/AC-03",
+      "id": "REQ-HR-004",
+      "line": 544,
+      "text": "Unresolved requests keep the PR in draft status with clear remaining-issue information."
+    },
+    {
+      "key": "REQ-HR-004/AC-04",
+      "id": "REQ-HR-004",
+      "line": 545,
+      "text": "The orchestrator does not automatically resolve GitHub review threads; the human reviewer controls thread resolution."
+    },
+    {
+      "key": "REQ-HR-005/AC-01",
+      "id": "REQ-HR-005",
+      "line": 555,
+      "text": "Later new or edited requests can trigger another remediation round without a fixed lifetime limit on human feedback cycles."
+    },
+    {
+      "key": "REQ-HR-005/AC-02",
+      "id": "REQ-HR-005",
+      "line": 557,
+      "text": "Internal validation, AI review, and correction attempts obey their configured maximums for each round."
+    },
+    {
+      "key": "REQ-HR-005/AC-03",
+      "id": "REQ-HR-005",
+      "line": 559,
+      "text": "A round can finish despite negative AI findings, without requiring reviewer satisfaction."
+    },
+    {
+      "key": "REQ-HR-005/AC-04",
+      "id": "REQ-HR-005",
+      "line": 560,
+      "text": "A GitHub approval does not merge or complete the task; the project remains occupied until the PR is merged or closed."
+    },
+    {
+      "key": "REQ-HR-006/AC-01",
+      "id": "REQ-HR-006",
+      "line": 569,
+      "text": "The active project has one coordinated queue of operations on its task branch."
+    },
+    {
+      "key": "REQ-HR-006/AC-02",
+      "id": "REQ-HR-006",
+      "line": 570,
+      "text": "Human-requested changes take priority over CI repairs, which take priority over routine maintenance by default."
+    },
+    {
+      "key": "REQ-HR-006/AC-03",
+      "id": "REQ-HR-006",
+      "line": 572,
+      "text": "Required prerequisites, such as safely updating the branch before a requested change, may run first."
+    },
+    {
+      "key": "REQ-HR-006/AC-04",
+      "id": "REQ-HR-006",
+      "line": 574,
+      "text": "No pending feedback or CI work is silently dropped while another operation holds the project."
+    },
+    {
+      "key": "REQ-HR-006/AC-05",
+      "id": "REQ-HR-006",
+      "line": 575,
+      "text": "Before publication or another safe mutation boundary, check whether the PR is still open; if merge or closure is verified, prioritize terminal reconciliation over queued work."
+    },
+    {
+      "key": "REQ-HR-006/AC-06",
+      "id": "REQ-HR-006",
+      "line": 577,
+      "text": "A PR state read does not eliminate concurrent human-action races: rejected or late writes are reconciled against authoritative PR state, not treated as permission to republish or override the terminal outcome."
+    },
+    {
+      "key": "REQ-CI-001/AC-01",
+      "id": "REQ-CI-001",
+      "line": 594,
+      "text": "Available expected checks and their outcomes are recorded for the current PR revision."
+    },
+    {
+      "key": "REQ-CI-001/AC-02",
+      "id": "REQ-CI-001",
+      "line": 595,
+      "text": "Missing, pending, and timed-out checks are reported as uncertain rather than passed."
+    },
+    {
+      "key": "REQ-CI-001/AC-03",
+      "id": "REQ-CI-001",
+      "line": 596,
+      "text": "Waiting ends at a defined bound; a check that never starts or finishes cannot leave the card indefinitely in `Working` or block the existing PR."
+    },
+    {
+      "key": "REQ-CI-002/AC-01",
+      "id": "REQ-CI-002",
+      "line": 606,
+      "text": "Failed checks and relevant diagnostics are made available to the agent."
+    },
+    {
+      "key": "REQ-CI-002/AC-02",
+      "id": "REQ-CI-002",
+      "line": 607,
+      "text": "The agent may publish attempted fixes to the existing PR and CI is reevaluated after updates."
+    },
+    {
+      "key": "REQ-CI-002/AC-03",
+      "id": "REQ-CI-002",
+      "line": 608,
+      "text": "Exhausting the correction limit, or making no useful changes, ends the repair cycle without repeated reviews of unchanged code."
+    },
+    {
+      "key": "REQ-CI-002/AC-04",
+      "id": "REQ-CI-002",
+      "line": 610,
+      "text": "One repair episode retains its attempt budget across self-generated commits, CI reruns, and changes in commit SHA; these do not reset an exhausted episode."
+    },
+    {
+      "key": "REQ-CI-002/AC-05",
+      "id": "REQ-CI-002",
+      "line": 612,
+      "text": "Repeated polling or routine branch synchronization cannot renew exhausted repairs of the same unresolved failure. A genuinely new human-requested-change cycle, including an explicit human request to retry a previously exhausted failure, or a materially new failure introduced by an independent external change may establish a new episode only when its initiating event is verified as new; the continued failure alone is not a new trigger."
+    },
+    {
+      "key": "REQ-CI-002/AC-06",
+      "id": "REQ-CI-002",
+      "line": 617,
+      "text": "CI repair is not a mandatory approval gate; unresolved failures leave the PR as draft with accurate diagnostics."
+    },
+    {
+      "key": "REQ-MNT-001/AC-01",
+      "id": "REQ-MNT-001",
+      "line": 633,
+      "text": "The need for a branch update or conflict resolution is detected without requiring a manual Trello action."
+    },
+    {
+      "key": "REQ-MNT-001/AC-02",
+      "id": "REQ-MNT-001",
+      "line": 635,
+      "text": "Maintenance is coordinated with human-requested changes and CI repairs, never concurrently modifying the same task branch."
+    },
+    {
+      "key": "REQ-MNT-001/AC-03",
+      "id": "REQ-MNT-001",
+      "line": 637,
+      "text": "An approved but still-open PR remains eligible for safe maintenance."
+    },
+    {
+      "key": "REQ-MNT-002/AC-01",
+      "id": "REQ-MNT-002",
+      "line": 646,
+      "text": "A published PR branch incorporates the latest target branch with a merge commit when necessary; a rebase is permitted only before publication or if it leaves every published commit unchanged."
+    },
+    {
+      "key": "REQ-MNT-002/AC-02",
+      "id": "REQ-MNT-002",
+      "line": 648,
+      "text": "Maintenance updates the existing PR and retains previous implementation work."
+    },
+    {
+      "key": "REQ-MNT-002/AC-03",
+      "id": "REQ-MNT-002",
+      "line": 649,
+      "text": "The orchestrator does not force-push, rewrite published commits, discard uncommitted changes, or replace the PR to bypass a conflict."
+    },
+    {
+      "key": "REQ-MNT-002/AC-04",
+      "id": "REQ-MNT-002",
+      "line": 651,
+      "text": "Unresolved or unsafe conflicts are reported with recoverable state retained, rather than silently retried forever."
+    },
+    {
+      "key": "REQ-MNT-003/AC-01",
+      "id": "REQ-MNT-003",
+      "line": 661,
+      "text": "Updated quality outcomes and unresolved issues are reported against the existing PR."
+    },
+    {
+      "key": "REQ-MNT-003/AC-02",
+      "id": "REQ-MNT-003",
+      "line": 662,
+      "text": "Negative or unavailable advisory reviews do not block publishing available safe corrections."
+    },
+    {
+      "key": "REQ-MNT-003/AC-03",
+      "id": "REQ-MNT-003",
+      "line": 663,
+      "text": "The maintenance cycle finishes or reaches a clear recoverable outcome without unbounded remediation."
+    },
+    {
+      "key": "REQ-MNT-004/AC-01",
+      "id": "REQ-MNT-004",
+      "line": 673,
+      "text": "The status describes the current activity, such as target-branch synchronization, conflict resolution, CI repair, or requested changes."
+    },
+    {
+      "key": "REQ-MNT-004/AC-02",
+      "id": "REQ-MNT-004",
+      "line": 675,
+      "text": "The underlying PR description remains intact and is updated to reflect relevant implementation changes."
+    },
+    {
+      "key": "REQ-MNT-004/AC-03",
+      "id": "REQ-MNT-004",
+      "line": 677,
+      "text": "Temporary status is cleared after the activity concludes, including when it ends with unresolved findings."
+    },
+    {
+      "key": "REQ-REC-001/AC-01",
+      "id": "REQ-REC-001",
+      "line": 694,
+      "text": "Task ownership, progress, worktrees, code changes, and AI session references survive restarts."
+    },
+    {
+      "key": "REQ-REC-001/AC-02",
+      "id": "REQ-REC-001",
+      "line": 695,
+      "text": "On startup, the orchestrator verifies existing state before continuing operations."
+    },
+    {
+      "key": "REQ-REC-001/AC-03",
+      "id": "REQ-REC-001",
+      "line": 696,
+      "text": "Recovery does not silently restart completed steps or duplicate commits, PRs, or Trello actions."
+    },
+    {
+      "key": "REQ-REC-001/AC-04",
+      "id": "REQ-REC-001",
+      "line": 697,
+      "text": "A project with an unresolved recovery issue does not prevent other healthy projects from running."
+    },
+    {
+      "key": "REQ-REC-002/AC-01",
+      "id": "REQ-REC-002",
+      "line": 706,
+      "text": "Recovery first attempts to reconnect to the existing primary task session."
+    },
+    {
+      "key": "REQ-REC-002/AC-02",
+      "id": "REQ-REC-002",
+      "line": 707,
+      "text": "A replacement session is used only when the original is confirmed unrecoverable and relevant task, repository, plan, attachment, change, and feedback context can be reconstructed."
+    },
+    {
+      "key": "REQ-REC-002/AC-03",
+      "id": "REQ-REC-002",
+      "line": 709,
+      "text": "Previously completed work remains preserved; recovery does not silently start an unrelated implementation."
+    },
+    {
+      "key": "REQ-REC-002/AC-04",
+      "id": "REQ-REC-002",
+      "line": 711,
+      "text": "If primary execution genuinely cannot recover within the existing bounded operation retry policy before PR publication, the task moves to `Failed` with preserved partial work and diagnostics rather than publishing interrupted changes."
+    },
+    {
+      "key": "REQ-REC-002/AC-05",
+      "id": "REQ-REC-002",
+      "line": 714,
+      "text": "If an existing PR is open, an unrecoverable primary operation preserves that PR, unshipped work, and exclusive ownership; it records a recoverable operational blockage and permits further safe recovery or the verified human PR outcome, without terminating the task."
+    },
+    {
+      "key": "REQ-REC-002/AC-06",
+      "id": "REQ-REC-002",
+      "line": 717,
+      "text": "Recovery does not introduce a separate implementation-crash retry setting or mistake unsatisfactory quality feedback for a crash."
+    },
+    {
+      "key": "REQ-REC-003/AC-01",
+      "id": "REQ-REC-003",
+      "line": 727,
+      "text": "Timeouts or unavailable responses are not interpreted as proof of deletion or failure of a previously attempted operation."
+    },
+    {
+      "key": "REQ-REC-003/AC-02",
+      "id": "REQ-REC-003",
+      "line": 729,
+      "text": "Retries use controlled delays and bounded immediate attempts; prolonged unavailability becomes an explicit monitored waiting condition."
+    },
+    {
+      "key": "REQ-REC-003/AC-03",
+      "id": "REQ-REC-003",
+      "line": 731,
+      "text": "Recovery verifies external outcomes before repeating side effects or resuming."
+    },
+    {
+      "key": "REQ-REC-003/AC-04",
+      "id": "REQ-REC-003",
+      "line": 732,
+      "text": "Attention notifications can report prolonged problems without repeated duplicate alerts, and unrelated projects continue."
+    },
+    {
+      "key": "REQ-REC-004/AC-01",
+      "id": "REQ-REC-004",
+      "line": 742,
+      "text": "Normal operations provide explicit success, failure, and recovery paths without relying on a periodic watchdog to advance."
+    },
+    {
+      "key": "REQ-REC-004/AC-02",
+      "id": "REQ-REC-004",
+      "line": 744,
+      "text": "Monitoring detects unexpected idle or inconsistent active tasks, including after restarts, and attempts safe reconciliation."
+    },
+    {
+      "key": "REQ-REC-004/AC-03",
+      "id": "REQ-REC-004",
+      "line": 746,
+      "text": "If internal recovery is exhausted and failure can be safely established, the task moves to `Failed` after its Trello transition is confirmed."
+    },
+    {
+      "key": "REQ-REC-004/AC-04",
+      "id": "REQ-REC-004",
+      "line": 748,
+      "text": "When an external outcome cannot be verified, the project remains in an observable, controlled waiting state rather than being released unsafely or entering a busy loop."
+    },
+    {
+      "key": "REQ-REC-005/AC-01",
+      "id": "REQ-REC-005",
+      "line": 757,
+      "text": "Shutdown stops new task claims and safely interrupts active child processes while preserving state needed for resumption."
+    },
+    {
+      "key": "REQ-REC-005/AC-02",
+      "id": "REQ-REC-005",
+      "line": 759,
+      "text": "New versions resume compatible persisted state or perform safe migration without losing ownership, session references, or progress."
+    },
+    {
+      "key": "REQ-REC-005/AC-03",
+      "id": "REQ-REC-005",
+      "line": 761,
+      "text": "Unsupported migrations preserve original data and report the problem rather than corrupting state."
+    },
+    {
+      "key": "REQ-REC-005/AC-04",
+      "id": "REQ-REC-005",
+      "line": 762,
+      "text": "Startup recovery proceeds only after verifying that resumption is safe."
+    },
+    {
+      "key": "REQ-REC-006/AC-01",
+      "id": "REQ-REC-006",
+      "line": 771,
+      "text": "Individual long-running operations have configurable timeouts; on timeout the affected process and its child processes are stopped safely with code changes, task state, and logs preserved."
+    },
+    {
+      "key": "REQ-REC-006/AC-02",
+      "id": "REQ-REC-006",
+      "line": 773,
+      "text": "Long tasks are not classified as stalled solely because of their elapsed duration."
+    },
+    {
+      "key": "REQ-REC-006/AC-03",
+      "id": "REQ-REC-006",
+      "line": 774,
+      "text": "Stalled operations receive safe bounded recovery and a defined subsequent workflow outcome."
+    },
+    {
+      "key": "REQ-REC-006/AC-04",
+      "id": "REQ-REC-006",
+      "line": 775,
+      "text": "A timeout in an advisory quality operation does not by itself prevent publishing meaningful implementation changes."
+    },
+    {
+      "key": "REQ-GIT-001/AC-01",
+      "id": "REQ-GIT-001",
+      "line": 791,
+      "text": "Agent modifications occur only in an owned, task-specific worktree and branch."
+    },
+    {
+      "key": "REQ-GIT-001/AC-02",
+      "id": "REQ-GIT-001",
+      "line": 792,
+      "text": "The original source checkout remains unchanged."
+    },
+    {
+      "key": "REQ-GIT-001/AC-03",
+      "id": "REQ-GIT-001",
+      "line": 793,
+      "text": "The orchestrator never force-pushes, overwrites unrelated remote changes, or automatically discards uncommitted work."
+    },
+    {
+      "key": "REQ-GIT-002/AC-01",
+      "id": "REQ-GIT-002",
+      "line": 802,
+      "text": "The initial implementation is recorded in one clean commit with a generated, descriptive message."
+    },
+    {
+      "key": "REQ-GIT-002/AC-02",
+      "id": "REQ-GIT-002",
+      "line": 803,
+      "text": "Later human-review, CI, and maintenance corrections use additional commits on the existing branch."
+    },
+    {
+      "key": "REQ-GIT-002/AC-03",
+      "id": "REQ-GIT-002",
+      "line": 804,
+      "text": "Earlier commits are not amended or rewritten by the orchestrator; humans may squash on merge."
+    },
+    {
+      "key": "REQ-GIT-003/AC-01",
+      "id": "REQ-GIT-003",
+      "line": 813,
+      "text": "Unknown or unowned branches and worktrees are not deleted."
+    },
+    {
+      "key": "REQ-GIT-003/AC-02",
+      "id": "REQ-GIT-003",
+      "line": 814,
+      "text": "Uncommitted or otherwise unpreserved work is not silently lost during cleanup."
+    },
+    {
+      "key": "REQ-GIT-003/AC-03",
+      "id": "REQ-GIT-003",
+      "line": 815,
+      "text": "If cleanup safety cannot be verified, artifacts remain intact and the problem is reported."
+    },
+    {
+      "key": "REQ-GIT-004/AC-01",
+      "id": "REQ-GIT-004",
+      "line": 823,
+      "text": "Only verified, owned local branches and worktrees are removed."
+    },
+    {
+      "key": "REQ-GIT-004/AC-02",
+      "id": "REQ-GIT-004",
+      "line": 824,
+      "text": "A remote branch already deleted by GitHub is treated as already cleaned up rather than as a failure."
+    },
+    {
+      "key": "REQ-GIT-004/AC-03",
+      "id": "REQ-GIT-004",
+      "line": 826,
+      "text": "Repeating cleanup does not fail solely because an earlier run completed it."
+    },
+    {
+      "key": "REQ-GIT-004/AC-04",
+      "id": "REQ-GIT-004",
+      "line": 827,
+      "text": "The card reaches `Done` and another project task becomes eligible only after required outcome reconciliation."
+    },
+    {
+      "key": "REQ-GIT-005/AC-01",
+      "id": "REQ-GIT-005",
+      "line": 837,
+      "text": "The orchestrator verifies the PR closed without merging and returns its card to `Backlog`."
+    },
+    {
+      "key": "REQ-GIT-005/AC-02",
+      "id": "REQ-GIT-005",
+      "line": 838,
+      "text": "Owned local worktrees and branches are removed only after verifying the implementation remains accessible via the closed PR and cleanup is safe."
+    },
+    {
+      "key": "REQ-GIT-005/AC-03",
+      "id": "REQ-GIT-005",
+      "line": 840,
+      "text": "A later retry uses the current card and latest default branch; the closed PR may be consulted as history but its changes are not automatically reused."
+    },
+    {
+      "key": "REQ-GIT-006/AC-01",
+      "id": "REQ-GIT-006",
+      "line": 850,
+      "text": "Moving a card from `Failed` to `Ready for Agent` starts a fresh attempt in a clean worktree based on the latest default branch."
+    },
+    {
+      "key": "REQ-GIT-006/AC-02",
+      "id": "REQ-GIT-006",
+      "line": 852,
+      "text": "Previous logs, execution records, and unfinished changes are preserved or safely isolated for diagnosis."
+    },
+    {
+      "key": "REQ-GIT-006/AC-03",
+      "id": "REQ-GIT-006",
+      "line": 854,
+      "text": "Old worktrees, sessions, and locks do not prevent a new attempt after safe reconciliation."
+    },
+    {
+      "key": "REQ-GIT-006/AC-04",
+      "id": "REQ-GIT-006",
+      "line": 855,
+      "text": "The new attempt does not automatically incorporate unfinished code from the failed attempt."
+    },
+    {
+      "key": "REQ-CFG-001/AC-01",
+      "id": "REQ-CFG-001",
+      "line": 870,
+      "text": "At least one valid project is required; missing, invalid, or unsupported configuration produces a clear startup error."
+    },
+    {
+      "key": "REQ-CFG-001/AC-02",
+      "id": "REQ-CFG-001",
+      "line": 872,
+      "text": "Configured required Trello boards and lists are verified before task processing."
+    },
+    {
+      "key": "REQ-CFG-001/AC-03",
+      "id": "REQ-CFG-001",
+      "line": 873,
+      "text": "Invalid startup configuration does not produce partially executed tasks."
+    },
+    {
+      "key": "REQ-CFG-002/AC-01",
+      "id": "REQ-CFG-002",
+      "line": 882,
+      "text": "Multiple projects may be configured without sharing task state or unrelated repository changes."
+    },
+    {
+      "key": "REQ-CFG-002/AC-02",
+      "id": "REQ-CFG-002",
+      "line": 883,
+      "text": "A runtime failure in one project does not unnecessarily stop healthy projects."
+    },
+    {
+      "key": "REQ-CFG-002/AC-03",
+      "id": "REQ-CFG-002",
+      "line": 884,
+      "text": "No required feature depends on paid Trello functionality."
+    },
+    {
+      "key": "REQ-CFG-003/AC-01",
+      "id": "REQ-CFG-003",
+      "line": 892,
+      "text": "Another local or Docker instance cannot concurrently claim the same project."
+    },
+    {
+      "key": "REQ-CFG-003/AC-02",
+      "id": "REQ-CFG-003",
+      "line": 893,
+      "text": "Conflicting or ambiguous ownership prevents competing execution until safely reconciled."
+    },
+    {
+      "key": "REQ-CFG-003/AC-03",
+      "id": "REQ-CFG-003",
+      "line": 894,
+      "text": "Crashes and shutdowns permit safe ownership recovery without requiring a shared database; cross-machine coordination is not required."
+    },
+    {
+      "key": "REQ-CFG-003/AC-04",
+      "id": "REQ-CFG-003",
+      "line": 896,
+      "text": "Instances targeting the same canonical Trello/GitHub project integrations coordinate through a common host-visible ownership namespace irrespective of local aliases or distinct task-state directories; missing or inconsistent coordination prevents startup or task claims safely."
+    },
+    {
+      "key": "REQ-CFG-004/AC-01",
+      "id": "REQ-CFG-004",
+      "line": 906,
+      "text": "Running instances use the validated configuration loaded at startup."
+    },
+    {
+      "key": "REQ-CFG-004/AC-02",
+      "id": "REQ-CFG-004",
+      "line": 907,
+      "text": "Changes made during execution do not silently alter active workflow behavior."
+    },
+    {
+      "key": "REQ-CFG-004/AC-03",
+      "id": "REQ-CFG-004",
+      "line": 908,
+      "text": "Restart with updated operational configuration preserves and safely reconciles in-progress tasks."
+    },
+    {
+      "key": "REQ-CFG-004/AC-04",
+      "id": "REQ-CFG-004",
+      "line": 909,
+      "text": "Active task identity and its Trello board/lists, Git/GitHub repositories, and state location remain pinned until verified completion; project removal/renaming, incompatible integration redirection, or runtime-path relocation is rejected or deferred, never mistaken for absent ownership."
+    },
+    {
+      "key": "REQ-CFG-005/AC-01",
+      "id": "REQ-CFG-005",
+      "line": 921,
+      "text": "Task progress, AI session references, and recovery information survive restart and application upgrade."
+    },
+    {
+      "key": "REQ-CFG-005/AC-02",
+      "id": "REQ-CFG-005",
+      "line": 923,
+      "text": "Runtime storage paths can be configured for both local and Docker execution."
+    },
+    {
+      "key": "REQ-CFG-005/AC-03",
+      "id": "REQ-CFG-005",
+      "line": 924,
+      "text": "Active attempts retain their pinned runtime storage location and recoverable ownership references; incompatible relocation is rejected or deferred until a verified terminal outcome. Compatible state-schema upgrades at that location do not permit relocating active state."
+    },
+    {
+      "key": "REQ-CFG-005/AC-04",
+      "id": "REQ-CFG-005",
+      "line": 927,
+      "text": "Routine recovery does not require manual editing of internal state files."
+    },
+    {
+      "key": "REQ-CFG-006/AC-01",
+      "id": "REQ-CFG-006",
+      "line": 935,
+      "text": "Required tools such as Git, OpenCode, and GitHub CLI are verified as installed, accessible, and compatible."
+    },
+    {
+      "key": "REQ-CFG-006/AC-02",
+      "id": "REQ-CFG-006",
+      "line": 937,
+      "text": "Optional dependencies are checked only when their corresponding features are enabled."
+    },
+    {
+      "key": "REQ-CFG-006/AC-03",
+      "id": "REQ-CFG-006",
+      "line": 938,
+      "text": "Missing or incompatible mandatory dependencies produce actionable startup errors rather than mid-task failures."
+    },
+    {
+      "key": "REQ-SCH-001/AC-01",
+      "id": "REQ-SCH-001",
+      "line": 952,
+      "text": "Implementation, refinement, recovery, and PR maintenance for one active task remain coordinated."
+    },
+    {
+      "key": "REQ-SCH-001/AC-02",
+      "id": "REQ-SCH-001",
+      "line": 953,
+      "text": "An open PR in `Human Review` blocks new tasks in that project."
+    },
+    {
+      "key": "REQ-SCH-001/AC-03",
+      "id": "REQ-SCH-001",
+      "line": 954,
+      "text": "Verified `Done`, `Failed`, closed-PR `Backlog`, or successful refinement `Backlog` outcomes release the project for its next eligible card."
+    },
+    {
+      "key": "REQ-SCH-002/AC-01",
+      "id": "REQ-SCH-002",
+      "line": 963,
+      "text": "The limit applies in addition to the one-active-task-per-project restriction."
+    },
+    {
+      "key": "REQ-SCH-002/AC-02",
+      "id": "REQ-SCH-002",
+      "line": 964,
+      "text": "Without an explicit limit, no orchestrator-imposed cross-project AI concurrency cap applies."
+    },
+    {
+      "key": "REQ-SCH-002/AC-03",
+      "id": "REQ-SCH-002",
+      "line": 965,
+      "text": "Projects awaiting capacity retain their pending task and state."
+    },
+    {
+      "key": "REQ-SCH-002/AC-04",
+      "id": "REQ-SCH-002",
+      "line": 966,
+      "text": "Projects waiting in `Human Review` do not consume global AI execution capacity."
+    },
+    {
+      "key": "REQ-SCH-003/AC-01",
+      "id": "REQ-SCH-003",
+      "line": 974,
+      "text": "Available capacity is allocated in first-come, first-served order."
+    },
+    {
+      "key": "REQ-SCH-003/AC-02",
+      "id": "REQ-SCH-003",
+      "line": 975,
+      "text": "A busy project cannot continuously bypass projects already waiting."
+    },
+    {
+      "key": "REQ-SCH-003/AC-03",
+      "id": "REQ-SCH-003",
+      "line": 976,
+      "text": "Configurable project priority settings are not required."
+    },
+    {
+      "key": "REQ-SCH-004/AC-01",
+      "id": "REQ-SCH-004",
+      "line": 985,
+      "text": "Polling discovers eligible Trello tasks, GitHub feedback, CI results, and PR state changes."
+    },
+    {
+      "key": "REQ-SCH-004/AC-02",
+      "id": "REQ-SCH-004",
+      "line": 986,
+      "text": "A single optional global polling interval defaults to 15 seconds; separate project intervals are not required."
+    },
+    {
+      "key": "REQ-SCH-004/AC-03",
+      "id": "REQ-SCH-004",
+      "line": 988,
+      "text": "Transient API errors use controlled backoff."
+    },
+    {
+      "key": "REQ-SCH-004/AC-04",
+      "id": "REQ-SCH-004",
+      "line": 989,
+      "text": "Polling does not interfere with an active operation on the same task."
+    },
+    {
+      "key": "REQ-LOG-001/AC-01",
+      "id": "REQ-LOG-001",
+      "line": 1003,
+      "text": "Records identify workflow transitions, errors, retries, recovery decisions, validation and review results, and task duration."
+    },
+    {
+      "key": "REQ-LOG-001/AC-02",
+      "id": "REQ-LOG-001",
+      "line": 1005,
+      "text": "Logs are organized by project and task and remain accessible after completion, failure, or restart."
+    },
+    {
+      "key": "REQ-LOG-001/AC-03",
+      "id": "REQ-LOG-001",
+      "line": 1007,
+      "text": "Diagnostic summaries identify relevant child-process logs when further investigation is needed."
+    },
+    {
+      "key": "REQ-LOG-002/AC-01",
+      "id": "REQ-LOG-002",
+      "line": 1016,
+      "text": "Child-process stdout, stderr, and streaming output are recorded separately, including on failure."
+    },
+    {
+      "key": "REQ-LOG-002/AC-02",
+      "id": "REQ-LOG-002",
+      "line": 1017,
+      "text": "Raw child-process text does not leak into the orchestrator's structured event log."
+    },
+    {
+      "key": "REQ-LOG-002/AC-03",
+      "id": "REQ-LOG-002",
+      "line": 1018,
+      "text": "Diagnostic summaries are sanitized and may reference child-process log locations without copying raw content."
+    },
+    {
+      "key": "REQ-LOG-003/AC-01",
+      "id": "REQ-LOG-003",
+      "line": 1027,
+      "text": "The default log retention period is 30 days unless configured otherwise."
+    },
+    {
+      "key": "REQ-LOG-003/AC-02",
+      "id": "REQ-LOG-003",
+      "line": 1028,
+      "text": "Expired logs are cleaned up automatically."
+    },
+    {
+      "key": "REQ-LOG-003/AC-03",
+      "id": "REQ-LOG-003",
+      "line": 1029,
+      "text": "Logs belonging to active tasks are preserved even when older than the retention period."
+    },
+    {
+      "key": "REQ-NOT-001/AC-01",
+      "id": "REQ-NOT-001",
+      "line": 1042,
+      "text": "Supported events are refinement completed, PR ready for human review, attention required, and task failed."
+    },
+    {
+      "key": "REQ-NOT-001/AC-02",
+      "id": "REQ-NOT-001",
+      "line": 1044,
+      "text": "Notifications identify the project and task and include relevant links and useful context."
+    },
+    {
+      "key": "REQ-NOT-001/AC-03",
+      "id": "REQ-NOT-001",
+      "line": 1045,
+      "text": "PR-ready notifications distinguish draft PRs and disclose outstanding issues."
+    },
+    {
+      "key": "REQ-NOT-002/AC-01",
+      "id": "REQ-NOT-002",
+      "line": 1053,
+      "text": "An email delivery failure does not change a successful workflow outcome or block publication."
+    },
+    {
+      "key": "REQ-NOT-002/AC-02",
+      "id": "REQ-NOT-002",
+      "line": 1054,
+      "text": "Failed deliveries are logged and retried safely when possible."
+    },
+    {
+      "key": "REQ-NOT-002/AC-03",
+      "id": "REQ-NOT-002",
+      "line": 1055,
+      "text": "Retries avoid duplicate notifications for confirmed event deliveries. If an acknowledgment is lost after possible acceptance, preserve uncertainty and reconcile through transport evidence when available rather than blindly resending or claiming exactly-once receipt."
+    },
+    {
+      "key": "REQ-SEC-001/AC-01",
+      "id": "REQ-SEC-001",
+      "line": 1071,
+      "text": "Credentials are not embedded directly in version-controlled project settings."
+    },
+    {
+      "key": "REQ-SEC-001/AC-02",
+      "id": "REQ-SEC-001",
+      "line": 1072,
+      "text": "Child processes receive only credentials needed for the operation they perform."
+    },
+    {
+      "key": "REQ-SEC-001/AC-03",
+      "id": "REQ-SEC-001",
+      "line": 1073,
+      "text": "Authentication and authorization failures are reported with actionable but non-sensitive details."
+    },
+    {
+      "key": "REQ-SEC-002/AC-01",
+      "id": "REQ-SEC-002",
+      "line": 1082,
+      "text": "Orchestrator and child-process logs are protected from disclosing secret values."
+    },
+    {
+      "key": "REQ-SEC-002/AC-02",
+      "id": "REQ-SEC-002",
+      "line": 1083,
+      "text": "AI prompts, Trello comments, GitHub PRs, and emails do not expose credentials."
+    },
+    {
+      "key": "REQ-SEC-002/AC-03",
+      "id": "REQ-SEC-002",
+      "line": 1084,
+      "text": "Errors and recovery reports preserve useful diagnostics without revealing sensitive information."
+    },
+    {
+      "key": "REQ-SEC-002/AC-04",
+      "id": "REQ-SEC-002",
+      "line": 1085,
+      "text": "Configured or registered credentials and known sensitive representations are withheld from unnecessary agent/process inputs and redacted from controlled outputs; untrusted attachments and repository data are handled without implicitly treating them as safe."
+    },
+    {
+      "key": "REQ-SEC-002/AC-05",
+      "id": "REQ-SEC-002",
+      "line": 1088,
+      "text": "Verification evidence identifies checked channels and secret forms; passing known-secret redaction cases does not prove arbitrary unknown or transformed secrets can never appear."
+    },
+    {
+      "key": "REQ-SEC-003/AC-01",
+      "id": "REQ-SEC-003",
+      "line": 1097,
+      "text": "Each project independently selects its GitHub authentication method."
+    },
+    {
+      "key": "REQ-SEC-003/AC-02",
+      "id": "REQ-SEC-003",
+      "line": 1098,
+      "text": "GitHub App authentication is preferred but not required."
+    },
+    {
+      "key": "REQ-SEC-003/AC-03",
+      "id": "REQ-SEC-003",
+      "line": 1099,
+      "text": "Personal access tokens remain a supported authentication option."
+    },
+    {
+      "key": "REQ-ENV-001/AC-01",
+      "id": "REQ-ENV-001",
+      "line": 1114,
+      "text": "Task execution, Git operations, logging, persistent state, and restart recovery work in both environments."
+    },
+    {
+      "key": "REQ-ENV-001/AC-02",
+      "id": "REQ-ENV-001",
+      "line": 1116,
+      "text": "Runtime paths are configurable rather than tied to container-specific directories."
+    },
+    {
+      "key": "REQ-ENV-001/AC-03",
+      "id": "REQ-ENV-001",
+      "line": 1117,
+      "text": "Docker is not required for normal local operation."
+    },
+    {
+      "key": "REQ-ENV-002/AC-01",
+      "id": "REQ-ENV-002",
+      "line": 1126,
+      "text": "Setup runs only for the appropriate project and worktree, never in the original checkout."
+    },
+    {
+      "key": "REQ-ENV-002/AC-02",
+      "id": "REQ-ENV-002",
+      "line": 1127,
+      "text": "For refinement, setup-generated files are tracked as setup effects; the refinement agent remains read-only with respect to repository content."
+    },
+    {
+      "key": "REQ-ENV-002/AC-03",
+      "id": "REQ-ENV-002",
+      "line": 1129,
+      "text": "Setup results and failures are captured separately from structured orchestrator logs and handled safely."
+    },
+    {
+      "key": "REQ-ENV-002/AC-04",
+      "id": "REQ-ENV-002",
+      "line": 1131,
+      "text": "Failed or timed-out configured setup prevents starting the agent, retains work and diagnostics, and receives bounded recovery; unrecoverable pre-PR setup produces a verified task failure, while post-PR setup failure retains the open PR and project ownership as a reported operational blockage."
+    },
+    {
+      "key": "REQ-ENV-002/AC-05",
+      "id": "REQ-ENV-002",
+      "line": 1135,
+      "text": "Setup-produced tracked changes are independently attributed; implementation commits contain only reviewed task-relevant changes, while unrelated changes are preserved without silent deletion or unsafe publication."
+    },
+    {
+      "key": "REQ-ENV-002/AC-06",
+      "id": "REQ-ENV-002",
+      "line": 1138,
+      "text": "A completed setup is not unnecessarily repeated after task recovery."
+    },
+    {
+      "key": "REQ-ENV-002/AC-07",
+      "id": "REQ-ENV-002",
+      "line": 1139,
+      "text": "When setup is unconfigured, the orchestrator records that it was skipped."
+    },
+    {
+      "key": "REQ-ENV-003/AC-01",
+      "id": "REQ-ENV-003",
+      "line": 1148,
+      "text": "Refinement, planning, implementation, independent review, remediation, and commit-message generation can each have project-specific model and variant settings."
+    },
+    {
+      "key": "REQ-ENV-003/AC-02",
+      "id": "REQ-ENV-003",
+      "line": 1150,
+      "text": "Missing model or variant settings defer to OpenCode's own configured defaults."
+    },
+    {
+      "key": "REQ-ENV-003/AC-03",
+      "id": "REQ-ENV-003",
+      "line": 1151,
+      "text": "An explicitly configured but unavailable model is reported rather than silently replaced."
+    },
+    {
+      "key": "REQ-CTX-001/AC-01",
+      "id": "REQ-CTX-001",
+      "line": 1165,
+      "text": "Supported documents, images, and logs attached to the card can be accessed during refinement and implementation."
+    },
+    {
+      "key": "REQ-CTX-001/AC-02",
+      "id": "REQ-CTX-001",
+      "line": 1167,
+      "text": "Attachments are refreshed when work starts or resumes, rather than silently relying on stale context."
+    },
+    {
+      "key": "REQ-CTX-001/AC-03",
+      "id": "REQ-CTX-001",
+      "line": 1169,
+      "text": "Downloaded attachment data is kept outside repository worktrees and access failures are reported."
+    },
+    {
+      "key": "REQ-CTX-002/AC-01",
+      "id": "REQ-CTX-002",
+      "line": 1178,
+      "text": "The agent evaluates the task description, repository, and attachments before requesting clarification."
+    },
+    {
+      "key": "REQ-CTX-002/AC-02",
+      "id": "REQ-CTX-002",
+      "line": 1180,
+      "text": "If essential information cannot be inferred reliably, the card moves to `Failed` with an actionable Trello comment identifying what is missing."
+    },
+    {
+      "key": "REQ-CTX-002/AC-03",
+      "id": "REQ-CTX-002",
+      "line": 1182,
+      "text": "The user may clarify the card and explicitly return it to `Ready for Agent` for a fresh attempt."
+    },
+    {
+      "key": "REQ-CTX-003/AC-01",
+      "id": "REQ-CTX-003",
+      "line": 1191,
+      "text": "Implementation, validation, reviews, CI repair, and PR maintenance do not modify the Trello card title or description."
+    },
+    {
+      "key": "REQ-CTX-003/AC-02",
+      "id": "REQ-CTX-003",
+      "line": 1193,
+      "text": "Trello comments describe meaningful outcomes or attention needs, not routine validation, reviews, or retries."
+    },
+    {
+      "key": "REQ-CTX-003/AC-03",
+      "id": "REQ-CTX-003",
+      "line": 1195,
+      "text": "Fine-grained progress and diagnostic details remain in execution logs instead of cluttering the card."
+    },
+    {
+      "key": "REQ-CTX-004/AC-01",
+      "id": "REQ-CTX-004",
+      "line": 1205,
+      "text": "The orchestrator preserves execution state and pauses the affected project rather than assuming the manual move completed its workflow."
+    },
+    {
+      "key": "REQ-CTX-004/AC-02",
+      "id": "REQ-CTX-004",
+      "line": 1207,
+      "text": "Returning the card to its expected list can trigger automatic resumption after safety verification."
+    },
+    {
+      "key": "REQ-CTX-004/AC-03",
+      "id": "REQ-CTX-004",
+      "line": 1209,
+      "text": "Unrelated projects continue; any remaining uncertainty is reported and reconciled without destructive assumptions."
+    },
+    {
+      "key": "REQ-TST-001/AC-01",
+      "id": "REQ-TST-001",
+      "line": 1226,
+      "text": "Tests verify complete paths from Trello task selection through implementation, PR delivery, human review, and terminal card outcomes."
+    },
+    {
+      "key": "REQ-TST-001/AC-02",
+      "id": "REQ-TST-001",
+      "line": 1228,
+      "text": "Negative reviews, failing validation, exhaustion, crashes, restarts, and external interruptions are exercised as relevant to their requirements."
+    },
+    {
+      "key": "REQ-TST-001/AC-03",
+      "id": "REQ-TST-001",
+      "line": 1230,
+      "text": "Unit-test success alone is not accepted as evidence that an entire workflow is correct."
+    },
+    {
+      "key": "REQ-TST-001/AC-04",
+      "id": "REQ-TST-001",
+      "line": 1231,
+      "text": "End-to-end verification includes realistic integration of the complete task lifecycle, beyond solely mocked individual units."
+    },
+    {
+      "key": "REQ-TST-002/AC-01",
+      "id": "REQ-TST-002",
+      "line": 1240,
+      "text": "Tests can simulate successful and failing responses from the relevant external services."
+    },
+    {
+      "key": "REQ-TST-002/AC-02",
+      "id": "REQ-TST-002",
+      "line": 1241,
+      "text": "Simulated errors cover partial external success, timeouts, delayed or missing results, and recovery after restart."
+    },
+    {
+      "key": "REQ-TST-002/AC-03",
+      "id": "REQ-TST-002",
+      "line": 1243,
+      "text": "Verification checks observable outcomes such as PR count, card state, preserved work, and bounded attempts rather than relying only on agent-reported success."
+    },
+    {
+      "key": "REQ-TST-003/AC-01",
+      "id": "REQ-TST-003",
+      "line": 1253,
+      "text": "Stable requirement IDs can be referenced by later test scenarios, implementation audits, and correction tasks."
+    },
+    {
+      "key": "REQ-TST-003/AC-02",
+      "id": "REQ-TST-003",
+      "line": 1255,
+      "text": "Verification distinguishes demonstrated behavior from untested, partial, or missing coverage."
+    },
+    {
+      "key": "REQ-TST-003/AC-03",
+      "id": "REQ-TST-003",
+      "line": 1256,
+      "text": "The verification baseline includes realistic end-to-end workflow evidence in addition to mocked and unit tests; simulated service failures remain suitable for routine automated checks."
+    },
+    {
+      "key": "REQ-TST-003/AC-04",
+      "id": "REQ-TST-003",
+      "line": 1258,
+      "text": "A dedicated live-service testing environment is a possible future improvement, not a prerequisite to addressing current robustness defects."
+    }
+  ]
+}

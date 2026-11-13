@@ -1,0 +1,261 @@
+{
+  "head": "2aa7561743add264eb8eb00c29993721630cbedf",
+  "mode": "full",
+  "exclusions": [],
+  "ids": 82,
+  "criteria": 305,
+  "assessed": 305,
+  "pending": 0,
+  "assessmentCoveragePercent": 100,
+  "statuses": {
+    "Compliant": 228,
+    "Partially compliant": 61,
+    "Noncompliant": 6,
+    "Unverified": 10,
+    "Needs clarification": 0
+  },
+  "findings": 10,
+  "severities": {
+    "Critical": 1,
+    "High": 1,
+    "Medium": 7,
+    "Low": 1
+  },
+  "confirmedStaticImplementationFindings": 6,
+  "verificationGapGroups": 3,
+  "specificationCriterionOmissions": 1,
+  "sourceBullets": 241,
+  "unbulletedStatements": 3,
+  "sourceStatementsMappedOrExplicitlyFlagged": 244,
+  "sourceCriterionReverseCoverage": true,
+  "domainStats": [
+    {
+      "domain": "WF",
+      "state": "completed",
+      "criteria": 11,
+      "statuses": {
+        "Compliant": 8,
+        "Partially compliant": 1,
+        "Noncompliant": 0,
+        "Unverified": 2,
+        "Needs clarification": 0
+      }
+    },
+    {
+      "domain": "PR",
+      "state": "completed",
+      "criteria": 32,
+      "statuses": {
+        "Compliant": 31,
+        "Partially compliant": 1,
+        "Noncompliant": 0,
+        "Unverified": 0,
+        "Needs clarification": 0
+      }
+    },
+    {
+      "domain": "TR",
+      "state": "completed",
+      "criteria": 12,
+      "statuses": {
+        "Compliant": 9,
+        "Partially compliant": 3,
+        "Noncompliant": 0,
+        "Unverified": 0,
+        "Needs clarification": 0
+      }
+    },
+    {
+      "domain": "REF",
+      "state": "completed",
+      "criteria": 20,
+      "statuses": {
+        "Compliant": 10,
+        "Partially compliant": 5,
+        "Noncompliant": 0,
+        "Unverified": 5,
+        "Needs clarification": 0
+      }
+    },
+    {
+      "domain": "IMP",
+      "state": "completed",
+      "criteria": 17,
+      "statuses": {
+        "Compliant": 10,
+        "Partially compliant": 7,
+        "Noncompliant": 0,
+        "Unverified": 0,
+        "Needs clarification": 0
+      }
+    },
+    {
+      "domain": "VAL",
+      "state": "completed",
+      "criteria": 21,
+      "statuses": {
+        "Compliant": 19,
+        "Partially compliant": 2,
+        "Noncompliant": 0,
+        "Unverified": 0,
+        "Needs clarification": 0
+      }
+    },
+    {
+      "domain": "HR",
+      "state": "completed",
+      "criteria": 27,
+      "statuses": {
+        "Compliant": 19,
+        "Partially compliant": 6,
+        "Noncompliant": 2,
+        "Unverified": 0,
+        "Needs clarification": 0
+      }
+    },
+    {
+      "domain": "CI",
+      "state": "completed",
+      "criteria": 9,
+      "statuses": {
+        "Compliant": 4,
+        "Partially compliant": 4,
+        "Noncompliant": 1,
+        "Unverified": 0,
+        "Needs clarification": 0
+      }
+    },
+    {
+      "domain": "MNT",
+      "state": "completed",
+      "criteria": 13,
+      "statuses": {
+        "Compliant": 11,
+        "Partially compliant": 2,
+        "Noncompliant": 0,
+        "Unverified": 0,
+        "Needs clarification": 0
+      }
+    },
+    {
+      "domain": "REC",
+      "state": "completed",
+      "criteria": 26,
+      "statuses": {
+        "Compliant": 19,
+        "Partially compliant": 6,
+        "Noncompliant": 0,
+        "Unverified": 1,
+        "Needs clarification": 0
+      }
+    },
+    {
+      "domain": "GIT",
+      "state": "completed",
+      "criteria": 20,
+      "statuses": {
+        "Compliant": 18,
+        "Partially compliant": 2,
+        "Noncompliant": 0,
+        "Unverified": 0,
+        "Needs clarification": 0
+      }
+    },
+    {
+      "domain": "CFG",
+      "state": "completed",
+      "criteria": 21,
+      "statuses": {
+        "Compliant": 13,
+        "Partially compliant": 6,
+        "Noncompliant": 1,
+        "Unverified": 1,
+        "Needs clarification": 0
+      }
+    },
+    {
+      "domain": "SCH",
+      "state": "completed",
+      "criteria": 14,
+      "statuses": {
+        "Compliant": 14,
+        "Partially compliant": 0,
+        "Noncompliant": 0,
+        "Unverified": 0,
+        "Needs clarification": 0
+      }
+    },
+    {
+      "domain": "LOG",
+      "state": "completed",
+      "criteria": 9,
+      "statuses": {
+        "Compliant": 6,
+        "Partially compliant": 2,
+        "Noncompliant": 1,
+        "Unverified": 0,
+        "Needs clarification": 0
+      }
+    },
+    {
+      "domain": "NOT",
+      "state": "completed",
+      "criteria": 6,
+      "statuses": {
+        "Compliant": 6,
+        "Partially compliant": 0,
+        "Noncompliant": 0,
+        "Unverified": 0,
+        "Needs clarification": 0
+      }
+    },
+    {
+      "domain": "SEC",
+      "state": "completed",
+      "criteria": 11,
+      "statuses": {
+        "Compliant": 6,
+        "Partially compliant": 4,
+        "Noncompliant": 1,
+        "Unverified": 0,
+        "Needs clarification": 0
+      }
+    },
+    {
+      "domain": "ENV",
+      "state": "completed",
+      "criteria": 13,
+      "statuses": {
+        "Compliant": 10,
+        "Partially compliant": 2,
+        "Noncompliant": 0,
+        "Unverified": 1,
+        "Needs clarification": 0
+      }
+    },
+    {
+      "domain": "CTX",
+      "state": "completed",
+      "criteria": 12,
+      "statuses": {
+        "Compliant": 7,
+        "Partially compliant": 5,
+        "Noncompliant": 0,
+        "Unverified": 0,
+        "Needs clarification": 0
+      }
+    },
+    {
+      "domain": "TST",
+      "state": "completed",
+      "criteria": 11,
+      "statuses": {
+        "Compliant": 8,
+        "Partially compliant": 3,
+        "Noncompliant": 0,
+        "Unverified": 0,
+        "Needs clarification": 0
+      }
+    }
+  ]
+}
