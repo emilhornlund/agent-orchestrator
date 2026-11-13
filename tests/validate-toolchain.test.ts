@@ -3,7 +3,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { CommandRunner, type RunCommand } from "../src/process/command-runner.js";
+import {
+  CommandRunner,
+  type CommandRunResult,
+  type RunCommand,
+} from "../src/process/command-runner.js";
 import {
   MINIMUM_GIT_VERSION,
   ISOLATION_PROBE_COMMAND,
@@ -12,7 +16,7 @@ import {
   validateGitAndOpenCode,
 } from "../src/startup/validate-toolchain.js";
 
-function runner(responses: Record<string, { exitCode: number; output: string } | undefined>) {
+function runner(responses: Record<string, CommandRunResult | undefined>) {
   const run = vi.fn<RunCommand>().mockImplementation(async ({ command }) => {
     const response = responses[command];
     if (!response) throw new Error("spawn ENOENT");
@@ -37,6 +41,37 @@ describe("Git and OpenCode startup compatibility", () => {
     const { commands, run } = runner(supported);
     await expect(validateGitAndOpenCode(commands)).resolves.toBeUndefined();
     expect(run).toHaveBeenCalledTimes(5);
+  });
+
+  it.each([
+    ["stdout", { output: "--auto --model --variant --dir --session --format" }],
+    ["stderr", { errorOutput: "--auto --model --variant --dir --session --format" }],
+    [
+      "both streams",
+      { output: "--auto --model --variant", errorOutput: "--dir --session --format" },
+    ],
+  ])("accepts OpenCode help on %s", async (_label, streams) => {
+    const { commands } = runner({
+      ...supported,
+      "opencode run --help": { exitCode: 0, ...streams },
+    });
+    await expect(validateGitAndOpenCode(commands)).resolves.toBeUndefined();
+  });
+
+  it.each([0, 1])("rejects incomplete OpenCode help with exit code %s", async (exitCode) => {
+    const { commands } = runner({
+      ...supported,
+      "opencode run --help": {
+        exitCode,
+        output: "--auto --model --variant",
+        errorOutput: "--dir --session",
+      },
+    });
+    await expect(validateGitAndOpenCode(commands)).rejects.toThrow(
+      exitCode === 0
+        ? "run command is missing required options: --format"
+        : "probe exited with code 1",
+    );
   });
 
   it("uses the supplied project timeout consistently for every startup probe", async () => {
