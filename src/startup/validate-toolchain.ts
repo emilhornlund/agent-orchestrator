@@ -1,4 +1,4 @@
-import type { CommandRunner } from "../process/command-runner.js";
+import type { CommandRunner, CommandRunResult } from "../process/command-runner.js";
 
 export const MINIMUM_GIT_VERSION = "2.30.0";
 export const MINIMUM_OPENCODE_VERSION = "1.0.0";
@@ -40,7 +40,7 @@ async function probe(
   executable: "git" | "opencode",
   args: readonly string[],
   timeoutMilliseconds: number,
-): Promise<string> {
+): Promise<CommandRunResult> {
   let result;
   try {
     result = await commands.run({
@@ -63,7 +63,7 @@ async function probe(
       executable,
       `probe exited with code ${result?.exitCode ?? "no result"}`,
     );
-  return result.output ?? "";
+  return result;
 }
 
 async function validateVersion(
@@ -73,8 +73,8 @@ async function validateVersion(
   displayName: string,
   timeoutMilliseconds: number,
 ): Promise<void> {
-  const output = await probe(commands, executable, ["--version"], timeoutMilliseconds);
-  const installed = parseVersion(output, displayName);
+  const result = await probe(commands, executable, ["--version"], timeoutMilliseconds);
+  const installed = parseVersion(result.output ?? "", displayName);
   const required = parseVersion(
     displayName === "Git" ? `git version ${minimum}` : minimum,
     displayName,
@@ -118,7 +118,7 @@ export async function validateGitAndOpenCode(
     "status",
     "worktree",
   ];
-  const availableGitCommands = new Set(gitCommands.trim().split(/\s+/u));
+  const availableGitCommands = new Set((gitCommands.output ?? "").trim().split(/\s+/u));
   const missingGitCommands = requiredGitCommands.filter(
     (command) => !availableGitCommands.has(command),
   );
@@ -127,7 +127,8 @@ export async function validateGitAndOpenCode(
       "Git",
       `installation is missing required commands: ${missingGitCommands.join(", ")}`,
     );
-  const help = await probe(commands, "opencode", ["run", "--help"], timeoutMilliseconds);
+  const result = await probe(commands, "opencode", ["run", "--help"], timeoutMilliseconds);
+  const help = [result.output ?? "", result.errorOutput ?? ""].join("\n");
   const required = ["--auto", "--model", "--variant", "--dir", "--session", "--format"];
   const missing = required.filter((option) => !help.includes(option));
   if (missing.length)
