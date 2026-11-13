@@ -265,6 +265,34 @@ fs.writeFileSync(${JSON.stringify(resultPath)},JSON.stringify({title:'Grounded r
       expect(dispatch).toHaveBeenCalledTimes(2);
     });
   });
+  it("persists absent setup as not-required without dispatching a command and reuses its baseline", async () => {
+    const f = await fixture("true");
+    delete f.project.repository.setupCommand;
+    const run = vi.fn();
+    const commands = new CommandRunner(run);
+    const setup = () =>
+      f.authority.run(() =>
+        runRefinementSetup({
+          commands,
+          git: f.git,
+          project: f.project,
+          cardId: f.card.id,
+          worktreePath: f.worktreePath,
+          signal: new AbortController().signal,
+          cardLog: logger,
+        }),
+      );
+    const baseline = await setup();
+    expect(baseline).toBeInstanceOf(Buffer);
+    expect(stateFor(f.authority, f.card.id)).toMatchObject({
+      command: null,
+      status: "not-required",
+      attempts: [],
+    });
+    expect(await setup()).toEqual(baseline);
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("does not invent a baseline for an interrupted setup-free refinement", async () => {
     const f = await fixture("true");
     delete f.project.repository.setupCommand;
