@@ -203,16 +203,32 @@ describe("evaluateCiChecks", () => {
     });
   });
 
-  it("waits instead of repairing when failures coexist with pending expected checks", () => {
+  it("retains actionable failures alongside pending expected checks", () => {
     const result = evaluate(
       ["Build", "Tests"],
       [checkRun("Build", "completed", "failure"), checkRun("Tests", "queued")],
     );
     expect(result).toMatchObject({
-      status: "waiting",
+      status: "failed",
       pendingChecks: ["Tests"],
+      failures: [expect.objectContaining({ name: "Build", conclusion: "failure" })],
     });
-    expect(result).not.toHaveProperty("failures");
+  });
+
+  it("retains actionable failures alongside missing checks but fails closed for unknown expectations", () => {
+    const checks = [checkRun("Build", "completed", "failure")];
+    expect(evaluate(["Build", "Tests"], checks)).toMatchObject({
+      status: "failed",
+      missingChecks: ["Tests"],
+      failures: [expect.objectContaining({ name: "Build" })],
+    });
+    expect(
+      evaluate(["Build"], checks, {
+        status: "uncertain",
+        expectedCheckNames: ["Build"],
+        diagnostic: "unknown completeness",
+      }),
+    ).toMatchObject({ status: "uncertain" });
   });
 
   it("collects every failure after the complete expected set becomes terminal", () => {

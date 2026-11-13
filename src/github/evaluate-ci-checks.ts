@@ -19,6 +19,8 @@ export type CiCheckEvaluation =
       expectedHeadSha: string;
       expectedCheckNames: string[];
       failures: CiCheckObservation[];
+      missingChecks?: string[];
+      pendingChecks?: string[];
     }
   | {
       status: "uncertain";
@@ -84,7 +86,7 @@ function classify(check: CiCheckObservation): CheckDisposition {
   };
 }
 
-/** Fails closed unless an exact-head, complete expected set is fully terminal. */
+/** Only a complete, exact-head terminal set can pass; known failures can be repaired sooner. */
 export function evaluateCiChecks(input: {
   expectedHeadSha: string;
   observedHeadSha: string;
@@ -221,11 +223,21 @@ export function evaluateCiChecks(input: {
       missingChecks.push(name);
       continue;
     }
+    failures.push(...matching.filter(({ kind }) => kind === "failed").map(({ check }) => check));
     if (matching.some(({ kind }) => kind === "pending")) {
       pendingChecks.push(name);
-      continue;
     }
-    failures.push(...matching.filter(({ kind }) => kind === "failed").map(({ check }) => check));
+  }
+
+  if (failures.length > 0) {
+    return {
+      status: "failed",
+      expectedHeadSha: input.expectedHeadSha,
+      expectedCheckNames: expectedNames,
+      failures,
+      ...(missingChecks.length === 0 ? {} : { missingChecks }),
+      ...(pendingChecks.length === 0 ? {} : { pendingChecks }),
+    };
   }
 
   if (missingChecks.length > 0 || pendingChecks.length > 0) {
@@ -242,15 +254,6 @@ export function evaluateCiChecks(input: {
           ? [`Checks are still pending: ${pendingChecks.join(", ")}`]
           : []),
       ].join("; "),
-    };
-  }
-
-  if (failures.length > 0) {
-    return {
-      status: "failed",
-      expectedHeadSha: input.expectedHeadSha,
-      expectedCheckNames: expectedNames,
-      failures,
     };
   }
 

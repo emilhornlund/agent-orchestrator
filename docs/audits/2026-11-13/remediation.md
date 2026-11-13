@@ -59,3 +59,12 @@ ordinary sequential human rounds. History grows on disk for traceability, not in
 The CI observer uses historical lookup to avoid re-enqueuing compacted observations. Regression
 coverage processes 10,005 distinct rounds with periodic reopening, then verifies archived duplicate
 suppression, identity-conflict rejection, prerequisites and interrupted-writer recovery.
+
+## AUD-003 — Corrected: mixed failing and pending CI
+
+REQ-CI-001/AC-01–03 and REQ-CI-002/AC-01–02: with verified current-head expectations, known failures
+now take repair precedence over missing/pending results. Missing/pending names remain in the failed
+evaluation; they never count as passes. Unknown expectation completeness, stale heads and malformed
+observations still fail closed. Unit coverage and the production active-PR observer verify mixed
+results enqueue one repair across repeated polling/reopening. Existing episode budgets remain
+unchanged. This is simulated provider evidence, not a live CI qualification.
