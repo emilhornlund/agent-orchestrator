@@ -42,6 +42,63 @@ an invalid finding or evidence of compliance. Use a dedicated OpenCode home/conf
 only operation-required credentials until a tested projection is available. Qualification must use
 synthetic multi-provider canaries, never operator secrets.
 
+### Follow-up: verified dispatch breadth and exact compatibility decisions
+
+Follow-up at `0583538` reproduced credential access with a fake OpenCode executable, synthetic
+auth/configuration, disposable Git/worktree/home directories and no provider calls. Both an
+authority-bound writable dispatch and a `readOnly: true` dispatch passed `--session ses_synthetic`
+and read the authorized OpenAI credential **and** unrelated Anthropic credentials from auth and
+configuration. The second dispatch observed the first dispatch's synthetic session-state file. This
+demonstrates filesystem access and argument/state continuity, not real OpenCode session resumption
+or real authentication. Disposable resources were removed after the probe.
+
+The affected boundary is broader than the original mount finding:
+
+- `opencode-client.ts:490-513` invokes Bubblewrap only for non-read-only work or refinement with an
+  external result directory. Ordinary read-only planning/review/classification dispatches run
+  directly as the service user; filtering mounts only in `isolated-dispatch.ts` cannot protect these
+  processes. OpenCode tool permissions are not an OS filesystem boundary for its plugins.
+- The installed CLI and container pin are `1.18.35`. Source inspection of that exact upstream tag
+  confirms `Config.loadInstanceState` loads `wellknown` auth entries before global/project config,
+  fetches their remote configuration, loads discovered plugins, and also merges active-account and
+  managed configuration. Thus an auth entry may be a configuration bootstrap, not a provider-ID key.
+- `Provider.defaultModel` uses merged `cfg.model`, then persisted recent models in `model.json`,
+  then available configured providers. `Provider.getSmallModel` can use another provider through
+  `small_model` or a plugin hook. The current environment resolver does not establish this complete
+  operation dependency set. Dropping every auth entry except the explicit top-level model provider
+  is not a compatibility-preserving projection.
+- `Auth.all` accepts `OPENCODE_AUTH_CONTENT`, but `Auth.set` writes the full auth map to
+  `auth.json`. The built-in Codex auth loader refreshes OAuth tokens and calls `client.auth.set`. A
+  read-only or throwaway credential snapshot alone cannot guarantee durable refresh for later
+  resumed sessions; copying refreshed maps back wholesale would risk overwriting other projects'
+  credentials.
+
+Exact decisions needed before a complete correction:
+
+1. Define an operator-approved operation credential/configuration manifest covering primary and
+   auxiliary providers, remote-configuration bootstrap identities, required plugins and referenced
+   secret files. Alternatively authorize a restricted, version-qualified
+   configuration/authentication profile that rejects unsupported dynamic extensions before dispatch.
+   Neither policy is currently defined; automatically retaining all plugin/provider inputs defeats
+   least privilege, while silently removing them changes configured authentication/default-selection
+   behavior.
+2. Choose the canonical owner of rotating OAuth credentials: a trusted credential broker, or
+   protected per-provider stores with serialized, conflict-detecting durable refresh reconciliation
+   across operations/projects. An operation-local copy without a refresh protocol is insufficient.
+
+A complete implementation must apply the chosen boundary to **all** OpenCode dispatches and keep
+session data separate from credential/configuration access. No partial auth-only overlay, implicit
+model substitution, plugin disabling, credential migration or operator-secret inspection was made.
+AUD-006 remains High and unresolved. This follow-up materially expands the original evidence and
+identifies concrete policy/compatibility blockers; it is not a completed security correction.
+
+Version-qualified upstream references (static source inspection, not executed provider behavior):
+
+- [Config loading](https://github.com/anomalyco/opencode/blob/v1.18.35/packages/opencode/src/config/config.ts)
+- [Provider defaults and auxiliary models](https://github.com/anomalyco/opencode/blob/v1.18.35/packages/opencode/src/provider/provider.ts)
+- [Auth read/write semantics](https://github.com/anomalyco/opencode/blob/v1.18.35/packages/opencode/src/auth/index.ts)
+- [Codex OAuth refresh](https://github.com/anomalyco/opencode/blob/v1.18.35/packages/opencode/src/plugin/openai/codex.ts)
+
 ## AUD-001 — Corrected: human marker quotations
 
 REQ-HR-001/AC-01 and AC-05: production feedback conversion now filters by author identity/bot
