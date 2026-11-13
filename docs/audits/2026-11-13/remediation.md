@@ -41,3 +41,10 @@ projection without breaking supported authentication. This is an unresolved impl
 an invalid finding or evidence of compliance. Use a dedicated OpenCode home/configuration containing
 only operation-required credentials until a tested projection is available. Qualification must use
 synthetic multi-provider canaries, never operator secrets.
+
+## AUD-001 — Corrected: human marker quotations
+
+REQ-HR-001/AC-01 and AC-05: production feedback conversion now filters by author identity/bot
+provenance, not body marker bytes. Regression coverage calls `refreshCurrentTaskFeedback` with human
+review, inline and conversation requests quoting a marker, and retains the existing self/bot
+exclusion test. Semantic discussion classification remains responsible for non-requests.

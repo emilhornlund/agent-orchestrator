@@ -150,8 +150,7 @@ function toFeedbackEntries(observation: ObservedTaskSessionReviewCard): Feedback
   const isHuman = (item: { author: string | null; authorIsBot?: boolean; body: string | null }) =>
     item.author !== null &&
     item.authorIsBot !== true &&
-    item.author !== observation.automationActor &&
-    !item.body?.includes("<!-- agent-orchestrator-");
+    item.author !== observation.automationActor;
   for (const review of observation.requestedChanges?.feedback.reviews ?? []) {
     if (isHuman(review) && review.body !== null && review.body.trim().length > 0) {
       entries.push({
