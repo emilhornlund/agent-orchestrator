@@ -58,6 +58,18 @@ Changes that weaken these invariants require explicit justification.
 
 ## Development Rules
 
+### Specification compliance
+
+- `docs/requirements.md` is authoritative; `docs/specification.md` defines verifiable criteria.
+- For specification-governed implementation, review, or refactoring, load the shared
+  `spec-compliance` skill in `.agents/skills/spec-compliance/SKILL.md` before changing behavior.
+- Identify applicable requirement IDs and acceptance criteria, trace production paths, and report
+  verification gaps or document conflicts explicitly. Never silently change requirements to fit
+  code.
+- For requested full, scoped, or Git-diff audits, load `.agents/skills/spec-audit/SKILL.md`. Audits
+  are read-only except retained reports in `.local/spec-audits/`; findings need separate
+  implementation authorization. See `docs/specification-auditing.md` for invocation and recovery.
+
 - Keep changes scoped to the requested task.
 - Prefer simple deterministic code over framework-heavy abstractions.
 - Avoid adding configuration for functionality that does not yet exist.
