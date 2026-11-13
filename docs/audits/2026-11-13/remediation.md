@@ -77,3 +77,10 @@ count and a process-artifact directory reference. Raw command output remains in 
 terminal production path is tested with real Git and a synthetic dirty-path canary: the warning
 omits raw status/path text, remains bounded, identifies preserved work and leaves its contents
 intact.
+
+## AUD-009 — Corrected: explicit outside-Git storage criterion
+
+Appended REQ-CFG-005/AC-05 without renumbering existing criteria. It directly expresses the
+authoritative outside-Git storage obligation at requirements lines 667–672; product intent and
+implementation are unchanged. Existing `config.test.ts` overlap/normalization cases and queue
+storage boundary tests provide focused deterministic evidence, not container deployment evidence.
