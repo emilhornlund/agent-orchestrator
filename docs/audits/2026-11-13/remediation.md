@@ -24,3 +24,20 @@ Recommended next action: agree on a host-owned coordination endpoint, its authen
 availability/recovery contract, then qualify negative distinct-root and mis-mounted-container cases
 as well as crash fencing and independent-project concurrency. AUD-004 remains Critical and
 unresolved.
+
+## AUD-006 — Unresolved: filesystem credential projection
+
+Confirmed in `isolated-dispatch.ts`: the whole OpenCode data directory and operator configuration
+are visible to the child; the read-only auth overlay does not filter provider entries. Environment
+filtering in `child-environment.ts` does not close this filesystem boundary. REQ-SEC-001/AC-02 and
+REQ-SEC-002/AC-04 remain violated for multi-provider auth/configuration.
+
+No real credential files were inspected. A safe correction must project both auth and configuration,
+including provider options, credential-file references, plugins, default selection and resumed
+session authentication, while keeping session data durable. Filtering only auth.json or explicit
+model dispatches would leave other production paths exposed. This campaign has not established
+OpenCode's complete merged-configuration/authentication contract sufficiently to implement that
+projection without breaking supported authentication. This is an unresolved implementation task, not
+an invalid finding or evidence of compliance. Use a dedicated OpenCode home/configuration containing
+only operation-required credentials until a tested projection is available. Qualification must use
+synthetic multi-provider canaries, never operator secrets.
