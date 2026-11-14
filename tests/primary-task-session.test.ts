@@ -8,6 +8,7 @@ import type { ProjectConfig } from "../src/config/config.js";
 import {
   OpenCodeClient,
   OpenCodeTimeoutError,
+  OpenCodeRunAbortedError,
   type OpenCodeRunOptions,
   type RunOpenCode,
 } from "../src/opencode/opencode-client.js";
@@ -140,6 +141,25 @@ function recoveryBaseline() {
 }
 
 describe("runWithPrimaryTaskSession", () => {
+  it("records cancellation before preparation separately from a failed initial creation", async () => {
+    const { store } = createFixture();
+    store.create(createRecord());
+    const controller = new AbortController();
+    const run = vi.fn<RunOpenCode>(async () => {
+      controller.abort("signal");
+      throw new OpenCodeRunAbortedError();
+    });
+    await expect(
+      runWithPrimaryTaskSession(store, new OpenCodeClient(run), "project-one", "card-one", {
+        ...createRunOptions(),
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow("outcome is ambiguous");
+    expect(store.read("card-one")).toMatchObject({
+      sessionCreationCancelled: true,
+      sessionCreationStatus: "ambiguous",
+    });
+  });
   it("records initial provider outage dispatches separately from genuine startup failures", async () => {
     const { store } = createFixture();
     store.create(createRecord());

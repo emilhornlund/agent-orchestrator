@@ -5,6 +5,7 @@ import path from "node:path";
 
 import type { GitHubAppConfig } from "../config/config.js";
 import { registerProcessSecrets } from "../process/process-runtime.js";
+import { getProcessRuntime } from "../process/process-runtime.js";
 
 const GITHUB_API_URL = "https://api.github.com";
 const GITHUB_API_VERSION = "2022-11-28";
@@ -257,14 +258,22 @@ export class GitHubAppAuthenticator {
     nowMilliseconds: number,
     cacheKey: string,
   ): Promise<string> {
+    const lifecycleSignal = getProcessRuntime().signal;
+    const assertActive = () => {
+      if (lifecycleSignal?.aborted)
+        throw new DOMException("GitHub credential acquisition aborted", "AbortError");
+    };
+    assertActive();
     let privateKeyPem: string;
 
     try {
       privateKeyPem = await this.readPrivateKey(githubApp.privateKeyPath);
       registerProcessSecrets([privateKeyPem]);
     } catch {
+      assertActive();
       throw new GitHubAppCredentialError("private key read");
     }
+    assertActive();
 
     let jwt: string;
 
@@ -276,6 +285,9 @@ export class GitHubAppAuthenticator {
 
     const endpoint = `${GITHUB_API_URL}/app/installations/${encodeURIComponent(githubApp.installationId)}/access_tokens`;
     let response: Response;
+    const timeout = AbortSignal.timeout(30_000);
+    const signal =
+      lifecycleSignal === undefined ? timeout : AbortSignal.any([lifecycleSignal, timeout]);
 
     try {
       response = await this.request(endpoint, {
@@ -286,8 +298,10 @@ export class GitHubAppAuthenticator {
           "X-GitHub-Api-Version": GITHUB_API_VERSION,
         },
         body: JSON.stringify({ repositories: [repository] }),
+        signal,
       });
     } catch {
+      assertActive();
       throw new GitHubAppNetworkError();
     }
 
@@ -303,12 +317,14 @@ export class GitHubAppAuthenticator {
     try {
       body = await response.json();
     } catch {
+      assertActive();
       throw new GitHubAppApiError(
         "GitHub App installation token exchange returned invalid JSON",
         response.status,
       );
     }
 
+    assertActive();
     const tokenResponse = parseTokenResponse(body);
 
     if (tokenResponse === undefined) {

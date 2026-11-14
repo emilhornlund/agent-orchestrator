@@ -128,6 +128,7 @@ export function beginPrimaryExecution(
     role,
     executions,
     failureExecutions: prior?.failureExecutions ?? prior?.executions ?? 0,
+    cancelledExecutions: prior?.cancelledExecutions ?? 0,
     dependencyOutages: prior?.dependencyOutages ?? 0,
     ...((sessionId ?? prior?.lastSessionId) === undefined
       ? {}
@@ -215,7 +216,7 @@ export function reconcilePendingPrimaryExecution(
   operationId: string,
   result: "completed" | "not-dispatched" | "stopped" | "unknown",
   completedResult?: OpenCodeRunResult,
-  stoppedClassification?: "dependency-outage",
+  stoppedClassification?: "dependency-outage" | "cancelled",
 ): TaskExecutionRecord {
   const record = store.read(cardId);
   if (result === "completed" && completedResult === undefined)
@@ -268,6 +269,7 @@ export function reconcilePendingPrimaryExecution(
     operation.status !== "intent" &&
     operation.executions > 0 &&
     (stoppedClassification ?? operation.lastExecutionClassification) !== "dependency-outage" &&
+    (stoppedClassification ?? operation.lastExecutionClassification) !== "cancelled" &&
     operation.accountedExecution !== operation.executions &&
     !(
       operation.failureExecutions === undefined &&
@@ -290,6 +292,15 @@ export function reconcilePendingPrimaryExecution(
               (operation.dependencyOutages ?? 0) +
               (operation.accountedExecution === operation.executions ? 0 : 1),
             lastExecutionClassification: "dependency-outage" as const,
+            accountedExecution: operation.executions,
+          }
+        : {}),
+      ...(result === "stopped" && stoppedClassification === "cancelled"
+        ? {
+            cancelledExecutions:
+              (operation.cancelledExecutions ?? 0) +
+              (operation.accountedExecution === operation.executions ? 0 : 1),
+            lastExecutionClassification: "cancelled" as const,
             accountedExecution: operation.executions,
           }
         : {}),

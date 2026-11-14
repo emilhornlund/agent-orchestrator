@@ -17,7 +17,7 @@ import { transitionTaskExecutionRecord } from "../src/task-session/task-executio
 import { TaskPlanStore } from "../src/task-session/task-plan-store.js";
 import type { TaskPlan } from "../src/task-session/task-plan.js";
 import type { RunCommand } from "../src/process/command-runner.js";
-import { CommandRunner } from "../src/process/command-runner.js";
+import { CommandRunner, CommandRunAbortedError } from "../src/process/command-runner.js";
 import type { PlanVerificationResult } from "../src/task-session/plan-verification.js";
 import type { TrelloCard } from "../src/trello/trello-client.js";
 import { getTaskSessionSourceSnapshotIdentity } from "../src/task-session/source-snapshot.js";
@@ -175,6 +175,7 @@ function runRepairs(
   expectedSessionId = primarySessionId,
   repairOperationKey = operationKey,
   prepareContext?: Parameters<typeof runTaskSessionValidationWithRepairs>[0]["prepareContext"],
+  signal: AbortSignal = new AbortController().signal,
 ) {
   return runTaskSessionValidationWithRepairs({
     ...(prepareContext === undefined ? {} : { prepareContext }),
@@ -187,7 +188,7 @@ function runRepairs(
       taskRecordStore: fixture.executionStore,
       git: fixture.git,
       commands: fixture.commands,
-      signal: new AbortController().signal,
+      signal,
       timeoutMilliseconds: 30_000,
     },
     openCode: fixture.openCode,
@@ -198,12 +199,37 @@ function runRepairs(
       model: "implementation-model",
       variant: "xhigh",
       timeoutMilliseconds: 60_000,
-      signal: new AbortController().signal,
+      signal,
     },
   });
 }
 
 describe("runTaskSessionValidationWithRepairs", () => {
+  it("preserves the validation checkpoint and budget on shutdown, then resumes checks without an AI repair", async () => {
+    const fixture = createFixture();
+    const controller = new AbortController();
+    fixture.runCommand.mockImplementation(async () => {
+      controller.abort("signal");
+      throw new CommandRunAbortedError();
+    });
+    await expect(
+      runRepairs(fixture, primarySessionId, operationKey, undefined, controller.signal),
+    ).rejects.toBeInstanceOf(CommandRunAbortedError);
+    expect(fixture.runCommand).toHaveBeenCalledTimes(1);
+    expect(fixture.runOpenCode).not.toHaveBeenCalled();
+    expect(fixture.executionStore.read(card.id)).toMatchObject({
+      phase: "validation",
+      retryCounters: { validation: 0 },
+      validationRepair: { status: "active" },
+    });
+    fixture.runCommand.mockResolvedValue({ exitCode: 0 });
+    await expect(runRepairs(fixture)).resolves.toMatchObject({
+      validation: { status: "passed" },
+      attempts: 0,
+    });
+    expect(fixture.runOpenCode).not.toHaveBeenCalled();
+  });
+
   it.each(["wrong-task", "unavailable"])(
     "does not reserve or dispatch a validation writer with %s refreshed context",
     async (kind) => {

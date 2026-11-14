@@ -16,6 +16,7 @@ import {
   configureProcessRuntime,
   PROCESS_CAPTURE_MAX_BYTES,
 } from "../src/process/process-runtime.js";
+import { attachContainedChildStatus } from "./support/contained-child-status.js";
 
 interface FakeChild extends EventEmitter {
   pid?: number;
@@ -29,7 +30,7 @@ function fakeChild(): FakeChild {
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.kill = vi.fn(() => true);
-  return child;
+  return attachContainedChildStatus(child);
 }
 
 describe("OpenCode streaming output", () => {
@@ -397,7 +398,7 @@ describe("OpenCode streaming output", () => {
     const aborted = run(child, { signal: controller.signal });
     child.stdout.emit("data", Buffer.from("before abort\n"));
     controller.abort();
-    child.emit("close", null);
+    child.emit("close", null, "SIGTERM");
     await expect(aborted).rejects.toBeInstanceOf(OpenCodeRunAbortedError);
 
     const secondChild = fakeChild();
@@ -405,7 +406,16 @@ describe("OpenCode streaming output", () => {
     secondChild.stdout.emit("data", Buffer.from("before timeout\n"));
     const rejection = expect(timeout).rejects.toBeInstanceOf(OpenCodeTimeoutError);
     await vi.advanceTimersByTimeAsync(6_000);
-    secondChild.emit("close", null);
+    secondChild.emit("close", null, "SIGTERM");
     await rejection;
+  });
+
+  it("retains a genuine nonzero payload result when shutdown races with its close", async () => {
+    const child = fakeChild();
+    const controller = new AbortController();
+    const result = run(child, { signal: controller.signal });
+    controller.abort();
+    child.emit("close", 7);
+    await expect(result).resolves.toMatchObject({ exitCode: 7 });
   });
 });

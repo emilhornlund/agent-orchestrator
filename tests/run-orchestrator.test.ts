@@ -19,6 +19,8 @@ import type { OpenCodeClient } from "../src/opencode/opencode-client.js";
 import { OpenCodeClient as RealOpenCodeClient } from "../src/opencode/opencode-client.js";
 import type { CommandRunner } from "../src/process/command-runner.js";
 import { CommandRunner as RealCommandRunner } from "../src/process/command-runner.js";
+import { CommandRunInterruptedError } from "../src/process/command-runner.js";
+import { ProcessExecutionError } from "../src/process/process-runtime.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import { transitionTaskExecutionRecord } from "../src/task-session/task-execution-transition.js";
 import { TaskPlanStore } from "../src/task-session/task-plan-store.js";
@@ -2533,32 +2535,41 @@ describe("runOrchestrator", () => {
     expect(notifier.send).not.toHaveBeenCalled();
   });
 
-  it("does not email a shutdown cancellation wrapped in a workflow error", async () => {
-    const controller = new AbortController();
-    const notifier: EmailNotifier = {
-      send: vi.fn(),
-    };
+  it.each([
+    new TrelloRequestAbortedError(),
+    new ProcessExecutionError("Git", "execution", "interrupted"),
+    new ProcessExecutionError("GitHub CLI", "execution", "interrupted"),
+    new CommandRunInterruptedError("SIGTERM"),
+    new DOMException("Request aborted", "AbortError"),
+  ])(
+    "does not email a typed shutdown cancellation wrapped in a workflow error (%#)",
+    async (cause) => {
+      const controller = new AbortController();
+      const notifier: EmailNotifier = {
+        send: vi.fn(),
+      };
 
-    pollProject.mockImplementation(async () => {
-      controller.abort();
-      throw new WorkflowError("Workflow", "Trello request failed", {
-        cause: new TrelloRequestAbortedError(),
+      pollProject.mockImplementation(async () => {
+        controller.abort();
+        throw new WorkflowError("Workflow", "Trello request failed", {
+          cause,
+        });
       });
-    });
 
-    await runOrchestrator(
-      {} as TrelloClient,
-      {} as GitClient,
-      {} as GitHubClient,
-      {} as OpenCodeClient,
-      {} as CommandRunner,
-      createConfig([createProject("project-a")]),
-      controller.signal,
-      notifier,
-    );
+      await runOrchestrator(
+        {} as TrelloClient,
+        {} as GitClient,
+        {} as GitHubClient,
+        {} as OpenCodeClient,
+        {} as CommandRunner,
+        createConfig([createProject("project-a")]),
+        controller.signal,
+        notifier,
+      );
 
-    expect(notifier.send).not.toHaveBeenCalled();
-  });
+      expect(notifier.send).not.toHaveBeenCalled();
+    },
+  );
 
   it("keeps independent workers running when Attention Required delivery fails", async () => {
     const controller = new AbortController();

@@ -16,7 +16,7 @@ const responses: Record<string, string> = {
   "git --list-cmds=main":
     "branch cat-file commit diff fetch ls-remote merge-base push rev-parse status worktree",
   "opencode --version": "1.0.0",
-  "opencode run --help": "--auto --pure --model --variant --dir --session --format",
+  "opencode run --help": "--auto --pure --model --variant --dir --session --format --title",
   "gh --version": "gh version 2.40.0",
   ...Object.fromEntries(
     GITHUB_CLI_COMMAND_CAPABILITIES.map((capability) => [

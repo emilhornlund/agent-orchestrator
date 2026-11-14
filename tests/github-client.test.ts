@@ -19,6 +19,7 @@ import {
 } from "../src/github/github-client.js";
 import type { ProjectConfig } from "../src/config/config.js";
 import { registerProcessSecrets } from "../src/process/process-runtime.js";
+import { attachContainedChildStatus } from "./support/contained-child-status.js";
 import {
   AGENT_ORCHESTRATOR_STATUS_END,
   AGENT_ORCHESTRATOR_STATUS_START,
@@ -37,7 +38,7 @@ function createFakeChild(): FakeChild {
   child.stderr = new EventEmitter();
   child.kill = vi.fn(() => true);
 
-  return child;
+  return attachContainedChildStatus(child);
 }
 
 function successfulOutputRunner(outputs: string[]): RunGitHubCommand {
@@ -930,8 +931,10 @@ describe("GitHubClient", () => {
     });
 
     expect(spawnMock).toHaveBeenCalledWith(
-      "gh",
-      [
+      expect.stringMatching(/bwrap$/u),
+      expect.arrayContaining([
+        "--unshare-pid",
+        "gh",
         "pr",
         "create",
         "--repo",
@@ -944,10 +947,10 @@ describe("GitHubClient", () => {
         "Example token=rotation",
         "--body",
         "Example body token=rotation",
-      ],
+      ]),
       {
         cwd: "/tmp/repository",
-        stdio: ["inherit", "pipe", "pipe"],
+        stdio: ["inherit", "pipe", "pipe", "pipe", "pipe"],
         detached: process.platform !== "win32",
         env: expect.objectContaining({
           PATH: process.env.PATH,
@@ -1080,7 +1083,7 @@ describe("GitHubClient", () => {
 
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
 
-    child.emit("close", null);
+    child.emit("close", null, "SIGTERM");
 
     await expect(request).rejects.toThrow(/GitHub CLI timeout; diagnostics: process-executions\//);
   });
@@ -1108,7 +1111,7 @@ describe("GitHubClient", () => {
 
     expect(child.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
     expect(child.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
-    child.emit("close", null);
+    child.emit("close", null, "SIGKILL");
     await rejection;
   });
 

@@ -24,6 +24,7 @@ COPY package.json yarn.lock ./
 RUN yarn install --frozen-lockfile --non-interactive --production && yarn cache clean
 COPY --from=build /app/dist ./dist
 COPY scripts/github-git-askpass.mjs ./scripts/github-git-askpass.mjs
+COPY scripts/contained-process-supervisor.mjs ./scripts/contained-process-supervisor.mjs
 USER node
 STOPSIGNAL SIGTERM
 CMD ["node", "dist/main.js"]

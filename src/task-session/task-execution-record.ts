@@ -223,8 +223,9 @@ export const primaryOperationSchema = z.strictObject({
   executions: z.number().int().nonnegative().safe(),
   failureExecutions: z.number().int().nonnegative().safe().optional(),
   dependencyOutages: z.number().int().nonnegative().safe().optional(),
+  cancelledExecutions: z.number().int().nonnegative().safe().optional(),
   accountedExecution: z.number().int().positive().safe().optional(),
-  lastExecutionClassification: z.enum(["failure", "dependency-outage"]).optional(),
+  lastExecutionClassification: z.enum(["failure", "dependency-outage", "cancelled"]).optional(),
   status: z.enum([
     "intent",
     "dispatched",
@@ -688,6 +689,7 @@ const taskExecutionRecordSchema = z
       })
       .optional(),
     recoveryWait: recoveryWaitSchema.optional(),
+    recoveryAttentionReason: z.string().min(1).max(2_000).optional(),
     primarySessionId: nonBlankIdentifier.optional(),
     sessionCreationStatus: sessionCreationStatus.optional(),
     sessionCreationAttempts: z.number().int().nonnegative().safe().optional(),
@@ -698,6 +700,11 @@ const taskExecutionRecordSchema = z
       .max(OPERATION_RECOVERY_MAX_EXECUTIONS)
       .optional(),
     sessionCreationExecutionId: nonBlankIdentifier.optional(),
+    sessionCreationTitle: nonBlankIdentifier.optional(),
+    sessionCreationCommand: nonBlankIdentifier.optional(),
+    sessionCreationAttentionNotified: z.boolean().optional(),
+    sessionCreationCancelled: z.boolean().optional(),
+    sessionCreationResult: primaryOperationSchema.shape.resultArtifact,
     sessionRecovery: sessionRecoveryStateSchema.optional(),
     planningAdvice: advisoryOutcomeSchema.optional(),
     planReviewAdvice: advisoryOutcomeSchema.optional(),

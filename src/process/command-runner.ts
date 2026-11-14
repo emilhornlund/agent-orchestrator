@@ -14,14 +14,17 @@ import {
   assertNoTerminalPr,
 } from "../task-session/terminal-pr-fence.js";
 import { getGitHubOperationProject } from "../github/github-operation-context.js";
+import { containedProcess, observeContainedProcess } from "./contained-process.js";
 import {
   PROCESS_CAPTURE_MAX_BYTES,
   appendBoundedOutput,
   beginProcessEvidence,
-  drainProcessGroup,
+  signalProcessGroup,
   getProcessRuntime,
+  guardProcessClose,
   ProcessEvidenceError,
   ProcessOutputLimitError,
+  ProcessExecutionError,
 } from "./process-runtime.js";
 
 const commandTerminationGraceMilliseconds = 5_000;
@@ -31,30 +34,7 @@ function signalProcessTree(
   signal: NodeJS.Signals,
   killChild: (signal: NodeJS.Signals) => boolean,
 ): void {
-  if (childPid === undefined || process.platform === "win32") {
-    killChild(signal);
-    return;
-  }
-
-  try {
-    process.kill(-childPid, signal);
-  } catch (error) {
-    const code = error instanceof Error && "code" in error ? error.code : undefined;
-
-    if (code !== "ESRCH") {
-      killChild(signal);
-    }
-  }
-}
-
-function processGroupExists(childPid: number | undefined): boolean {
-  if (childPid === undefined || process.platform === "win32") return false;
-  try {
-    process.kill(-childPid, 0);
-    return true;
-  } catch (error) {
-    return error instanceof Error && "code" in error && error.code === "EPERM";
-  }
+  signalProcessGroup(childPid, signal, killChild);
 }
 
 export interface CommandRunOptions {
@@ -183,15 +163,28 @@ const defaultRunCommand: RunCommand = async ({
       reject(error);
       return;
     }
-    const child = spawn(command, {
+    if (effectiveSignal?.aborted) {
+      execution.finish("not-dispatched", { cancellationRequested: true });
+      reject(new CommandRunAbortedError());
+      return;
+    }
+    let dispatch: ReturnType<typeof containedProcess>;
+    try {
+      dispatch = containedProcess("/bin/sh", ["-c", command]);
+    } catch (error) {
+      execution.finish("not-dispatched");
+      reject(error);
+      return;
+    }
+    const child = spawn(dispatch.command, dispatch.args, {
       cwd,
-      shell: true,
-      stdio: ["inherit", "pipe", "pipe"],
+      stdio: ["inherit", "pipe", "pipe", "pipe", "pipe"],
       detached: process.platform !== "win32",
       env: buildChildEnvironment(processFamily ?? "command", environment),
     });
     let settled = false;
     let timedOut = false;
+    let terminationRequested = false;
     let timeout: NodeJS.Timeout | undefined;
     let forceKillTimeout: NodeJS.Timeout | undefined;
     const stdoutRedactor = createSecretRedactor(effectiveSecretValues);
@@ -202,6 +195,18 @@ const defaultRunCommand: RunCommand = async ({
     let capturedOutput: string | undefined;
     let capturedErrorOutput: string | undefined;
     let captureFailure: Error | undefined;
+    let supervisorExitCode: number | null | undefined;
+    let payloadSpawned: boolean | undefined;
+    const closeGuard = guardProcessClose(child, (error) => {
+      if (settled) return;
+      flushOutput();
+      settle("process-group-ambiguous");
+      reject(error);
+    });
+    const supervision = observeContainedProcess(child, (error) => {
+      captureFailure = error;
+      terminate();
+    });
 
     function capture(
       text: string,
@@ -272,11 +277,18 @@ const defaultRunCommand: RunCommand = async ({
       }
 
       effectiveSignal?.removeEventListener("abort", handleAbort);
+      closeGuard.dispose();
       try {
         execution.finish(
           (captureFailure ?? execution.failure) !== undefined ? "evidence-failure" : status,
           {
             pid: child.pid,
+            containment: "linux-pid-namespace",
+            treeStopped:
+              supervisorExitCode !== undefined &&
+              ["success", "nonzero", "interrupted", "timeout", "spawn-failure"].includes(status),
+            ...(supervisorExitCode === undefined ? {} : { supervisorExitCode }),
+            ...(payloadSpawned === undefined ? {} : { payloadSpawned }),
             ...(exitCode === undefined ? {} : { exitCode }),
             ...(signalName === undefined ? {} : { signal: signalName }),
           },
@@ -291,34 +303,20 @@ const defaultRunCommand: RunCommand = async ({
     }
 
     function terminate(): void {
-      if (settled) {
+      if (settled || terminationRequested) {
         return;
       }
+      terminationRequested = true;
 
       signalProcessTree(child.pid, "SIGTERM", (signal) => child.kill(signal));
 
       forceKillTimeout = setTimeout(() => {
-        if (settled && !processGroupExists(child.pid)) {
+        if (settled) {
           return;
         }
 
         signalProcessTree(child.pid, "SIGKILL", (signal) => child.kill(signal));
-        void (async () => {
-          try {
-            await drainProcessGroup(child.pid, (signal) => child.kill(signal));
-            if (settled) return;
-            flushOutput();
-            settle(timedOut ? "timeout" : "interrupted");
-            reject(
-              timedOut ? new CommandTimeoutError(effectiveTimeout) : new CommandRunAbortedError(),
-            );
-          } catch (error) {
-            if (settled) return;
-            flushOutput();
-            settle("process-group-ambiguous");
-            reject(error);
-          }
-        })();
+        closeGuard.afterHardKill();
       }, commandTerminationGraceMilliseconds);
     }
 
@@ -332,7 +330,7 @@ const defaultRunCommand: RunCommand = async ({
 
     if (effectiveTimeout > 0) {
       timeout = setTimeout(() => {
-        if (settled) {
+        if (settled || terminationRequested) {
           return;
         }
 
@@ -341,14 +339,14 @@ const defaultRunCommand: RunCommand = async ({
       }, effectiveTimeout);
     }
 
-    child.stdout.on("data", (chunk: Buffer) => {
+    child.stdout!.on("data", (chunk: Buffer) => {
       const text = stdoutDecoder.write(chunk);
       const redacted = stdoutRedactor.push(text);
       writeOutput(redacted, process.stdout);
       capturedOutput = capture(redacted, capturedOutput, "stdout");
     });
 
-    child.stderr.on("data", (chunk: Buffer) => {
+    child.stderr!.on("data", (chunk: Buffer) => {
       const text = stderrDecoder.write(chunk);
       const redacted = stderrRedactor.push(text);
       writeOutput(redacted, process.stderr);
@@ -373,21 +371,23 @@ const defaultRunCommand: RunCommand = async ({
       );
     });
 
-    child.once("close", async (code, signalName) => {
+    child.once("close", (code, signalName) => {
       if (settled) {
         return;
       }
 
+      supervisorExitCode = code;
       try {
-        await drainProcessGroup(child.pid, (signalName) => child.kill(signalName));
+        const payload = supervision.result(code, signalName);
+        code = payload.spawned === false ? 1 : payload.code;
+        signalName = payload.signal;
+        payloadSpawned = payload.spawned;
       } catch (error) {
-        if (settled) return;
-        flushOutput();
-        settle("process-group-ambiguous");
-        reject(error);
-        return;
+        captureFailure =
+          error instanceof Error
+            ? error
+            : new ProcessEvidenceError("Invalid contained command result");
       }
-      if (settled) return;
 
       flushOutput();
       const interruptedBySignal =
@@ -395,19 +395,29 @@ const defaultRunCommand: RunCommand = async ({
         signalName !== undefined &&
         !timedOut &&
         effectiveSignal?.aborted !== true;
+      const cancelled =
+        effectiveSignal?.aborted === true &&
+        (code === 0 || ["SIGINT", "SIGTERM", "SIGKILL"].includes(signalName ?? ""));
       settle(
-        timedOut
-          ? "timeout"
-          : effectiveSignal?.aborted
-            ? "interrupted"
-            : interruptedBySignal
+        payloadSpawned === false
+          ? "spawn-failure"
+          : timedOut
+            ? "timeout"
+            : cancelled
               ? "interrupted"
-              : code === 0
-                ? "success"
-                : "nonzero",
+              : interruptedBySignal
+                ? "interrupted"
+                : code === 0
+                  ? "success"
+                  : "nonzero",
         code ?? undefined,
         signalName ?? undefined,
       );
+
+      if (payloadSpawned === false) {
+        reject(new ProcessExecutionError("Command", execution.executionId, "spawn-failure"));
+        return;
+      }
 
       if (timedOut) {
         reject(new CommandTimeoutError(effectiveTimeout));
@@ -420,13 +430,13 @@ const defaultRunCommand: RunCommand = async ({
         return;
       }
 
-      if (effectiveSignal?.aborted) {
+      if (cancelled) {
         reject(new CommandRunAbortedError());
         return;
       }
 
       if (interruptedBySignal) {
-        reject(new CommandRunInterruptedError(signalName));
+        reject(new CommandRunInterruptedError(signalName!));
         return;
       }
 
@@ -461,7 +471,7 @@ const defaultRunCommand: RunCommand = async ({
     });
 
     try {
-      execution.dispatched(child.pid);
+      execution.dispatched(child.pid, "linux-pid-namespace");
     } catch (error) {
       // All listeners and tree supervision are installed before the metadata
       // update. A failed PID binding is not permission to leave the child

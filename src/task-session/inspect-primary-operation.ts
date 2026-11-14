@@ -91,13 +91,16 @@ export async function inspectPrimaryOperationEvidence(
       };
     }
     if (
-      ["nonzero", "timeout", "interrupted"].includes(String(metadata.status)) &&
+      ["nonzero", "timeout", "interrupted", "spawn-failure"].includes(String(metadata.status)) &&
       metadata.treeStopped === true &&
       Number.isSafeInteger(metadata.exitCode) &&
-      (metadata.exitCode as number) !== 0 &&
+      (metadata.exitCode !== 0 ||
+        metadata.status === "interrupted" ||
+        metadata.status === "timeout") &&
       ["failed", "dispatched", "ambiguous"].includes(entry.status)
     ) {
-      let failureClassification: "dependency-outage" | undefined;
+      let failureClassification: "dependency-outage" | "cancelled" | undefined =
+        metadata.status === "interrupted" ? "cancelled" : undefined;
       const metadataHasClassification = metadata.failureClassification !== undefined;
       let payload: Record<string, unknown> | undefined;
       if (metadata.resultArtifact !== undefined) {
@@ -122,7 +125,9 @@ export async function inspectPrimaryOperationEvidence(
         if (
           !Number.isSafeInteger(payload.exitCode) ||
           payload.exitCode !== metadata.exitCode ||
-          (payload.exitCode as number) === 0 ||
+          (payload.exitCode === 0 &&
+            metadata.status !== "interrupted" &&
+            metadata.status !== "timeout") ||
           payload.processExecutionId !== entry.processExecutionId ||
           payload.sessionId !== metadata.sessionId ||
           typeof payload.output !== "string" ||

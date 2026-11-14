@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { containedProcess, observeContainedProcess } from "../process/contained-process.js";
 import { StringDecoder } from "node:string_decoder";
 import { buildChildEnvironment } from "../process/child-environment.js";
 
@@ -20,9 +21,8 @@ import { readPullRequestFields, type ReadPullRequestFields } from "./read-pull-r
 import { ProjectResourceError } from "../startup/project-resource-error.js";
 import {
   beginProcessEvidence,
-  drainProcessGroup,
   getProcessRuntime,
-  processGroupExists,
+  guardProcessClose,
   signalProcessGroup,
   appendBoundedOutput,
   ProcessEvidenceError,
@@ -1043,6 +1043,11 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
       ...runtime.secretValues,
     ].filter((value): value is string => value !== undefined);
     const execution = beginProcessEvidence(`gh ${args.join(" ")}`, cwd, environmentSecrets);
+    if (runtime.signal?.aborted) {
+      execution.finish("not-dispatched", { cancellationRequested: true });
+      reject(new ProcessExecutionError("GitHub CLI", execution.executionId, "interrupted"));
+      return;
+    }
     const contentFlags = new Set([
       "--body",
       "--title",
@@ -1061,9 +1066,17 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
         ? `${flag}=${redactRegisteredSecrets(argument.slice(separator + 1), environmentSecrets)}`
         : argument;
     });
-    const child = spawn("gh", safeArguments, {
+    let dispatch: ReturnType<typeof containedProcess>;
+    try {
+      dispatch = containedProcess("gh", safeArguments);
+    } catch (error) {
+      execution.finish("not-dispatched");
+      reject(error);
+      return;
+    }
+    const child = spawn(dispatch.command, dispatch.args, {
       cwd,
-      stdio: ["inherit", "pipe", "pipe"],
+      stdio: ["inherit", "pipe", "pipe", "pipe", "pipe"],
       detached: process.platform !== "win32",
       env: buildChildEnvironment("github", environment),
     });
@@ -1072,8 +1085,15 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
     let errorOutput = "";
     let settled = false;
     let timedOut = false;
+    let terminationRequested = false;
     let recorderFailure: Error | undefined;
     let forceKillTimeout: NodeJS.Timeout | undefined;
+    let payloadSpawned: boolean | undefined;
+    const hardKill = () => {
+      if (settled) return;
+      signalProcessGroup(child.pid, "SIGKILL", (signal) => child.kill(signal));
+      closeGuard.afterHardKill();
+    };
     const stdoutRedactor = createSecretRedactor(environmentSecrets);
     const stderrRedactor = createSecretRedactor(environmentSecrets);
     const stdoutDecoder = new StringDecoder("utf8");
@@ -1091,11 +1111,7 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
           error instanceof Error
             ? error
             : new ProcessEvidenceError("GitHub process recording failed");
-        signalProcessGroup(child.pid, "SIGTERM", (signal) => child.kill(signal));
-        forceKillTimeout = setTimeout(
-          () => signalProcessGroup(child.pid, "SIGKILL", (signal) => child.kill(signal)),
-          GITHUB_TERMINATION_GRACE_MS,
-        );
+        abort();
       }
     };
 
@@ -1110,32 +1126,50 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
       record("stdout", stdoutRemainder);
       record("stderr", stderrRemainder);
     };
+    const finishUnknown = (error: unknown) => {
+      if (settled) return;
+      flushRedactors();
+      settled = true;
+      clearTimeout(timeout);
+      runtime.signal?.removeEventListener("abort", abort);
+      if (forceKillTimeout) clearTimeout(forceKillTimeout);
+      closeGuard.dispose();
+      try {
+        execution.finish("process-group-ambiguous", {
+          pid: child.pid,
+          containment: "linux-pid-namespace",
+        });
+      } catch (finishError) {
+        recorderFailure ??=
+          finishError instanceof Error
+            ? finishError
+            : new ProcessEvidenceError("Process evidence finalization failed");
+      }
+      reject(error);
+    };
+    const closeGuard = guardProcessClose(child, finishUnknown);
+    const supervision = observeContainedProcess(child, (error) => {
+      recorderFailure = error;
+      abort();
+    });
 
     const timeout = setTimeout(() => {
-      if (settled) {
+      if (settled || terminationRequested) {
         return;
       }
 
       timedOut = true;
-      signalProcessGroup(child.pid, "SIGTERM", (signal) => child.kill(signal));
-
-      forceKillTimeout = setTimeout(() => {
-        if (settled && !processGroupExists(child.pid)) {
-          return;
-        }
-
-        signalProcessGroup(child.pid, "SIGKILL", (signal) => child.kill(signal));
-      }, GITHUB_TERMINATION_GRACE_MS);
+      abort();
     }, timeoutMilliseconds);
 
-    child.stdout.on("data", (chunk: Buffer | string) => {
+    child.stdout!.on("data", (chunk: Buffer | string) => {
       const text = stdoutRedactor.push(
         typeof chunk === "string" ? chunk : stdoutDecoder.write(chunk),
       );
       record("stdout", text);
     });
 
-    child.stderr.on("data", (chunk: Buffer | string) => {
+    child.stderr!.on("data", (chunk: Buffer | string) => {
       const text = stderrRedactor.push(
         typeof chunk === "string" ? chunk : stderrDecoder.write(chunk),
       );
@@ -1149,6 +1183,7 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
 
       flushRedactors();
       settled = true;
+      closeGuard.dispose();
       try {
         execution.finish("spawn-failure", {
           pid: child.pid,
@@ -1170,31 +1205,23 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
       reject(new ProcessExecutionError("GitHub CLI", execution.executionId, "spawn-failure"));
     });
 
-    child.once("close", async (code, signalName) => {
+    child.once("close", (code, signalName) => {
       if (settled) {
         return;
       }
 
+      const supervisorExitCode = code;
       try {
-        await drainProcessGroup(child.pid, (signal) => child.kill(signal));
+        const payload = supervision.result(code, signalName);
+        code = payload.spawned === false ? 1 : payload.code;
+        signalName = payload.signal;
+        payloadSpawned = payload.spawned;
       } catch (error) {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        runtime.signal?.removeEventListener("abort", abort);
-        if (forceKillTimeout !== undefined) clearTimeout(forceKillTimeout);
-        try {
-          execution.finish("process-group-ambiguous", { pid: child.pid });
-        } catch (finishError) {
-          recorderFailure ??=
-            finishError instanceof Error
-              ? finishError
-              : new ProcessEvidenceError("Process evidence finalization failed");
-        }
-        reject(error);
-        return;
+        recorderFailure =
+          error instanceof Error
+            ? error
+            : new ProcessEvidenceError("Invalid contained GitHub result");
       }
-      if (settled) return;
 
       flushRedactors();
       settled = true;
@@ -1203,17 +1230,28 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
       if (forceKillTimeout !== undefined) {
         clearTimeout(forceKillTimeout);
       }
-      const status = timedOut
-        ? "timeout"
-        : runtime.signal?.aborted
-          ? "interrupted"
-          : code === 0
-            ? "success"
-            : "nonzero";
+      const interrupted =
+        !timedOut &&
+        runtime.signal?.aborted === true &&
+        (code === 0 || ["SIGINT", "SIGTERM", "SIGKILL"].includes(signalName ?? ""));
+      const status =
+        payloadSpawned === false
+          ? "spawn-failure"
+          : timedOut
+            ? "timeout"
+            : interrupted
+              ? "interrupted"
+              : code === 0
+                ? "success"
+                : "nonzero";
       recorderFailure ??= execution.failure;
       try {
         execution.finish(recorderFailure === undefined ? status : "evidence-failure", {
           pid: child.pid,
+          containment: "linux-pid-namespace",
+          treeStopped: true,
+          supervisorExitCode,
+          ...(payloadSpawned === undefined ? {} : { payloadSpawned }),
           exitCode: code ?? 1,
           ...(signalName === null ? {} : { signal: signalName }),
         });
@@ -1227,8 +1265,21 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
         return;
       }
 
-      if (runtime.signal?.aborted) {
-        reject(new Error("GitHub CLI execution interrupted by runtime shutdown"));
+      if (payloadSpawned === false) {
+        reject(new ProcessExecutionError("GitHub CLI", execution.executionId, "spawn-failure"));
+        return;
+      }
+
+      if (interrupted) {
+        reject(
+          new ProcessExecutionError(
+            "GitHub CLI",
+            execution.executionId,
+            "interrupted",
+            code ?? 1,
+            signalName ?? undefined,
+          ),
+        );
         return;
       }
 
@@ -1259,14 +1310,24 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
     });
 
     const abort = (): void => {
-      if (settled) return;
+      if (settled || terminationRequested) return;
+      terminationRequested = true;
       signalProcessGroup(child.pid, "SIGTERM", (signal) => child.kill(signal));
-      forceKillTimeout = setTimeout(() => {
-        signalProcessGroup(child.pid, "SIGKILL", (signal) => child.kill(signal));
-      }, GITHUB_TERMINATION_GRACE_MS);
+      forceKillTimeout = setTimeout(hardKill, GITHUB_TERMINATION_GRACE_MS);
     };
     runtime.signal?.addEventListener("abort", abort, { once: true });
     if (runtime.signal?.aborted) abort();
+    child.once("spawn", () => {
+      try {
+        execution.dispatched(child.pid, "linux-pid-namespace");
+      } catch (error) {
+        recorderFailure =
+          error instanceof Error
+            ? error
+            : new ProcessEvidenceError("Could not bind contained GitHub execution");
+        abort();
+      }
+    });
   });
 
 export class GitHubClient {

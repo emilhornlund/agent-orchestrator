@@ -65,12 +65,13 @@ Planning, plan review, local checks and implementation review are advisory, not 
 gates. The orchestrator executes configured checks and records their actual results; meaningful safe
 implementation output is published even when those checks fail or advisory steps are unavailable.
 Both normal and draft PRs move to Human Review only after publication is verified. Failed, skipped
-or uncertain local checks and material unresolved issues produce a draft with accurate disclosure.
-AI reviewer approval is not required; the primary agent supplies substantive dispositions for review
-concerns. None of these signals authorizes a merge. Unsafe Git state, unknown writers and genuinely
-unrecoverable primary execution remain distinct operational failures with preserved state. No manual
-check-name configuration is required. Local mock tests cover the lifecycle; no live
-Trello/GitHub/OpenCode pilot has been performed. See
+or uncertain configured local checks and material unresolved issues produce a draft with accurate
+disclosure. Unconfigured optional quality commands remain informationally skipped and do not by
+themselves require a draft. AI reviewer approval is not required; the primary agent supplies
+substantive dispositions for review concerns. None of these signals authorizes a merge. Unsafe Git
+state, unknown writers and genuinely unrecoverable primary execution remain distinct operational
+failures with preserved state. No manual check-name configuration is required. Local mock tests
+cover the lifecycle; the recovery reference records the scope and limits of live qualification. See
 [Configuration](configuration.md#ci-expectation-discovery) and
 [Recovery](recovery.md#restart-and-task-ownership).
 
@@ -229,12 +230,13 @@ command is recorded as skipped, never passed. An independent reviewer uses a sep
 assess the plan's requirements. Validation, coverage, and review repairs are bounded; after the last
 correction the relevant configured checks run again.
 
-Current passing checks and no known material unresolved issues permit normal publication; failed,
-skipped or uncertain checks and material outstanding findings are disclosed on a draft PR. Bounded
-advisory validation and review can improve the result but cannot veto safe publication of meaningful
-work. Exhausted quality advice is not a primary-process crash. Missing safety evidence, stale source
-snapshots or ambiguous external acceptance still require reconciliation, not an assumed success.
-Neither review nor CI evidence authorizes automatic merging.
+Current passing configured checks and no known material unresolved issues permit normal publication;
+failed, skipped or uncertain configured checks and material outstanding findings are disclosed on a
+draft PR. Unconfigured optional commands remain skipped without themselves forcing draft status.
+Bounded advisory validation and review can improve the result but cannot veto safe publication of
+meaningful work. Exhausted quality advice is not a primary-process crash. Missing safety evidence,
+stale source snapshots or ambiguous external acceptance still require reconciliation, not an assumed
+success. Neither review nor CI evidence authorizes automatic merging.
 
 The orchestrator then creates one trusted commit with the configured Git identity and publishes or
 reuses the same task PR through fetch and ordinary fast-forward-safe push. This release disables
@@ -372,18 +374,18 @@ internal execution phase, including across acknowledgment loss or restart. Older
 correction records retain their previous Human Review expectation until a verified explicit
 transition occurs. Validation, coverage and independent review are advisory during correction:
 failed checks or bounded review unavailability cannot veto additive publication to the same PR.
-Current failures, skipped/uncertain results and unresolved requests keep the PR as a draft and are
-disclosed. Review dispatch recovery is bounded per source and retained across interruption;
-human-requested rounds have no lifetime cap. A genuinely unrecoverable primary correction preserves
-the PR, unshipped changes and ownership in an explicit recoverable wait, rather than failing the
-task or publishing interrupted work as a correction. A requested-changes pass captures the
-authoritative PR head SHA used to select the feedback and re-reads the expected open PR head after
-review bodies and inline comments have been collected. Only a stable, commit-exact snapshot can move
-the card to Working or reach OpenCode. If the head changes, the complete snapshot is discarded, the
-card remains in Human Review with its existing PR and branch, and reconciliation logs the project,
-card, PR, and both SHAs before retrying on the next poll. A retry that reuses already committed work
-skips all OpenCode stages, including attachment-dependent prompts, and proceeds directly to
-publication.
+Current configured-check failures, skipped/uncertain configured results and unresolved requests keep
+the PR as a draft and are disclosed. Review dispatch recovery is bounded per source and retained
+across interruption; human-requested rounds have no lifetime cap. A genuinely unrecoverable primary
+correction preserves the PR, unshipped changes and ownership in an explicit recoverable wait, rather
+than failing the task or publishing interrupted work as a correction. A requested-changes pass
+captures the authoritative PR head SHA used to select the feedback and re-reads the expected open PR
+head after review bodies and inline comments have been collected. Only a stable, commit-exact
+snapshot can move the card to Working or reach OpenCode. If the head changes, the complete snapshot
+is discarded, the card remains in Human Review with its existing PR and branch, and reconciliation
+logs the project, card, PR, and both SHAs before retrying on the next poll. A retry that reuses
+already committed work skips all OpenCode stages, including attachment-dependent prompts, and
+proceeds directly to publication.
 
 Human feedback includes review summaries, standalone PR comments and inline discussions, including
 discussion submitted without a changes-requested verdict. It does not require a new review on the

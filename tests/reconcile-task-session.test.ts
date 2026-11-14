@@ -204,6 +204,23 @@ function canonicalSetupFixture() {
 }
 
 describe("reconcileTaskSession", () => {
+  it("retains the exact recovery blocker across later polls without releasing a missing worktree", async () => {
+    const f = fixture("ci");
+    const first = await f.reconcile({ worktreeExists: false });
+    expect(first).toMatchObject({
+      status: "attention-required",
+      reason: "Owned worktree is missing, on the wrong branch, or has an active rebase",
+    });
+    expect(f.store.read("card")?.recoveryAttentionReason).toBe(
+      "Owned worktree is missing, on the wrong branch, or has an active rebase",
+    );
+    const later = await f.reconcile();
+    expect(later).toMatchObject({
+      status: "attention-required",
+      reason: "Owned worktree is missing, on the wrong branch, or has an active rebase",
+    });
+    expect(f.store.read("card")?.retryCounters.ci).toBe(0);
+  });
   it("adopts a completed setup process from authoritative evidence after restart", async () => {
     const f = canonicalSetupFixture();
     const marker = path.join(root, "first-setup-attempt");

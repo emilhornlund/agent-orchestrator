@@ -40,6 +40,12 @@ present. Never delete an unknown worktree or discard changes as a first response
 
 ## Restart and task ownership
 
+If startup reports that project ownership is already held, inspect the recorded owner PID in the
+error: another foreground or background instance may still be running and polling. Stop that
+instance gracefully before starting a replacement. Kernel locking determines ownership; a retained
+lock pathname or old owner metadata alone does not mean the project is locked, and deleting those
+files is not a recovery procedure.
+
 New initial publications use a durable initial-publication checkpoint. Commit, push, PR creation and
 initial Trello synchronization retain their original mutation intents and verified identities across
 restart. These checkpoints use automatic paced rechecks when GitHub or Trello is unavailable; they
@@ -72,8 +78,17 @@ identity/accounting separately.
 Recognized structured provider outages retain the checkpoint for paced rechecks, including across
 the process-result/ledger-completion gap; ordinary test text naming a transport error is not outage
 proof. Unknown running evidence after supervisor loss remains explicitly ambiguous until
-authoritative termination can be established. The known escaped-descendant limitation is not proof
-that the process stopped or permission for a competing writer.
+authoritative termination can be established. New managed commands run in private PID namespaces:
+namespace-init exit terminates even detached descendants. This does not retroactively prove that
+older process-group-only executions stopped, or turn missing finalization evidence into permission
+for a competing writer. Retained ambiguous executions still require authoritative reconciliation.
+
+Verified intentional cancellation of a primary operation is accounted separately from genuine
+failures. Restart retains the actual dispatch count, session binding and source changes, and retries
+only after process-stop verification; repeated cooperative shutdowns do not exhaust the primary
+operation's three-genuine-failure allowance. A coincident genuine nonzero exit, timeout, malformed
+process evidence or uncertain stop remains a failure or ambiguity, rather than being hidden by the
+shutdown signal.
 
 A queued `Ready for Agent` claim resumes only when its persisted event identity and expected owned
 worktree/branch match the card. An owned `Working` implementation resumes from its recorded phase
@@ -82,6 +97,14 @@ relevant trusted publication evidence. A trusted published commit can be reused;
 creates a duplicate commit, push, or PR. Refinement events use the same project mutation queue and
 expected attempt-owned worktree; ambiguous ownership preserves the queue and blocks subsequent
 mutations.
+
+Published-task recovery and CI repair resolve the worktree and branch from the canonical attempt's
+recorded resources. Later attempts may use `<card-id>--<attempt-id>`; reconstructing a card-only
+path is not valid recovery evidence. A genuine missing or mismatched worktree remains fenced. New
+recovery escalations retain a sanitized `recoveryAttentionReason`, so subsequent polls expose the
+original blocker rather than only reporting that the task was already escalated. Correcting an
+environment or software defect does not automatically clear an existing attention fence; the
+original attempt must be revalidated under its project lease before resumption.
 
 If a different live worker owns the queue, a second poll does not steal its event. A failed or
 uncertain event retains ownership until verified recovery; do not manually clear it to start another
@@ -152,6 +175,14 @@ does not approve reviews, dismiss decisions, or resolve reviewer threads.
 
 ## Terminal pull requests
 
+Terminal process-stop checks retain earlier explicit operator startup-stop attestations. New
+attestations bind the exact initial execution IDs and metadata hashes and are referenced durably.
+Older retained attestations are recognised only for unchanged, pre-attestation initial OpenCode
+metadata with the historical missing-finalization signature, matching attempt/worktree and no
+primary-operation ownership. This does not rewrite process history or infer termination from PID
+absence; later or unassociated unknown executions remain blocked. A deferred terminal transition
+reports the specific process-evidence artifact rather than only a generic cleanup message.
+
 An authoritative merged PR moves its card to `Done`; a deliberately closed unmerged PR moves its
 card to `Backlog`. A persisted terminal queue event owns the operation across external moves and
 cleanup. On restart, polling rechecks PR identity/state and resumes the matching event. Repeated
@@ -166,6 +197,11 @@ history. Known owned isolated resources may remain preserved without blocking te
 unknown identity, execution or pending effects cannot. Required terminal moves and comments must be
 verified before the next task. An unknown comment outcome remains pending even when the card already
 appears in its destination list.
+
+A verified terminal Trello outcome is separate from removing local artifacts. Known owned worktrees
+containing ignored setup/build output remain preserved with an `ignored-output` cleanup diagnostic;
+this does not mean the merge was unobserved or that tracked task changes are dirty. Safe
+preservation must not prevent verified Done reconciliation or project release.
 
 ## Additive maintenance and legacy rewrite fences
 
@@ -298,23 +334,45 @@ uncertainty refuses recovery. It does not permit resetting interrupted implement
 unknown session ownership.
 
 With `--session`, the same command instead binds the explicitly identified original session after
-verifying a successful stopped initial process and the session's exact worktree identity. It does
-not create a replacement session. This handles older plugin-contaminated startup output; subsequent
-orchestrated runs use OpenCode's `--pure` mode so external plugin console output cannot corrupt the
-JSON event protocol. Startup requires that CLI capability. Some plugins still emit tagged
-import-time banners under `--pure`; the process adapter removes only a bounded tagged bootstrap
-preamble from returned output, retaining the original bytes in child stdout evidence. Malformed JSON
-and interleaved diagnostics remain errors; strict event parsing remains unchanged. Resumed planning
-also explicitly requests JSON events rather than accidentally switching to formatted terminal
-output.
+the operator confirms process-tree termination and the command verifies the session's exact worktree
+identity. This explicit attestation is retained separately from automatic process evidence; it does
+not fabricate a successful process result or create a replacement session. Both legacy attention
+states and automatically monitored planning waits are supported. This handles older
+plugin-contaminated startup output; subsequent orchestrated runs use OpenCode's `--pure` mode so
+external plugin console output cannot corrupt the JSON event protocol. Startup requires that CLI
+capability. Some plugins still emit tagged import-time banners under `--pure`; the process adapter
+removes only a bounded tagged bootstrap preamble from returned output, retaining the original bytes
+in child stdout evidence. Malformed JSON and interleaved diagnostics remain errors; strict event
+parsing remains unchanged. Resumed planning also explicitly requests JSON events rather than
+accidentally switching to formatted terminal output.
 
-New initial-session dispatches persist their execution identity before spawning and finalize process
-evidence even when the session event stream is missing or malformed. A nonzero startup can be
-retried only after stopped-process evidence and authoritative absence of a worktree session are
-established. Three verified failures exhaust the existing operation recovery bound and trigger
-verified Failed handling rather than leaving the card in Working. Unknown acceptance remains
-preserved for explicit reconciliation; an empty event stream alone never authorizes a second
-session.
+New initial-session dispatches persist a unique `--title` correlation intent, then bind execution
+identity before spawning, and finalize process evidence even when the event stream is malformed.
+Startup verifies the CLI supports `--title`. Polling automatically reconciles persisted `creating`
+and `ambiguous` initial creation before general task recovery:
+
+- Verify the original card, project queue, worktree and branch ownership before resuming anything.
+- Recover the original session from finalized process/result evidence or the persisted correlation
+  title and complete session inventory, only after process-tree termination is established.
+- Reuse a hashed completed planning result instead of repeating its OpenCode dispatch. A known lost
+  session enters the existing context-reconstruction protocol; its recovered planning output is
+  retained in reconstruction history rather than replaced with context-free work.
+- If advisory output is unavailable or corrupt, preserve it without replaying or declaring it valid;
+  a separately verified stopped original session can reacquire advice without creating another
+  session or treating the missing advice as a primary execution failure.
+- Retry a conclusively stopped creation with no surviving session, or a new intent proven never
+  dispatched. Genuine startup failures, including conclusive pre-dispatch failures, retain the
+  existing three-failure allowance; provider outages do not consume it. Exhaustion uses verified
+  Failed move/comment handling before project release.
+- Unknown termination, incomplete session inventory, contradictory identity/process evidence or
+  legacy missing provenance retain ownership in an explicit wait with paced rechecks. Attention
+  reporting is deduplicated after repeated inconclusive checks. These are evidence-dependent waiting
+  conditions, not an absorbing internal attention state or permission to create a duplicate session.
+  Missing PIDs, elapsed time, and a negative immediate read are never stopped-process proof.
+
+When authoritative evidence becomes available, a later poll resumes automatically. If an old lost
+supervisor cannot supply termination proof, the explicit operator attestation command above remains
+necessary; automatic recovery never invents safety evidence or discards preserved work.
 
 For an imported legacy `attention-required` implementation without terminal-failure proof, an
 explicitly authorized move to Failed can retire the matching legacy queue event after identity/owner
@@ -331,5 +389,10 @@ and deliberate retries never require internal-file edits. Unsupported or ambiguo
 be established safely stays preserved for operator/support resolution rather than receiving a
 destructive generic reset command.
 
-Recovery has been tested only with local fixtures and mocked services. No live Trello/GitHub pilot,
-real OpenCode session restart, or external API availability test has been performed.
+Live qualification on 2026-11-14 delivered
+[PR #229](https://github.com/emilhornlund/agent-orchestrator/pull/229) through Human Review and
+reconciled CI, including original-session reuse and a restart during validation. Its initial startup
+blockage required operator assistance. Interrupted-creation failure injection and the automatic
+reconciliation cases above are qualified with local durable-state fixtures and simulated external
+boundaries; arbitrary supervisor loss and real service outages are not claimed universally
+qualified.

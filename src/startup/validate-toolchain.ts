@@ -98,6 +98,7 @@ export async function validateGitAndOpenCode(
   commands: ToolchainCommands,
   timeoutMilliseconds = 5 * 60_000,
 ): Promise<void> {
+  await validateIsolation(commands, timeoutMilliseconds);
   await validateVersion(commands, "git", MINIMUM_GIT_VERSION, "Git", timeoutMilliseconds);
   await validateVersion(
     commands,
@@ -108,7 +109,6 @@ export async function validateGitAndOpenCode(
   );
   await validateGitCapabilities(commands, timeoutMilliseconds);
   await validateOpenCodeCapabilities(commands, timeoutMilliseconds);
-  await validateIsolation(commands, timeoutMilliseconds);
 }
 
 export async function validateGit(
@@ -168,7 +168,16 @@ async function validateOpenCodeCapabilities(
 ): Promise<void> {
   const result = await probe(commands, "opencode", ["run", "--help"], timeoutMilliseconds);
   const help = [result.output ?? "", result.errorOutput ?? ""].join("\n");
-  const required = ["--auto", "--pure", "--model", "--variant", "--dir", "--session", "--format"];
+  const required = [
+    "--auto",
+    "--pure",
+    "--model",
+    "--variant",
+    "--dir",
+    "--session",
+    "--format",
+    "--title",
+  ];
   const missing = required.filter((option) => !help.includes(option));
   if (missing.length)
     throw new ToolchainCompatibilityError(

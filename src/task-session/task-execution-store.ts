@@ -563,6 +563,33 @@ export class TaskExecutionStore {
     );
   }
 
+  /** Verify the fixed child-result artifact against its finalized metadata. */
+  readProcessResult(cardId: string, executionId: string): unknown | null {
+    const raw = this.readProcessExecution(cardId, executionId, "process-executions");
+    if (!raw || typeof raw !== "object" || !("resultArtifact" in raw)) return null;
+    const ref = raw.resultArtifact;
+    if (
+      !ref ||
+      typeof ref !== "object" ||
+      !("path" in ref) ||
+      ref.path !== "result.json" ||
+      !("sha256" in ref) ||
+      typeof ref.sha256 !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(ref.sha256)
+    )
+      throw new Error("Invalid process result reference");
+    const root = this.processExecutionDirectory(cardId);
+    if (!root) return null;
+    const file = path.join(root, "process-executions", executionId, "result.json");
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 700 * 1024)
+      throw new Error("Unsafe process result artifact");
+    const bytes = fs.readFileSync(file);
+    if (createHash("sha256").update(bytes).digest("hex") !== ref.sha256)
+      throw new Error("Process result identity mismatch");
+    return JSON.parse(bytes.toString("utf8")) as unknown;
+  }
+
   private validateFallbackArtifact(filePath: string, digest: string, expectedBytes: number): void {
     const stats = fs.lstatSync(filePath);
     if (

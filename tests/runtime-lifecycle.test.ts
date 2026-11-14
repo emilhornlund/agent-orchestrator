@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { bootstrap } from "../src/main.js";
 import * as startup from "../src/startup/run-startup.js";
+import * as configuration from "../src/config/config.js";
+import { ProcessExecutionError } from "../src/process/process-runtime.js";
 import {
   installProcessHandlers,
   type ProcessEventSource,
@@ -59,6 +61,39 @@ function createProcessEventSource(): {
 }
 
 describe("RuntimeLifecycle", () => {
+  it.each(["interrupted", "nonzero"] as const)(
+    "classifies a startup %s during shutdown without hiding genuine failure",
+    async (classification) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "startup-cancellation-"));
+      temporaryDirectories.push(root);
+      const config = configuration.parseConfig(
+        fs.readFileSync(new URL("../config.example.yaml", import.meta.url), "utf8"),
+      );
+      config.workflow.contextRoot = path.join(root, "runtime");
+      const load = vi.spyOn(configuration, "loadConfig").mockReturnValue(config);
+      vi.stubEnv("TRELLO_API_KEY", "fixture-key");
+      vi.stubEnv("TRELLO_TOKEN", "fixture-token");
+      const testLogger = createLogger();
+      const lifecycle = new RuntimeLifecycle({ logger: testLogger });
+      const run = vi.spyOn(startup, "runStartup").mockImplementation(async () => {
+        lifecycle.requestSignalShutdown("SIGTERM");
+        throw new Error("tool probe stopped", {
+          cause: new ProcessExecutionError("Git", "fixture", classification, 1),
+        });
+      });
+      try {
+        await expect(bootstrap(lifecycle, createProcessEventSource().processObject)).resolves.toBe(
+          classification === "interrupted" ? 0 : 1,
+        );
+        expect(testLogger.error).toHaveBeenCalledTimes(classification === "interrupted" ? 0 : 1);
+      } finally {
+        load.mockRestore();
+        run.mockRestore();
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+
   it("logs a startup failure, aborts, and returns a non-zero bootstrap status", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "runtime-lifecycle-"));
     temporaryDirectories.push(root);

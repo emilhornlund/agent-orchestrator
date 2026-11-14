@@ -11,7 +11,9 @@ import { isRetryableGitHubError } from "../github/github-client.js";
 import { isRetryableTrelloError } from "../trello/trello-client.js";
 import { assertSetupInventoryIdentity, captureSetupEffects } from "../process/run-setup.js";
 import { OPERATION_RECOVERY_MAX_EXECUTIONS } from "./operation-recovery-policy.js";
+import { redactSecrets, sanitizeControlledText } from "../security/redact-secrets.js";
 import {
+  getProcessRuntime,
   isSameProcessInstance,
   isVerifiedStoppedExecution,
   isVerifiedSuccessfulExecution,
@@ -102,6 +104,9 @@ function preserveAttention(
   const persisted = store.compareAndSwap(record.cardId, record.revision, {
     ...next,
     recoveryWait: undefined,
+    recoveryAttentionReason: sanitizeControlledText(
+      redactSecrets(reason, getProcessRuntime().secretValues),
+    ).slice(0, 2_000),
   });
   return { status: "attention-required", reason, record: persisted };
 }
@@ -486,7 +491,7 @@ export async function reconcileTaskSession(
   if (record.phase === "attention-required") {
     return {
       status: "attention-required",
-      reason: "Task was already escalated",
+      reason: record.recoveryAttentionReason ?? "Task was already escalated",
       record,
     };
   }

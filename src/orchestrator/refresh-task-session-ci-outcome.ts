@@ -5,6 +5,10 @@ import type { TrelloCard } from "../trello/trello-client.js";
 import type { TaskExecutionRecord } from "../task-session/task-execution-record.js";
 import type { PrMaintenanceStore } from "../task-session/pr-maintenance-store.js";
 import { refreshPrAutomationOutcome } from "./refresh-pr-automation-outcome.js";
+import { decideValidatedHumanReviewPublication } from "../task-session/verified-publication-decision.js";
+import { restorePersistedTaskSessionQualityEvidence } from "../task-session/run-task-session-validation.js";
+import { publicationQualityFacts, ciOutcomeFacts } from "./publication-quality-summary.js";
+import { getSessionLogPath } from "../logging/session-log.js";
 import {
   implementationReviewResultSchema,
   hasUndisposedReviewConcerns,
@@ -41,12 +45,41 @@ export async function refreshTaskSessionCiOutcome(options: {
   const episode = record.ciRepair;
   const quality = record.publicationQuality;
   const review = implementationReviewResultSchema.safeParse(quality?.review);
+  const localEvidence = !quality
+    ? null
+    : {
+        currentContentIdentity: quality.contentIdentity,
+        ...(project.repository.validationCommand === undefined
+          ? {}
+          : { validationCommand: project.repository.validationCommand }),
+        ...(project.repository.coverageCommand === undefined
+          ? {}
+          : { coverageCommand: project.repository.coverageCommand }),
+        validation: restorePersistedTaskSessionQualityEvidence(quality.validation),
+        coverage:
+          quality.coverageEvidence === undefined
+            ? null
+            : restorePersistedTaskSessionQualityEvidence(quality.coverageEvidence),
+        review: review.success ? review.data : null,
+      };
   const qualityUnresolved = maintenance
     ? maintenance.qualityVerification?.status !== "passed"
     : !quality ||
-      quality.validation.status !== "passed" ||
-      (project.repository.coverageCommand !== undefined &&
-        quality.coverageEvidence?.status !== "passed") ||
+      !decideValidatedHumanReviewPublication({
+        currentContentIdentity: quality.contentIdentity,
+        ...(project.repository.validationCommand === undefined
+          ? {}
+          : { validationCommand: project.repository.validationCommand }),
+        ...(project.repository.coverageCommand === undefined
+          ? {}
+          : { coverageCommand: project.repository.coverageCommand }),
+        validation: restorePersistedTaskSessionQualityEvidence(quality.validation),
+        coverage:
+          quality.coverageEvidence === undefined
+            ? null
+            : restorePersistedTaskSessionQualityEvidence(quality.coverageEvidence),
+        review: null,
+      }).allowed ||
       !review.success ||
       hasUndisposedReviewConcerns(
         review.data,
@@ -64,7 +97,7 @@ export async function refreshTaskSessionCiOutcome(options: {
       qualityUnresolved ||
       ["exhausted", "stopped"].includes(episode?.status ?? ""),
     facts: [
-      `Observed CI for this revision: ${JSON.stringify(evaluation)}`,
+      ...ciOutcomeFacts(evaluation),
       ...(record.ciObservationWindow?.headSha === record.pullRequest.headSha &&
       record.ciObservationWindow.timedOut
         ? [
@@ -73,7 +106,7 @@ export async function refreshTaskSessionCiOutcome(options: {
         : []),
       ...(episode
         ? [
-            `CI episode: ${JSON.stringify({ id: episode.cycleId, trigger: episode.initiatingEventId, status: episode.status, attempts: record.retryCounters.ci, maximum: episode.maxAttempts ?? 2, stopReason: episode.stopReason })}`,
+            `CI repair episode: ${episode.status}; attempts ${record.retryCounters.ci}/${episode.maxAttempts ?? 2}${episode.stopReason ? `; stop reason: ${episode.stopReason}` : ""}.`,
           ]
         : []),
       ...(episode?.stopReason === "no-change"
@@ -84,10 +117,14 @@ export async function refreshTaskSessionCiOutcome(options: {
       ...(maintenance
         ? [
             `Target synchronization merged ${maintenance.targetBaseHead} into ${maintenance.expectedRemoteHead} without rewriting published commits.`,
-            `Maintenance quality evidence: ${JSON.stringify(maintenance.qualityVerification)}`,
+            `Maintenance quality: ${maintenance.qualityVerification?.status ?? "unavailable"}; diagnostics: ${getSessionLogPath(project.id, card.id)}.`,
           ]
         : [
-            `Recorded local quality evidence (identified by source snapshot): ${JSON.stringify(record.publicationQuality ?? { status: "unavailable" })}`,
+            ...(localEvidence
+              ? publicationQualityFacts(localEvidence, {
+                  diagnosticLog: getSessionLogPath(project.id, card.id),
+                })
+              : ["Recorded local quality evidence: unavailable; not represented as passed."]),
           ]),
       "AI advice is not approval to merge. Human merge or closure controls the task outcome.",
     ],

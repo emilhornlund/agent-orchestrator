@@ -4,6 +4,7 @@ import fs from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { redactSecrets } from "../security/redact-secrets.js";
+import type { ChildProcess } from "node:child_process";
 
 let runtimeRoot: string | undefined;
 let lifecycleSignal: AbortSignal | undefined;
@@ -13,6 +14,20 @@ export function withProcessCancellationSignal<T>(signal: AbortSignal, operation:
 }
 let secretValues: readonly string[] = [];
 const registeredSecrets = new Set<string>();
+const containedControls = new Map<
+  number,
+  { send: (signal: NodeJS.Signals) => boolean; startIdentity: string | undefined }
+>();
+export function registerContainedProcessControl(
+  pid: number,
+  send: (signal: NodeJS.Signals) => boolean,
+): () => void {
+  const entry = { send, startIdentity: processStartIdentity(pid) };
+  containedControls.set(pid, entry);
+  return () => {
+    if (containedControls.get(pid) === entry) containedControls.delete(pid);
+  };
+}
 let operationTimeoutMilliseconds = 2 * 60 * 1_000;
 const ambiguityHandler = new AsyncLocalStorage<(pid: number | undefined) => void>();
 export interface ProcessArtifactEvent {
@@ -81,8 +96,9 @@ export function isVerifiedStoppedExecution(
   )
     return false;
   return (
+    evidence.status === "not-dispatched" ||
     (evidence.treeStopped === true &&
-      ["nonzero", "timeout", "interrupted"].includes(evidence.status)) ||
+      ["nonzero", "timeout", "interrupted", "spawn-failure"].includes(evidence.status)) ||
     (evidence.status === "spawn-failure" && evidence.dispatchState === "not-dispatched")
   );
 }
@@ -283,17 +299,24 @@ export function beginProcessEvidence(
   let bytesWritten = 0;
   let finished = false;
   let failure: ProcessEvidenceError | undefined;
+  let dispatchIdentity: Record<string, unknown> = {};
   return {
     executionId,
     metadataPath,
     artifactRoot: executionsRoot,
-    dispatched(pid: number | undefined) {
+    dispatched(pid: number | undefined, containment?: "linux-pid-namespace") {
       const startIdentity = processStartIdentity(pid);
+      dispatchIdentity = {
+        pid,
+        ...(startIdentity === undefined ? {} : { pidStartIdentity: startIdentity }),
+        ...(containment === undefined ? {} : { containment }),
+      };
       writeMetadata({
         status: "running",
         dispatchState: "dispatched",
         pid,
         ...(startIdentity === undefined ? {} : { pidStartIdentity: startIdentity }),
+        ...(containment === undefined ? {} : { containment }),
       });
     },
     get failure() {
@@ -339,10 +362,12 @@ export function beginProcessEvidence(
           }
         }
         writeMetadata({
+          ...dispatchIdentity,
           finishedAt,
           durationMilliseconds,
           status: finalStatus,
-          ...(status === "spawn-failure" && fields.pid === undefined
+          ...(status === "not-dispatched" ||
+          (status === "spawn-failure" && fields.pid === undefined)
             ? { dispatchState: "not-dispatched" }
             : { dispatchState: "dispatched" }),
           treeStopped:
@@ -382,6 +407,14 @@ export function signalProcessGroup(
     fallback?.(signal);
     return;
   }
+  const contained = containedControls.get(pid);
+  if (contained) {
+    if (["SIGTERM", "SIGINT"].includes(signal) && contained.send(signal)) return;
+    if (isSameProcessInstance(pid, contained.startIdentity) !== true) {
+      fallback?.(signal);
+      return;
+    }
+  }
   try {
     process.kill(-pid, signal);
   } catch (error) {
@@ -405,6 +438,37 @@ export class ProcessGroupTerminationError extends Error {
     super(`Unable to verify termination of owned process group ${pid ?? "unknown"}`);
     this.name = "ProcessGroupTerminationError";
   }
+}
+
+/** A hard-killed supervisor must close within a bounded period. If it does not,
+ * retain ownership through the existing ambiguity fence, never invent stop proof. */
+export function guardProcessClose(
+  child: Pick<ChildProcess, "pid" | "once">,
+  onUnknown: (error: ProcessGroupTerminationError) => void,
+) {
+  const onAmbiguity = ambiguityHandler.getStore();
+  let closed = false;
+  let timer: NodeJS.Timeout | undefined;
+  const dispose = () => {
+    if (timer) clearTimeout(timer);
+    timer = undefined;
+  };
+  child.once("close", () => {
+    closed = true;
+    dispose();
+  });
+  return {
+    dispose,
+    afterHardKill() {
+      if (closed || timer) return;
+      timer = setTimeout(() => {
+        timer = undefined;
+        if (closed) return;
+        onAmbiguity?.(child.pid);
+        onUnknown(new ProcessGroupTerminationError(child.pid));
+      }, 2_000);
+    },
+  };
 }
 
 // Linux keeps orphaned zombies visible to kill(-pgid, 0) until their parent

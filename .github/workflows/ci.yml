@@ -29,6 +29,42 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
+      - name: Provision and verify process isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
+          # Provision this disposable runner for the same nested namespaces
+          # required by the production startup probe. Ubuntu's AppArmor userns
+          # restriction otherwise blocks nested execution and process supervision.
+          if sysctl -n kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          if sysctl -n kernel.unprivileged_userns_clone >/dev/null 2>&1; then
+            sudo sysctl -w kernel.unprivileged_userns_clone=1
+          fi
+          # The executable-specific Ubuntu profile also affects nested bwrap
+          # after its no-new-privileges transition. Remove only that profile on
+          # this disposable runner, retaining other AppArmor profiles.
+          for profile in /etc/apparmor.d/bwrap /etc/apparmor.d/bwrap-userns-restrict; do
+            if [ -f "$profile" ] && [ -d /sys/kernel/security/apparmor ]; then
+              sudo apparmor_parser --remove "$profile"
+            fi
+          done
+          bwrap --version
+          if ! bwrap --die-with-parent --new-session --unshare-pid --ro-bind / / --proc /proc --dev /dev -- \
+            bwrap --die-with-parent --new-session --unshare-pid --ro-bind / / --proc /proc --dev /dev -- /bin/true; then
+            id
+            uname -a
+            command -v bwrap
+            sysctl user.max_user_namespaces kernel.apparmor_restrict_unprivileged_userns kernel.unprivileged_userns_clone
+            cat /proc/self/attr/current
+            sudo aa-status || true
+            sudo journalctl --dmesg --lines=40 --no-pager
+            exit 1
+          fi
+
       - name: Check formatting
         run: yarn format:check
 

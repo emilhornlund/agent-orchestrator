@@ -20,7 +20,7 @@ export interface CleanupWorktreeOptions {
 
 export class CleanupWorktreeSafetyError extends Error {
   readonly diagnostic: {
-    reason: "dirty-worktree" | "unmerged-paths" | "unexpected-branch";
+    reason: "dirty-worktree" | "ignored-output" | "unmerged-paths" | "unexpected-branch";
     observedCount: number;
     artifactReferences: readonly string[];
   };
@@ -28,7 +28,7 @@ export class CleanupWorktreeSafetyError extends Error {
   constructor(reason: CleanupWorktreeSafetyError["diagnostic"]["reason"], observedCount: number) {
     const diagnostic = { reason, observedCount, artifactReferences: ["process-executions/"] };
     super(
-      `Refusing to remove ${reason === "dirty-worktree" ? "dirty worktree" : reason === "unmerged-paths" ? "worktree with unmerged paths" : "worktree on unexpected branch"}; ${JSON.stringify(diagnostic)}`,
+      `Refusing to remove ${reason === "dirty-worktree" ? "dirty worktree" : reason === "ignored-output" ? "worktree with preserved ignored output" : reason === "unmerged-paths" ? "worktree with unmerged paths" : "worktree on unexpected branch"}; ${JSON.stringify(diagnostic)}`,
     );
     this.name = "CleanupWorktreeSafetyError";
     this.diagnostic = diagnostic;
@@ -155,7 +155,14 @@ export async function cleanupWorktree({
     }
 
     if (status.length > 0) {
-      throw new CleanupWorktreeSafetyError("dirty-worktree", Buffer.byteLength(status));
+      const ignoredOnly = status
+        .split(/\r?\n/u)
+        .filter((line) => line.length > 0)
+        .every((line) => line.startsWith("!! "));
+      throw new CleanupWorktreeSafetyError(
+        ignoredOnly ? "ignored-output" : "dirty-worktree",
+        Buffer.byteLength(status),
+      );
     }
 
     if (signal?.aborted) {

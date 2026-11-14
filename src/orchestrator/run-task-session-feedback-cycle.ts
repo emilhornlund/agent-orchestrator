@@ -9,6 +9,10 @@ import type { EmailNotifier } from "../notifications/email-notifier.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import { buildTaskSessionReviewRepairPrompt } from "../opencode/build-task-session-review-repair-prompt.js";
 import { inspectPrimaryOpenCodeSession } from "../opencode/inspect-primary-session.js";
+import {
+  publicationQualityFacts,
+  feedbackDispositionFacts,
+} from "./publication-quality-summary.js";
 import type { CommandRunner } from "../process/command-runner.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 import type { ObservedTaskSessionReviewCard } from "./observe-task-session-review-cards.js";
@@ -1349,15 +1353,11 @@ export async function runTaskSessionFeedbackCycle(
       claimHumanReviewNotification: (commitSha) =>
         taskStore.claimHumanReviewNotification(card.id, commitSha),
       verifiedDescriptionFacts: () => [
-        storedPlan === null
-          ? "No usable implementation plan was available; the original task remains the scope."
-          : `Advisory implementation plan: ${JSON.stringify(storedPlan.plan)}`,
-        `Verified validation result: ${JSON.stringify(preparedEvidence.validation)}`,
-        ...(preparedEvidence.coverage === null
-          ? []
-          : [`Verified coverage result: ${JSON.stringify(preparedEvidence.coverage)}`]),
-        `Independent review result: ${JSON.stringify(preparedEvidence.review)}`,
-        `Feedback dispositions on the published source: ${JSON.stringify(verification.dispositions)}`,
+        ...publicationQualityFacts(preparedEvidence, {
+          planAvailable: storedPlan !== null,
+          diagnosticLog: getSessionLogPath(project.id, card.id),
+        }),
+        ...feedbackDispositionFacts(verification.dispositions),
         "Remediation outcome: available corrections delivered to human review; failed/skipped checks and unresolved findings remain disclosed.",
         ...(taskStore.read(card.id)?.reviewUnavailable === undefined
           ? []

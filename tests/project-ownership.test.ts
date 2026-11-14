@@ -99,6 +99,21 @@ afterEach(() => {
 });
 
 describe("canonical project ownership coordination", () => {
+  it("identifies the recorded owner on contention and permits a normal start after graceful release", async () => {
+    const root = temporaryRoot();
+    configureProcessRuntime({ runtimeRoot: root, signal: new AbortController().signal });
+    const identity = { trelloBoardId: "board-1", githubRepository: "owner/repo" };
+    const lease = await acquireProjectOwnership(root, identity, "test-host-namespace");
+    try {
+      await expect(acquireProjectOwnership(root, identity, "test-host-namespace")).rejects.toThrow(
+        `Recorded owner PID: ${process.pid}`,
+      );
+    } finally {
+      await lease.release();
+    }
+    await expectCanAcquire(root);
+  });
+
   it("cancels a blocked registry flock without leaking its descriptor", async () => {
     const root = temporaryRoot();
     const controller = new AbortController();

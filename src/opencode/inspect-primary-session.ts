@@ -1,9 +1,10 @@
 import path from "node:path";
 import type { CommandRunner } from "../process/command-runner.js";
 
-interface ListedOpenCodeSession {
+export interface ListedOpenCodeSession {
   id: string;
   directory: string;
+  title?: string;
 }
 
 export class OpenCodeSessionListError extends Error {
@@ -39,15 +40,46 @@ export function parseOpenCodeSessionList(output: string): ListedOpenCodeSession[
       Array.isArray(entry) ||
       !("id" in entry) ||
       typeof entry.id !== "string" ||
-      entry.id.length === 0 ||
+      !/^[A-Za-z0-9][A-Za-z0-9_-]*$/u.test(entry.id) ||
       !("directory" in entry) ||
       typeof entry.directory !== "string" ||
       !path.isAbsolute(entry.directory)
     ) {
       throw new Error(`OpenCode session list entry ${index} is malformed`);
     }
-    return { id: entry.id, directory: path.resolve(entry.directory) };
+    if ("title" in entry && (typeof entry.title !== "string" || entry.title.length > 1000))
+      throw new Error(`OpenCode session list entry ${index} has an invalid title`);
+    return {
+      id: entry.id,
+      directory: path.resolve(entry.directory),
+      ...("title" in entry ? { title: entry.title as string } : {}),
+    };
   });
+}
+
+export async function readOpenCodeSessionInventory(options: {
+  commands: CommandRunner;
+  cwd: string;
+  signal: AbortSignal;
+  timeoutMilliseconds: number;
+}): Promise<ListedOpenCodeSession[] | null> {
+  try {
+    const result = await options.commands.run({
+      cwd: options.cwd,
+      command: "opencode session list --format json --pure --max-count 10000",
+      signal: options.signal,
+      timeoutMilliseconds: options.timeoutMilliseconds,
+      captureOutput: true,
+      capturePolicy: "complete",
+      maxCaptureOutputLength: 4 * 1024 * 1024,
+      suppressOutput: true,
+    });
+    if (result.exitCode !== 0 || result.output === undefined) return null;
+    const sessions = parseOpenCodeSessionList(result.output);
+    return sessions.length >= 10_000 ? null : sessions;
+  } catch {
+    return null;
+  }
 }
 
 /** A stopped initial dispatch may be retried only after ruling out an unbound session. */

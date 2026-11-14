@@ -22,7 +22,7 @@ describe("inspectPrimaryOpenCodeSession", () => {
           },
         ]),
       ),
-    ).toEqual([{ id: "ses_primary", directory: "/tmp/worktrees/card" }]);
+    ).toEqual([{ id: "ses_primary", directory: "/tmp/worktrees/card", title: "task" }]);
 
     const run = vi.fn<RunCommand>().mockResolvedValue({
       exitCode: 0,

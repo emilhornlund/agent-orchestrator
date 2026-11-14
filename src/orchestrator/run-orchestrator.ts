@@ -9,11 +9,10 @@ import { withGitHubOperationProject } from "../github/github-operation-context.j
 import { cleanupLogRetention, logRetentionIntervalMilliseconds } from "../logging/log-retention.js";
 import { logger, shouldWriteConsole } from "../logging/logger.js";
 import { notifyAttentionRequired, type EmailNotifier } from "../notifications/email-notifier.js";
-import { OpenCodeRunAbortedError, type OpenCodeClient } from "../opencode/opencode-client.js";
-import { CommandRunAbortedError, type CommandRunner } from "../process/command-runner.js";
+import type { OpenCodeClient } from "../opencode/opencode-client.js";
+import type { CommandRunner } from "../process/command-runner.js";
 import { ProcessExecutionError } from "../process/process-runtime.js";
 import {
-  TrelloRequestAbortedError,
   getTrelloRequestOperation,
   isRetryableTrelloError,
   type TrelloClient,
@@ -63,8 +62,10 @@ import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { resumeInitialPublication } from "./initial-publication.js";
 import { reconcileWorkflowMutations } from "./reconcile-workflow-mutations.js";
 import { parseTaskExecutionRecord } from "../task-session/task-execution-record.js";
+import { hasPendingSessionCreation } from "../task-session/reconcile-session-creation.js";
 import { isConclusiveOperationResolution } from "../task-session/run-record.js";
 import { isRetryableGitHubError } from "../github/github-client.js";
+import { isShutdownCancellation } from "../runtime/shutdown-cancellation.js";
 
 export function hasDueTaskSessionRecoveryWait(
   authorityRecord: import("../task-session/run-record.js").RunRecord | null,
@@ -75,6 +76,8 @@ export function hasDueTaskSessionRecoveryWait(
   if (projection === undefined) return false;
   const taskProjection = parseTaskExecutionRecord(projection);
   const recoveryWait = taskProjection.recoveryWait;
+  if (hasPendingSessionCreation(taskProjection))
+    return recoveryWait === undefined || now >= Date.parse(recoveryWait.retryAt);
   return (
     taskProjection.phase !== "attention-required" &&
     recoveryWait !== undefined &&
@@ -140,7 +143,7 @@ import { getCardsForDiscovery } from "./trello-list-discovery.js";
 import { getWorkflowKind } from "./workflow-kind.js";
 import { isCardStartDateReached } from "./card-start-eligibility.js";
 import { MAX_VALIDATION_REPAIR_ATTEMPTS } from "../task-session/run-task-session-validation-repairs.js";
-import { AiExecutionCapacity, AiCapacityCancelledError } from "./ai-execution-capacity.js";
+import { AiExecutionCapacity } from "./ai-execution-capacity.js";
 import { withActivePrObservation } from "./active-pr-observation.js";
 import { terminalPrFenceFromRun } from "../task-session/terminal-pr-fence.js";
 
@@ -163,32 +166,6 @@ function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
 
     signal.addEventListener("abort", handleAbort, { once: true });
   });
-}
-
-function isShutdownCancellation(error: unknown, signal: AbortSignal): boolean {
-  if (!signal.aborted) {
-    return false;
-  }
-
-  const seen = new Set<unknown>();
-  let current: unknown = error;
-
-  while (current !== undefined && !seen.has(current)) {
-    seen.add(current);
-
-    if (
-      current instanceof OpenCodeRunAbortedError ||
-      current instanceof AiCapacityCancelledError ||
-      current instanceof CommandRunAbortedError ||
-      current instanceof TrelloRequestAbortedError
-    ) {
-      return true;
-    }
-
-    current = current instanceof Error ? current.cause : undefined;
-  }
-
-  return false;
 }
 
 function failureNotificationIdentity(

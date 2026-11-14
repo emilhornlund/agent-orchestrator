@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { containedProcess, observeContainedProcess } from "../process/contained-process.js";
 import { StringDecoder } from "node:string_decoder";
 import { createHash } from "node:crypto";
 import { buildChildEnvironment } from "../process/child-environment.js";
@@ -33,8 +34,8 @@ import {
 } from "./implementation-change-equivalence.js";
 import {
   beginProcessEvidence,
-  drainProcessGroup,
   getProcessRuntime,
+  guardProcessClose,
   signalProcessGroup,
   appendBoundedOutput,
   ProcessEvidenceError,
@@ -100,10 +101,22 @@ const defaultRunGit: RunGit = async (cwd, args, environment, signalOverride) => 
     ...runtime.secretValues,
   ].filter((value): value is string => value !== undefined);
   const execution = beginProcessEvidence(`git ${args.join(" ")}`, cwd, secretValues);
+  if (signal?.aborted) {
+    execution.finish("not-dispatched", { cancellationRequested: true });
+    throw new ProcessExecutionError("Git", execution.executionId, "interrupted");
+  }
   return new Promise((resolve, reject) => {
-    const child = spawn("git", args, {
+    let dispatch: ReturnType<typeof containedProcess>;
+    try {
+      dispatch = containedProcess("git", args);
+    } catch (error) {
+      execution.finish("not-dispatched");
+      reject(error);
+      return;
+    }
+    const child = spawn(dispatch.command, dispatch.args, {
       cwd,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe", "pipe", "pipe"],
       detached: process.platform !== "win32",
       env: buildChildEnvironment("git", environment),
     });
@@ -115,8 +128,15 @@ const defaultRunGit: RunGit = async (cwd, args, environment, signalOverride) => 
     let stderr = "";
     let settled = false;
     let timedOut = false;
+    let terminationRequested = false;
     let recorderFailure: Error | undefined;
     let killTimer: NodeJS.Timeout | undefined;
+    let payloadSpawned: boolean | undefined;
+    const hardKill = () => {
+      if (settled) return;
+      signalProcessGroup(child.pid, "SIGKILL", (signal) => child.kill(signal));
+      closeGuard.afterHardKill();
+    };
     const append = (stream: "stdout" | "stderr", text: string): void => {
       if (recorderFailure !== undefined || settled) return;
       try {
@@ -127,11 +147,7 @@ const defaultRunGit: RunGit = async (cwd, args, environment, signalOverride) => 
       } catch (error) {
         recorderFailure =
           error instanceof Error ? error : new ProcessEvidenceError("Process recording failed");
-        signalProcessGroup(child.pid, "SIGTERM", (signal) => child.kill(signal));
-        killTimer = setTimeout(
-          () => signalProcessGroup(child.pid, "SIGKILL", (signal) => child.kill(signal)),
-          5_000,
-        );
+        abort();
       }
     };
     const flush = (): void => {
@@ -140,32 +156,52 @@ const defaultRunGit: RunGit = async (cwd, args, environment, signalOverride) => 
       append("stdout", stdoutRedactor.flush());
       append("stderr", stderrRedactor.flush());
     };
-    const timeout = setTimeout(() => {
+    const finishUnknown = (error: unknown) => {
       if (settled) return;
+      flush();
+      settled = true;
+      clearTimeout(timeout);
+      if (killTimer) clearTimeout(killTimer);
+      closeGuard.dispose();
+      signal?.removeEventListener("abort", abort);
+      try {
+        execution.finish("process-group-ambiguous", {
+          pid: child.pid,
+          containment: "linux-pid-namespace",
+        });
+      } catch (finishError) {
+        recorderFailure ??=
+          finishError instanceof Error
+            ? finishError
+            : new ProcessEvidenceError("Process evidence finalization failed");
+      }
+      reject(error);
+    };
+    const closeGuard = guardProcessClose(child, finishUnknown);
+    const supervision = observeContainedProcess(child, (error) => {
+      recorderFailure = error;
+      abort();
+    });
+    const timeout = setTimeout(() => {
+      if (settled || terminationRequested) return;
       timedOut = true;
-      signalProcessGroup(child.pid, "SIGTERM", (signal) => child.kill(signal));
-      killTimer = setTimeout(
-        () => signalProcessGroup(child.pid, "SIGKILL", (signal) => child.kill(signal)),
-        5_000,
-      );
+      abort();
     }, operationTimeoutMilliseconds);
     const abort = (): void => {
-      if (settled) return;
+      if (settled || terminationRequested) return;
+      terminationRequested = true;
       signalProcessGroup(child.pid, "SIGTERM", (signal) => child.kill(signal));
-      killTimer = setTimeout(
-        () => signalProcessGroup(child.pid, "SIGKILL", (signal) => child.kill(signal)),
-        5_000,
-      );
+      killTimer = setTimeout(hardKill, 5_000);
     };
     signal?.addEventListener("abort", abort, { once: true });
     if (signal?.aborted) abort();
-    child.stdout.on("data", (chunk: Buffer | string) =>
+    child.stdout!.on("data", (chunk: Buffer | string) =>
       append(
         "stdout",
         stdoutRedactor.push(typeof chunk === "string" ? chunk : stdoutDecoder.write(chunk)),
       ),
     );
-    child.stderr.on("data", (chunk: Buffer | string) =>
+    child.stderr!.on("data", (chunk: Buffer | string) =>
       append(
         "stderr",
         stderrRedactor.push(typeof chunk === "string" ? chunk : stderrDecoder.write(chunk)),
@@ -173,8 +209,9 @@ const defaultRunGit: RunGit = async (cwd, args, environment, signalOverride) => 
     );
     child.once("error", (error) => {
       if (settled) return;
-      settled = true;
       flush();
+      settled = true;
+      closeGuard.dispose();
       clearTimeout(timeout);
       if (killTimer) clearTimeout(killTimer);
       signal?.removeEventListener("abort", abort);
@@ -189,48 +226,45 @@ const defaultRunGit: RunGit = async (cwd, args, environment, signalOverride) => 
       }
       reject(new ProcessExecutionError("Git", execution.executionId, "spawn-failure"));
     });
-    child.once("close", async (code, signalName) => {
+    child.once("close", (code, signalName) => {
       if (settled) return;
+      const supervisorExitCode = code;
       try {
-        await drainProcessGroup(child.pid, (signal) => child.kill(signal));
+        const payload = supervision.result(code, signalName);
+        code = payload.spawned === false ? 1 : payload.code;
+        signalName = payload.signal;
+        payloadSpawned = payload.spawned;
       } catch (error) {
-        if (settled) return;
-        settled = true;
-        flush();
-        clearTimeout(timeout);
-        if (killTimer) clearTimeout(killTimer);
-        signal?.removeEventListener("abort", abort);
-        try {
-          execution.finish("process-group-ambiguous", { pid: child.pid });
-        } catch (finishError) {
-          recorderFailure ??=
-            finishError instanceof Error
-              ? finishError
-              : new ProcessEvidenceError("Process evidence finalization failed");
-        }
-        reject(error);
-        return;
+        recorderFailure =
+          error instanceof Error ? error : new ProcessEvidenceError("Invalid contained Git result");
       }
-      if (settled) return;
       flush();
       settled = true;
       clearTimeout(timeout);
       if (killTimer) clearTimeout(killTimer);
       signal?.removeEventListener("abort", abort);
-      const interrupted = signal?.aborted === true;
+      const interrupted =
+        signal?.aborted === true &&
+        (code === 0 || ["SIGINT", "SIGTERM", "SIGKILL"].includes(signalName ?? ""));
       try {
         execution.finish(
           recorderFailure !== undefined || execution.failure !== undefined
             ? "evidence-failure"
-            : timedOut
-              ? "timeout"
-              : interrupted
-                ? "interrupted"
-                : code === 0
-                  ? "success"
-                  : "nonzero",
+            : payloadSpawned === false
+              ? "spawn-failure"
+              : timedOut
+                ? "timeout"
+                : interrupted
+                  ? "interrupted"
+                  : code === 0
+                    ? "success"
+                    : "nonzero",
           {
             pid: child.pid,
+            containment: "linux-pid-namespace",
+            treeStopped: true,
+            supervisorExitCode,
+            ...(payloadSpawned === undefined ? {} : { payloadSpawned }),
             exitCode: code ?? 1,
             ...(signalName === null ? {} : { signal: signalName }),
           },
@@ -243,6 +277,8 @@ const defaultRunGit: RunGit = async (cwd, args, environment, signalOverride) => 
       }
       recorderFailure ??= execution.failure;
       if (recorderFailure !== undefined) reject(recorderFailure);
+      else if (payloadSpawned === false)
+        reject(new ProcessExecutionError("Git", execution.executionId, "spawn-failure"));
       else if (timedOut || interrupted || code !== 0) {
         reject(
           new ProcessExecutionError(
@@ -254,6 +290,17 @@ const defaultRunGit: RunGit = async (cwd, args, environment, signalOverride) => 
           ),
         );
       } else resolve(stdout.trim());
+    });
+    child.once("spawn", () => {
+      try {
+        execution.dispatched(child.pid, "linux-pid-namespace");
+      } catch (error) {
+        recorderFailure =
+          error instanceof Error
+            ? error
+            : new ProcessEvidenceError("Could not bind contained Git execution");
+        abort();
+      }
     });
   });
 };

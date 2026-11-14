@@ -536,6 +536,48 @@ describe("runTaskSessionReviewWithRepairs", () => {
     expect(events.join(" ")).not.toContain("Fix requirement");
   });
 
+  it.each(["skipped", "failed", "uncertain"] as const)(
+    "reports recorded %s coverage without calling it passed",
+    async (status) => {
+      const f = fixture();
+      const current = f.store.read("card")!;
+      f.store.compareAndSwap("card", current.revision, {
+        ...current,
+        validationRepair: {
+          cycleId: "operation",
+          status: "passed",
+          evidence: {
+            command: "validate",
+            status: "passed",
+            startedAt: current.updatedAt,
+            completedAt: current.updatedAt,
+            exitCode: 0,
+            diagnostic: "passed",
+            contentIdentity: `sha256:${"a".repeat(64)}`,
+          },
+          coverageEvidence: {
+            command: status === "skipped" ? "" : "coverage",
+            status,
+            startedAt: current.updatedAt,
+            completedAt: current.updatedAt,
+            exitCode: status === "failed" ? 1 : null,
+            diagnostic: status,
+            contentIdentity: `sha256:${"a".repeat(64)}`,
+          },
+        },
+        revision: current.revision + 1,
+        updatedAt: "2026-10-24T09:00:01.000Z",
+      });
+      const events: string[] = [];
+      vi.spyOn(Logger.prototype, "event").mockImplementation((message) => {
+        events.push(message);
+      });
+      await f.run(["pass"]).run();
+      expect(events.some((message) => message.includes(`"coverage":"${status}"`))).toBe(true);
+      expect(events.some((message) => message.includes('"coverage":"passed"'))).toBe(false);
+    },
+  );
+
   it("logs exhausted findings and restores useful diagnostics from persisted state", async () => {
     const f = fixture();
     const events: string[] = [];

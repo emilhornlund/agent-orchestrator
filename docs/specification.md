@@ -473,8 +473,9 @@ unresolved problems remain.
 **Acceptance criteria**
 
 - A normal PR is permitted when configured checks demonstrably pass and no material unresolved
-  issues are known; failing, skipped, or uncertain checks, or material outstanding findings, lead to
-  a draft PR with those facts disclosed.
+  issues are known. A configured check that failed, was skipped, or is uncertain, or material
+  outstanding findings, leads to a draft PR with those facts disclosed. Optional commands that are
+  not configured remain explicitly skipped, not passed, and do not by themselves require a draft.
 - AI reviewer approval is not required. Disregarding an advisory suggestion alone does not force
   draft status, but recorded material unresolved concerns must not be represented as resolved.
 - Failed, skipped, and uncertain checks are not represented as successful.
@@ -716,6 +717,11 @@ sufficient context before using a replacement.
   recovery or the verified human PR outcome, without terminating the task.
 - Recovery does not introduce a separate implementation-crash retry setting or mistake
   unsatisfactory quality feedback for a crash.
+- Initial session creation persists a correlation identity and binds process evidence before
+  dispatch. Recovery reconciles the original session or a conclusively stopped/never-dispatched
+  creation automatically, preserving a completed planning result when available. Unknown termination
+  or session identity remains an owned, observable wait with controlled rechecks and deduplicated
+  attention reporting; missing PIDs or negative reads alone never authorize replacement or release.
 
 ### REQ-REC-003 — Handle temporary external outages
 
