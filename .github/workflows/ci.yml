@@ -44,6 +44,12 @@ jobs:
           if sysctl -n kernel.unprivileged_userns_clone >/dev/null 2>&1; then
             sudo sysctl -w kernel.unprivileged_userns_clone=1
           fi
+          # The executable-specific Ubuntu profile also affects nested bwrap
+          # after its no-new-privileges transition. Remove only that profile on
+          # this disposable runner, retaining other AppArmor profiles.
+          if [ -f /etc/apparmor.d/bwrap ] && [ -d /sys/kernel/security/apparmor ]; then
+            sudo apparmor_parser --remove /etc/apparmor.d/bwrap
+          fi
           bwrap --version
           bwrap --die-with-parent --new-session --unshare-pid --ro-bind / / --proc /proc --dev /dev -- \
             bwrap --die-with-parent --new-session --unshare-pid --ro-bind / / --proc /proc --dev /dev -- /bin/true
