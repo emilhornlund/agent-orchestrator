@@ -2208,13 +2208,20 @@ export async function runTaskSessionWorkflow(
         recoveryRecord.recoveryWait !== undefined ||
         executionCard.idList !== project.trello.reviewListId)
     ) {
-      const recoveryPath = path.join(project.repository.worktreeRoot, observation.cardId);
+      const recoveryPath = taskResources(project, observation.cardId).path;
       const recovery = await reconcileOwnedTaskForResume(
         executionCard,
         recoveryRecord,
         recoveryPath,
       );
       if (recovery === null || recovery.status !== "resume") {
+        if (
+          recovery?.status === "attention-required" &&
+          recoveryRecord.phase !== "attention-required"
+        )
+          logger
+            .child({ projectId: project.id, cardId: observation.cardId })
+            .error(`Published task recovery requires attention: ${recovery.reason}`);
         executionRecoveryBlocked = true;
         continue;
       }
@@ -2497,7 +2504,7 @@ export async function runTaskSessionWorkflow(
         if (card === undefined || record.primarySessionId === undefined) {
           throw new Error("CI repair requires the owned review card and primary session");
         }
-        const worktreePath = path.join(project.repository.worktreeRoot, card.id);
+        const worktreePath = taskResources(project, card.id).path;
         // Published PR correction operations are primary writers too. A lost
         // task session must be reconstructed before the CI repair reserves or
         // resumes its durable operation; otherwise the repair callback only
@@ -3419,7 +3426,7 @@ export async function runTaskSessionWorkflow(
     const recoveryRecord = taskStore.read(executionRecoveryCard.id);
     if (recoveryRecord === null)
       throw new Error(`Canonical recovery task disappeared: ${executionRecoveryCard.id}`);
-    const recoveryPath = path.join(project.repository.worktreeRoot, executionRecoveryCard.id);
+    const recoveryPath = taskResources(project, executionRecoveryCard.id).path;
     const recovery = await reconcileOwnedTaskForResume(
       executionRecoveryCard,
       recoveryRecord,
@@ -3484,7 +3491,7 @@ export async function runTaskSessionWorkflow(
       !recoveryCheckedThisPoll.has(observation.cardId)
     )
       continue;
-    const recoveryPath = path.join(project.repository.worktreeRoot, observation.cardId);
+    const recoveryPath = taskResources(project, observation.cardId).path;
     const recovery = await reconcileOwnedTaskForResume(card, record, recoveryPath);
     if (recovery === null || recovery.status !== "resume") return;
   }
@@ -4106,7 +4113,7 @@ export async function runTaskSessionWorkflow(
           opencode: openCode,
           project,
           card: currentCard,
-          worktreePath: path.join(project.repository.worktreeRoot, currentCard.id),
+          worktreePath: taskResources(project, currentCard.id).path,
           signal,
           cardLog: logger.child({
             projectId: project.id,

@@ -272,6 +272,10 @@ describe("task lifecycle through pollProject", () => {
       const source = path.join(root, "source");
       const remote = path.join(root, "remote.git");
       const worktrees = path.join(root, "worktrees");
+      // CI lifecycle scenarios exercise the same explicit attempt resources as
+      // production, rather than the legacy card-only fallback.
+      const firstWorktreeName = ciReviewHandoffs ? "first--lifecycle-attempt" : "first";
+      const firstBranch = `agent/${firstWorktreeName}`;
       const contextRoot = path.join(root, "context");
       const validationMarker = path.join(root, "validation-runs.log");
       const coverageMarker = path.join(root, "coverage-runs.log");
@@ -335,7 +339,7 @@ describe("task lifecycle through pollProject", () => {
             nextRecord.lastEvent?.type === "review-passed"
           ) {
             fs.writeFileSync(
-              path.join(worktrees, "first", "app.js"),
+              path.join(worktrees, firstWorktreeName, "app.js"),
               "module.exports = 'prepared publication source';\n",
             );
             changedPreparedSource = true;
@@ -709,7 +713,7 @@ describe("task lifecycle through pollProject", () => {
           title: string;
           body: string;
         }) => {
-          if (input.headBranch === "agent/first")
+          if (input.headBranch === firstBranch)
             publicationQualityAtCreate.push(
               new TaskExecutionStore(contextRoot, project, authorities.get("first")).read("first")
                 ?.publicationQuality,
@@ -765,7 +769,7 @@ describe("task lifecycle through pollProject", () => {
           ).read("first")?.phase;
           const failed =
             ciReviewHandoffs &&
-            prs.has("agent/first") &&
+            prs.has(firstBranch) &&
             (currentPhase === "ci" || currentPhase === "human-feedback") &&
             ciPrimaryCorrections < (ciBudget ?? 2);
           return {
@@ -898,7 +902,7 @@ describe("task lifecycle through pollProject", () => {
             errorOutput: "",
           };
         }
-        const cardId = path.basename(options.cwd);
+        const cardId = path.basename(options.cwd).split("--")[0]!;
         openCodeCards.push(cardId);
         if (
           ciQuality === "validation" &&
@@ -921,11 +925,9 @@ describe("task lifecycle through pollProject", () => {
           )
         ) {
           expect(options.readOnly).toBe(true);
-          expect(prs.get("agent/first")?.body).toMatch(
-            /^<!-- agent-orchestrator-status:start -->/u,
-          );
-          expect(prs.get("agent/first")?.body).toContain("advisory validation");
-          prs.get("agent/first")!.body += "\nHuman note added during maintenance review.\n";
+          expect(prs.get(firstBranch)?.body).toMatch(/^<!-- agent-orchestrator-status:start -->/u);
+          expect(prs.get(firstBranch)?.body).toContain("advisory validation");
+          prs.get(firstBranch)!.body += "\nHuman note added during maintenance review.\n";
           return {
             exitCode: 0,
             errorOutput: "",
@@ -966,9 +968,9 @@ describe("task lifecycle through pollProject", () => {
               );
             expect(lists.get("first")).toBe("working");
             expect(
-              prs.get("agent/first")?.body.startsWith("<!-- agent-orchestrator-status:start -->"),
+              prs.get(firstBranch)?.body.startsWith("<!-- agent-orchestrator-status:start -->"),
             ).toBe(true);
-            expect(prs.get("agent/first")?.body).toContain("addressing requested review feedback");
+            expect(prs.get(firstBranch)?.body).toContain("addressing requested review feedback");
             if (feedbackQuality === "no-op")
               return { exitCode: 0, output: "No changes", errorOutput: "" };
             fs.writeFileSync(
@@ -1215,10 +1217,8 @@ describe("task lifecycle through pollProject", () => {
           ciReviewHandoffs &&
           options.prompt.startsWith("Repair the required GitHub CI failures")
         ) {
-          expect(prs.get("agent/first")?.body).toMatch(
-            /^<!-- agent-orchestrator-status:start -->/u,
-          );
-          expect(prs.get("agent/first")?.body).toContain("addressing observed CI failures");
+          expect(prs.get(firstBranch)?.body).toMatch(/^<!-- agent-orchestrator-status:start -->/u);
+          expect(prs.get(firstBranch)?.body).toContain("addressing observed CI failures");
           ciPrimaryCorrections += 1;
           fs.writeFileSync(
             path.join(options.cwd, "app.js"),
@@ -1337,7 +1337,7 @@ describe("task lifecycle through pollProject", () => {
                 version: 1,
                 projectId: project.id,
                 cardId,
-                headSha: prs.get("agent/first")!.headRefOid,
+                headSha: prs.get(firstBranch)!.headRefOid,
                 contentIdentity: identity,
                 dispositions: [
                   {
@@ -1488,6 +1488,11 @@ describe("task lifecycle through pollProject", () => {
             pinned,
             projectLease: lease,
             coordinationRoot,
+            ...(ciReviewHandoffs && selected.id === "first"
+              ? {
+                  attemptId: "lifecycle-attempt",
+                }
+              : {}),
             budgets: {
               validation: {
                 limit: 5,
@@ -1509,7 +1514,34 @@ describe("task lifecycle through pollProject", () => {
               },
             },
           });
-          activeAuthority.claim();
+          if (ciReviewHandoffs && selected.id === "first") {
+            const preparing = activeAuthority.store.read()!;
+            activeAuthority.store.transition(
+              preparing.revision,
+              preparing.owner.generation,
+              null,
+              "implementation-claimed",
+              "preparing",
+              "planning",
+              (snapshot) => ({
+                ...snapshot,
+                resources: [
+                  {
+                    kind: "worktree",
+                    id: "first",
+                    path: path.join(worktrees, firstWorktreeName),
+                    provenance: "attempt-planned",
+                  },
+                  {
+                    kind: "branch",
+                    id: "first",
+                    path: `refs/heads/${firstBranch}`,
+                    provenance: "attempt-planned",
+                  },
+                ],
+              }),
+            );
+          } else activeAuthority.claim();
           authorities.set(selected.id, activeAuthority);
         }
         const authority = activeAuthority;
@@ -1551,18 +1583,18 @@ describe("task lifecycle through pollProject", () => {
       if (ackLoss) {
         for (let pass = 0; pass < 8 && accepted.length === 0; pass++) await poll();
         expect(accepted).toHaveLength(1);
-        expect(prs.get("agent/first")).toBeDefined();
+        expect(prs.get(firstBranch)).toBeDefined();
         // Reconstruct application clients around independently retained service resources.
         git = new GitClient(runGit);
         github = Object.assign(
           Object.create(Object.getPrototypeOf(github)) as GitHubClient,
           github,
         );
-        expect(requests).toEqual(["agent/first"]);
+        expect(requests).toEqual([firstBranch]);
         expect(accepted).toHaveLength(1);
         expect(prs.size).toBe(1);
-        const acceptedHead = prs.get("agent/first")!.headRefOid;
-        expect(await git.getRemoteBranchSha(source, "origin", "agent/first", project)).toBe(
+        const acceptedHead = prs.get(firstBranch)!.headRefOid;
+        expect(await git.getRemoteBranchSha(source, "origin", firstBranch, project)).toBe(
           acceptedHead,
         );
         expect(await gitRun(source, "show", `${acceptedHead}:app.js`)).toBe(
@@ -1570,14 +1602,16 @@ describe("task lifecycle through pollProject", () => {
             ? "module.exports = 'implemented';"
             : "module.exports = 'prepared publication source';",
         );
-        expect(await git.getHeadSha(path.join(worktrees, "first"))).toMatch(/^[0-9a-f]{40}$/u);
-        expect(fs.readFileSync(path.join(worktrees, "first", "app.js"), "utf8")).toBe(
+        expect(await git.getHeadSha(path.join(worktrees, firstWorktreeName))).toMatch(
+          /^[0-9a-f]{40}$/u,
+        );
+        expect(fs.readFileSync(path.join(worktrees, firstWorktreeName, "app.js"), "utf8")).toBe(
           preparedReview === undefined
             ? "module.exports = 'implemented';\n"
             : "module.exports = 'prepared publication source';\n",
         );
         expect(lists.get("first")).toBe("working");
-        expect(fs.existsSync(path.join(worktrees, "first"))).toBe(true);
+        expect(fs.existsSync(path.join(worktrees, firstWorktreeName))).toBe(true);
         expect(lists.get("next")).toBe("ready");
         expect(store.read("next")).toBeNull();
         expect(fs.existsSync(path.join(worktrees, "next"))).toBe(false);
@@ -1595,8 +1629,8 @@ describe("task lifecycle through pollProject", () => {
         // readback after restart, never another create.
       }
       if (preparedReview !== undefined) {
-        for (let pass = 0; pass < 8 && !prs.has("agent/first"); pass++) await poll();
-        const preparedPr = prs.get("agent/first");
+        for (let pass = 0; pass < 8 && !prs.has(firstBranch); pass++) await poll();
+        const preparedPr = prs.get(firstBranch);
         expect(preparedPr).toBeDefined();
         expect(reviewerRounds).toBe(2);
         expect(publicationQualityAtCreate).toHaveLength(1);
@@ -1704,7 +1738,7 @@ describe("task lifecycle through pollProject", () => {
                     : { path: reservation.promptArtifact.path }),
                 }) as { prompt: string } | undefined);
           const priorHead = checkpoint.pullRequest!.headSha;
-          const sourceBytes = fs.readFileSync(path.join(worktrees, "first", "app.js"));
+          const sourceBytes = fs.readFileSync(path.join(worktrees, firstWorktreeName, "app.js"));
           expect(ciPrimaryCorrections).toBe(1);
           expect(checkpoint.retryCounters.review).toBe(1);
           git = new GitClient(runGit);
@@ -1732,9 +1766,11 @@ describe("task lifecycle through pollProject", () => {
             expect(resumed.primaryOperations?.[reservation!.operationId]?.status).toBe("ambiguous");
             expect(resumed.phase).toBe("implementation");
             expect(resumed.retryCounters.review).toBe(1);
-            expect(fs.readFileSync(path.join(worktrees, "first", "app.js"))).toEqual(sourceBytes);
+            expect(fs.readFileSync(path.join(worktrees, firstWorktreeName, "app.js"))).toEqual(
+              sourceBytes,
+            );
             expect(lists.get("next")).toBe("ready");
-            expect(requests).toEqual(["agent/first"]);
+            expect(requests).toEqual([firstBranch]);
             return;
           }
         }
@@ -1743,8 +1779,8 @@ describe("task lifecycle through pollProject", () => {
         const ciTask = store.read("first");
         const ciRun = authorities.get("first")?.store.read();
         expect(ciTask?.phase).toBe("human-feedback");
-        expect(prs.get("agent/first")?.body).not.toContain("Agent Orchestrator status:");
-        expect(prs.get("agent/first")?.body).toContain("Observed CI for this revision");
+        expect(prs.get(firstBranch)?.body).not.toContain("Agent Orchestrator status:");
+        expect(prs.get(firstBranch)?.body).toContain("Observed CI for this revision");
         expect(
           ciPrimaryCorrections,
           JSON.stringify({
@@ -1766,9 +1802,9 @@ describe("task lifecycle through pollProject", () => {
         }
         if (ciQuality !== undefined) {
           expect(prs.size).toBe(1);
-          expect(prs.get("agent/first")?.isDraft).toBe(true);
+          expect(prs.get(firstBranch)?.isDraft).toBe(true);
           expect(lists.get("first")).toBe("review");
-          expect(await git.getRemoteBranchSha(source, "origin", "agent/first", project)).toBe(
+          expect(await git.getRemoteBranchSha(source, "origin", firstBranch, project)).toBe(
             ciTask?.pullRequest?.headSha,
           );
           expect(ciTask?.ciRepair?.status).toBe("passed");
@@ -1794,7 +1830,7 @@ describe("task lifecycle through pollProject", () => {
           limit: 3,
           used: 2,
         });
-        expect(requests).toEqual(["agent/first"]);
+        expect(requests).toEqual([firstBranch]);
         expect(prs.size).toBe(1);
         return;
       }
@@ -1806,7 +1842,7 @@ describe("task lifecycle through pollProject", () => {
         await poll();
       const record = store.read("first");
       expect(record?.phase).toBe("human-feedback");
-      const firstPr = prs.get("agent/first");
+      const firstPr = prs.get(firstBranch);
       expect(firstPr).toBeDefined();
       if (targetMerge) {
         const published = record!.pullRequest!.headSha!;
@@ -1824,7 +1860,7 @@ describe("task lifecycle through pollProject", () => {
         await poll();
         const maintained = store.read("first")!;
         expect(maintained.pullRequest!.headSha).not.toBe(published);
-        expect(await git.getCommitParentShas(path.join(worktrees, "first"))).toEqual([
+        expect(await git.getCommitParentShas(path.join(worktrees, firstWorktreeName))).toEqual([
           published,
           maintenanceBase,
         ]);
@@ -1896,12 +1932,12 @@ describe("task lifecycle through pollProject", () => {
             : { status: "skipped", exitCode: null },
         );
       }
-      expect(requests).toEqual(["agent/first"]);
+      expect(requests).toEqual([firstBranch]);
       expect(accepted).toEqual([firstPr?.url]);
       expect(lists.get("first")).toBe("review");
       if (terminalDuringFeedback !== undefined) {
         const owned = activeAuthority!;
-        const worktree = path.join(worktrees, "first");
+        const worktree = path.join(worktrees, firstWorktreeName);
         const originalHead = store.read("first")!.pullRequest!.headSha!;
         const beforePrimary = new Set(Object.keys(store.read("first")!.primaryOperations ?? {}));
         const push = vi.spyOn(git, "push");
@@ -1923,7 +1959,7 @@ describe("task lifecycle through pollProject", () => {
           }
           await execFile(
             "git",
-            ["--git-dir", remote, "update-ref", "-d", "refs/heads/agent/first", originalHead],
+            ["--git-dir", remote, "update-ref", "-d", `refs/heads/${firstBranch}`, originalHead],
             { env },
           );
           firstPr!.state = terminal === "merged" ? "MERGED" : "CLOSED";
@@ -1949,11 +1985,11 @@ describe("task lifecycle through pollProject", () => {
           expect(readTerminalPrFence(owned)?.stoppedAt).toBeDefined();
           expect(lists.get("next")).toBe("ready");
           expect(store.read("next")).toBeNull();
-          expect(requests).toEqual(["agent/first"]);
+          expect(requests).toEqual([firstBranch]);
           expect(prs.size).toBe(1);
           expect(push).toHaveBeenCalledTimes(terminalDuringFeedback === "push-rejected" ? 1 : 0);
           expect(firstPr?.body).not.toContain("<!-- agent-orchestrator-status:start -->");
-          expect(await git.getRemoteBranchSha(source, "origin", "agent/first", project)).toBeNull();
+          expect(await git.getRemoteBranchSha(source, "origin", firstBranch, project)).toBeNull();
         };
         correctionFeedback = true;
         if (terminalDuringFeedback === "capacity") {
@@ -2150,7 +2186,7 @@ describe("task lifecycle through pollProject", () => {
         expect(corrected.pullRequest!.headSha).not.toBe(originalHead);
         expect(
           await git.isAncestor(
-            path.join(worktrees, "first"),
+            path.join(worktrees, firstWorktreeName),
             originalHead,
             corrected.pullRequest!.headSha!,
           ),
@@ -2250,7 +2286,10 @@ describe("task lifecycle through pollProject", () => {
                   : { path: reservation.promptArtifact.path }),
               }) as { prompt: string } | undefined);
         const beforeRestart = feedbackReviewDispatches.length;
-        const reviewedSource = fs.readFileSync(path.join(worktrees, "first", "app.js"), "utf8");
+        const reviewedSource = fs.readFileSync(
+          path.join(worktrees, firstWorktreeName, "app.js"),
+          "utf8",
+        );
         // New observations must not replace the round that owns the persisted writer.
         feedbackBody =
           "A different human request arrived while the original correction was paused.";
@@ -2270,7 +2309,7 @@ describe("task lifecycle through pollProject", () => {
         );
         expect(lists.get("next")).toBe("ready");
         expect(store.read("next")).toBeNull();
-        expect(requests).toEqual(["agent/first"]);
+        expect(requests).toEqual([firstBranch]);
         expect(prs.size).toBe(1);
         if (feedbackReviewRecovery === "unknown") {
           expect(feedbackReviewDispatches).toHaveLength(beforeRestart);
@@ -2278,7 +2317,7 @@ describe("task lifecycle through pollProject", () => {
           expect(resumed.reviewRepair?.activePrimaryOperation).toEqual(reservation);
           expect(resumed.primaryOperations?.[reservation!.operationId]?.status).toBe("ambiguous");
           expect(resumed.recoveryWait).toBeDefined();
-          expect(fs.readFileSync(path.join(worktrees, "first", "app.js"), "utf8")).toBe(
+          expect(fs.readFileSync(path.join(worktrees, firstWorktreeName, "app.js"), "utf8")).toBe(
             reviewedSource,
           );
         } else {
@@ -2305,7 +2344,7 @@ describe("task lifecycle through pollProject", () => {
         return;
       }
       if (correctionFailure) {
-        const worktree = path.join(worktrees, "first");
+        const worktree = path.join(worktrees, firstWorktreeName);
         const unshippedPath = path.join(worktree, "reviewer-followup.ts");
         correctionFeedback = true;
         for (
@@ -2366,7 +2405,7 @@ describe("task lifecycle through pollProject", () => {
         expect(fs.readFileSync(unshippedPath, "utf8")).toBe("local reviewer follow-up\n");
         expect(lists.get("first")).toBe("review");
         expect(lists.get("next")).toBe("ready");
-        expect(requests).toEqual(["agent/first"]);
+        expect(requests).toEqual([firstBranch]);
         expect(prs.size).toBe(1);
         expect(authorities.get("first")?.store.read()).toMatchObject({
           cardId: "first",
@@ -2387,7 +2426,7 @@ describe("task lifecycle through pollProject", () => {
         );
         expect(store.read("next")).toBeNull();
         expect(lists.get("next")).toBe("ready");
-        expect(requests).toEqual(["agent/first"]);
+        expect(requests).toEqual([firstBranch]);
         expect(fs.readFileSync(unshippedPath, "utf8")).toBe("local reviewer follow-up\n");
       }
       if (!correctionFailure) {
@@ -2432,7 +2471,9 @@ describe("task lifecycle through pollProject", () => {
           updatedAt: new Date().toISOString(),
         });
         const checkpointSession = recoveryStore.read("first")?.primarySessionId;
-        const retainedWorktreeBytes = fs.readFileSync(path.join(worktrees, "first", "app.js"));
+        const retainedWorktreeBytes = fs.readFileSync(
+          path.join(worktrees, firstWorktreeName, "app.js"),
+        );
         await poll();
         expect(recoveryStore.read("first")).toMatchObject({
           phase: "human-feedback",
@@ -2443,7 +2484,7 @@ describe("task lifecycle through pollProject", () => {
           terminalSync: "not-applicable",
         });
         expect(recoveryStore.read("first")?.primarySessionId).toBe(checkpointSession);
-        expect(fs.readFileSync(path.join(worktrees, "first", "app.js"))).toEqual(
+        expect(fs.readFileSync(path.join(worktrees, firstWorktreeName, "app.js"))).toEqual(
           retainedWorktreeBytes,
         );
         expect(feedbackReads).toBe(feedbackReadsBeforeWait);
@@ -2575,7 +2616,7 @@ describe("task lifecycle through pollProject", () => {
           phase: "human-feedback",
           recoveryWait: { kind: "manual-move" },
         });
-        expect(fs.readFileSync(path.join(worktrees, "first", "app.js"))).toEqual(
+        expect(fs.readFileSync(path.join(worktrees, firstWorktreeName, "app.js"))).toEqual(
           retainedWorktreeBytes,
         );
 
@@ -2629,7 +2670,7 @@ describe("task lifecycle through pollProject", () => {
         const publishedHeadSha = (await git.getRemoteBranchSha(
           source,
           "origin",
-          "agent/first",
+          firstBranch,
           project,
         ))!;
         expect(publishedHeadSha).toMatch(/^[0-9a-f]{40}$/u);
@@ -2646,7 +2687,7 @@ describe("task lifecycle through pollProject", () => {
       }
       const sha = correctionFailure
         ? firstPr!.headRefOid
-        : (await git.getRemoteBranchSha(source, "origin", "agent/first", project))!;
+        : (await git.getRemoteBranchSha(source, "origin", firstBranch, project))!;
       // Exercise terminal handling against the canonical authority-backed task
       // projection, including a durable recovery wait (not a standalone store).
       const terminalTaskStore = new TaskExecutionStore(contextRoot, project, activeAuthority!);
@@ -2724,11 +2765,11 @@ describe("task lifecycle through pollProject", () => {
           terminalSync: "not-applicable",
         });
         expect(openCodeCards).toHaveLength(openCodeCountBeforeRace);
-        expect(requests).toEqual(["agent/first"]);
+        expect(requests).toEqual([firstBranch]);
         expect(prs.size).toBe(1);
-        expect(fs.readFileSync(path.join(worktrees, "first", "reviewer-followup.ts"), "utf8")).toBe(
-          "local reviewer follow-up\n",
-        );
+        expect(
+          fs.readFileSync(path.join(worktrees, firstWorktreeName, "reviewer-followup.ts"), "utf8"),
+        ).toBe("local reviewer follow-up\n");
         blockTerminalDestinationRead = false;
         for (let attempt = 0; attempt < 8 && activeAuthority !== undefined; attempt += 1)
           await poll();
@@ -2762,12 +2803,12 @@ describe("task lifecycle through pollProject", () => {
       });
       if (correctionFailure) {
         expect(openCodeCards).toHaveLength(openCodeCountBeforeRace);
-        expect(requests).toEqual(["agent/first"]);
+        expect(requests).toEqual([firstBranch]);
         expect(prs.size).toBe(1);
-        expect(fs.existsSync(path.join(worktrees, "first"))).toBe(true);
-        expect(fs.readFileSync(path.join(worktrees, "first", "reviewer-followup.ts"), "utf8")).toBe(
-          "local reviewer follow-up\n",
-        );
+        expect(fs.existsSync(path.join(worktrees, firstWorktreeName))).toBe(true);
+        expect(
+          fs.readFileSync(path.join(worktrees, firstWorktreeName, "reviewer-followup.ts"), "utf8"),
+        ).toBe("local reviewer follow-up\n");
       }
       expect(terminalTaskStore.read("first")?.recoveryWait).toBeUndefined();
       if (terminal === "merged") expect(terminalTaskStore.read("first")?.phase).toBe("done");

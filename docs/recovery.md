@@ -98,6 +98,14 @@ creates a duplicate commit, push, or PR. Refinement events use the same project 
 expected attempt-owned worktree; ambiguous ownership preserves the queue and blocks subsequent
 mutations.
 
+Published-task recovery and CI repair resolve the worktree and branch from the canonical attempt's
+recorded resources. Later attempts may use `<card-id>--<attempt-id>`; reconstructing a card-only
+path is not valid recovery evidence. A genuine missing or mismatched worktree remains fenced. New
+recovery escalations retain a sanitized `recoveryAttentionReason`, so subsequent polls expose the
+original blocker rather than only reporting that the task was already escalated. Correcting an
+environment or software defect does not automatically clear an existing attention fence; the
+original attempt must be revalidated under its project lease before resumption.
+
 If a different live worker owns the queue, a second poll does not steal its event. A failed or
 uncertain event retains ownership until verified recovery; do not manually clear it to start another
 task. Exhausted quality improvements are reported on the existing draft PR, not restarted by normal

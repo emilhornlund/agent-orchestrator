@@ -689,6 +689,7 @@ const taskExecutionRecordSchema = z
       })
       .optional(),
     recoveryWait: recoveryWaitSchema.optional(),
+    recoveryAttentionReason: z.string().min(1).max(2_000).optional(),
     primarySessionId: nonBlankIdentifier.optional(),
     sessionCreationStatus: sessionCreationStatus.optional(),
     sessionCreationAttempts: z.number().int().nonnegative().safe().optional(),
