@@ -12,6 +12,7 @@ import { OpenCodeClient } from "../src/opencode/opencode-client.js";
 import { configureProcessRuntime } from "../src/process/process-runtime.js";
 import { drainProcessGroup } from "../src/process/process-runtime.js";
 import { PROCESS_EVIDENCE_MAX_BYTES } from "../src/process/process-runtime.js";
+import type { ProjectConfig } from "../src/config/config.js";
 
 function expectNoLiveProcessGroup(pid: number): void {
   if (process.platform === "linux") {
@@ -239,7 +240,7 @@ describe("managed process descendants", () => {
       directories.push(runtimeRoot);
       const binaries = path.join(runtimeRoot, "bin");
       fs.mkdirSync(binaries);
-      const script = `#!/usr/bin/env node\nif (process.argv[1].endsWith("/gh")) { process.stdout.write("{\\"body\\":\\"before sensitive-"); process.stdout.write("token after\\"}"); } else { process.stdout.write("before sensitive-"); process.stdout.write("token after"); } process.exit(${exitCode});\n`;
+      const script = `#!/usr/bin/env node\nif (process.argv[1].endsWith("/gh")) { process.stdout.write("{\\"login\\":\\"before sensitive-"); process.stdout.write("token after\\"}"); } else { process.stdout.write("before sensitive-"); process.stdout.write("token after"); } process.exit(${exitCode});\n`;
       for (const executable of ["git", "gh"]) {
         const filename = path.join(binaries, executable);
         fs.writeFileSync(filename, script, { mode: 0o700 });
@@ -257,19 +258,17 @@ describe("managed process descendants", () => {
             "before [REDACTED] after",
           );
           await expect(
-            new GitHubClient().getPullRequestDescription({
+            new GitHubClient().getAutomationActor({
               cwd: process.cwd(),
-              repository: "owner/repository",
-              pullRequestUrl: "https://github.com/owner/repository/pull/1",
+              project: { repository: {} } as ProjectConfig,
             }),
           ).resolves.toBe("before [REDACTED] after");
         } else {
           await expect(new GitClient().getStatus(process.cwd())).rejects.toThrow();
           await expect(
-            new GitHubClient().getPullRequestDescription({
+            new GitHubClient().getAutomationActor({
               cwd: process.cwd(),
-              repository: "owner/repository",
-              pullRequestUrl: "https://github.com/owner/repository/pull/1",
+              project: { repository: {} } as ProjectConfig,
             }),
           ).rejects.toThrow();
         }
@@ -282,7 +281,7 @@ describe("managed process descendants", () => {
           ) as { command: string; status: string; exitCode: number };
           expect(fs.readFileSync(path.join(executionRoot, id, "stdout.txt"), "utf8")).toBe(
             metadata.command.startsWith("gh ")
-              ? '{"body":"before [REDACTED] after"}'
+              ? '{"login":"before [REDACTED] after"}'
               : "before [REDACTED] after",
           );
           expect(metadata).toMatchObject({

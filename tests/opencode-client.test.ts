@@ -8,12 +8,27 @@ import {
   OpenCodeSessionIdCaptureError,
   OpenCodeTimeoutError,
   parseOpenCodeSessionId,
+  stripOpenCodePluginPreamble,
   reportUnavailableOpenCodeSelection,
   signalProcessTree,
   type RunOpenCode,
 } from "../src/opencode/opencode-client.js";
 
 describe("OpenCodeClient", () => {
+  it("normalizes only bounded tagged startup banners while retaining strict event parsing", () => {
+    const event = JSON.stringify({ type: "step_start", sessionID: "ses_original" });
+    expect(parseOpenCodeSessionId(stripOpenCodePluginPreamble(`[plugin] v1\n${event}\n`))).toBe(
+      "ses_original",
+    );
+    for (const output of [
+      `not JSON\n${event}\n`,
+      `${event}\n[plugin] interleaved\n`,
+      `[plugin] v1\n{broken\n${event}\n`,
+      `${"[plugin] v1\n".repeat(17)}${event}\n`,
+      `[plugin] ${"x".repeat(4096)}\n${event}\n`,
+    ])
+      expect(() => parseOpenCodeSessionId(stripOpenCodePluginPreamble(output))).toThrow();
+  });
   it("denies editing and command tools for read-only reviewer sessions", () => {
     expect(JSON.parse(buildOpenCodeConfigContent(true))).toEqual({
       permission: {
@@ -39,6 +54,7 @@ describe("OpenCodeClient", () => {
     ).toEqual([
       "run",
       "--auto",
+      "--pure",
       "--model",
       "test-model",
       "--variant",
@@ -54,6 +70,7 @@ describe("OpenCodeClient", () => {
     expect(buildOpenCodeArguments(common)).toEqual([
       "run",
       "--auto",
+      "--pure",
       "--dir",
       "/worktree",
       "prompt",
@@ -61,6 +78,7 @@ describe("OpenCodeClient", () => {
     expect(buildOpenCodeArguments({ ...common, model: "provider/model" })).toEqual([
       "run",
       "--auto",
+      "--pure",
       "--model",
       "provider/model",
       "--dir",
@@ -70,6 +88,7 @@ describe("OpenCodeClient", () => {
     expect(buildOpenCodeArguments({ ...common, variant: "high" })).toEqual([
       "run",
       "--auto",
+      "--pure",
       "--variant",
       "high",
       "--dir",
@@ -83,6 +102,24 @@ describe("OpenCodeClient", () => {
         variant: "high",
       }),
     ).toContain("--model");
+  });
+
+  it("retains structured output when resuming an existing planning session", () => {
+    const args = buildOpenCodeArguments({
+      cwd: "/worktree",
+      prompt: "plan",
+      sessionId: "ses_original",
+      structuredOutput: true,
+    });
+    expect(args).toContain("--pure");
+    expect(args.slice(args.indexOf("--session"), args.indexOf("--session") + 2)).toEqual([
+      "--session",
+      "ses_original",
+    ]);
+    expect(args.slice(args.indexOf("--format"), args.indexOf("--format") + 2)).toEqual([
+      "--format",
+      "json",
+    ]);
   });
 
   it("reports explicit unavailable selections without recasting service errors", () => {
@@ -117,6 +154,7 @@ describe("OpenCodeClient", () => {
     ).toEqual([
       "run",
       "--auto",
+      "--pure",
       "--model",
       "test-model",
       "--variant",
@@ -141,6 +179,7 @@ describe("OpenCodeClient", () => {
     ).toEqual([
       "run",
       "--auto",
+      "--pure",
       "--model",
       "test-model",
       "--variant",

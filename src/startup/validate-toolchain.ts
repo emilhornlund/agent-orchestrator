@@ -168,7 +168,7 @@ async function validateOpenCodeCapabilities(
 ): Promise<void> {
   const result = await probe(commands, "opencode", ["run", "--help"], timeoutMilliseconds);
   const help = [result.output ?? "", result.errorOutput ?? ""].join("\n");
-  const required = ["--auto", "--model", "--variant", "--dir", "--session", "--format"];
+  const required = ["--auto", "--pure", "--model", "--variant", "--dir", "--session", "--format"];
   const missing = required.filter((option) => !help.includes(option));
   if (missing.length)
     throw new ToolchainCompatibilityError(

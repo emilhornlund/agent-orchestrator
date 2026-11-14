@@ -18,6 +18,8 @@ it("confines the actual writable OpenCode child and its descendants to task cont
   const home = path.join(root, "home");
   fs.mkdirSync(bin);
   fs.mkdirSync(home);
+  fs.mkdirSync(path.join(home, ".opencode"));
+  fs.writeFileSync(path.join(home, ".opencode", ".gitignore"), "node_modules\n");
   const metadata = path.resolve(
     f.worktreePath,
     fs.readFileSync(path.join(f.worktreePath, ".git"), "utf8").trim().slice(8),
@@ -37,6 +39,8 @@ it("confines the actual writable OpenCode child and its descendants to task cont
     `#!${process.execPath}\nconst fs = require('node:fs'); const {spawnSync} = require('node:child_process');
 const paths = ${JSON.stringify(protectedPaths)};
 if (fs.readFileSync(${JSON.stringify(attachment)}, 'utf8') !== 'task attachment context') process.exit(35);
+if (fs.readFileSync(process.env.HOME + '/.opencode/.gitignore', 'utf8') !== 'node_modules\\n') process.exit(36);
+try { fs.writeFileSync(process.env.HOME + '/.opencode/.gitignore', 'unsafe'); process.exit(37); } catch {}
 fs.writeFileSync(process.env.HOME + '/.local/share/opencode/session-test', 'session state');
 fs.writeFileSync(process.env.TMPDIR + '/scratch', 'scratch');
 for (const p of paths) { try { fs.writeFileSync(p, 'unsafe'); process.exit(31); } catch {} }

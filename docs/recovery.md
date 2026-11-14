@@ -49,6 +49,14 @@ non-delivery proof remains owned and explicitly pending. Legacy trusted commits 
 dispatch provenance are preserved for explicit reconciliation, not automatically upgraded into
 permission to create a PR.
 
+Initial PR title/body/draft readback uses a bounded authenticated GitHub API read rather than CLI
+display output: some CLI releases rewrite terminal escape sequences even in JSON, which can make an
+unchanged body appear different from its publication intent. The read uses the project's App token
+or ambient token; an authenticated CLI credential can be obtained in memory when needed. Credentials
+and authentication-command output are never logged. Exact body comparison and the original
+publication journal remain intact, so recovery adopts the existing PR without rewriting its body or
+creating another PR.
+
 After restart, `pollProject` calls the unified task-session coordinator. It checks queue ownership
 and persisted task phase before resuming any work. The primary session is verified with
 `opencode session list --format json --pure --max-count 10000` from the owned worktree; its ID and
@@ -260,6 +268,9 @@ From a checkout with development dependencies:
 ```sh
 yarn reconcile:external-pr --project ID --card ID --commit SHA --branch BRANCH --pr NUMBER
 yarn recover:legacy-mutation --project ID --event EVENT_ID --confirm-never-started
+yarn recover:session-startup --project ID --card ID --confirm-stopped
+# If a completed startup emitted a verified session but binding failed:
+yarn recover:session-startup --project ID --card ID --confirm-stopped --session SESSION_ID
 ```
 
 For a production image, the equivalent entry points are
@@ -275,6 +286,35 @@ The legacy-mutation command is narrower: it retires only a completed legacy Read
 execution never started, with no task-execution owner, after verifying Ready membership and absence
 from Working. The confirmation flag is an operator assertion, not something inferred from PID
 absence. It cannot clear started, failed, ambiguous or actively owned work.
+
+The session-startup command handles an older initial-session failure whose process evidence was not
+finalized. Stop the service and independently establish that the failed process and descendants have
+stopped before supplying `--confirm-stopped`; the flag records an operator assertion, not automatic
+stopped-process proof. The command obtains the shared project lease and requires an unpublished
+planning blockage, verified Working membership, the clean unchanged owned branch, no PR, no
+primary-operation history, and a complete OpenCode session inventory with no session for that
+worktree. It then resumes planning in the existing attempt, preserving setup and diagnostics. Any
+uncertainty refuses recovery. It does not permit resetting interrupted implementation or bypassing
+unknown session ownership.
+
+With `--session`, the same command instead binds the explicitly identified original session after
+verifying a successful stopped initial process and the session's exact worktree identity. It does
+not create a replacement session. This handles older plugin-contaminated startup output; subsequent
+orchestrated runs use OpenCode's `--pure` mode so external plugin console output cannot corrupt the
+JSON event protocol. Startup requires that CLI capability. Some plugins still emit tagged
+import-time banners under `--pure`; the process adapter removes only a bounded tagged bootstrap
+preamble from returned output, retaining the original bytes in child stdout evidence. Malformed JSON
+and interleaved diagnostics remain errors; strict event parsing remains unchanged. Resumed planning
+also explicitly requests JSON events rather than accidentally switching to formatted terminal
+output.
+
+New initial-session dispatches persist their execution identity before spawning and finalize process
+evidence even when the session event stream is missing or malformed. A nonzero startup can be
+retried only after stopped-process evidence and authoritative absence of a worktree session are
+established. Three verified failures exhaust the existing operation recovery bound and trigger
+verified Failed handling rather than leaving the card in Working. Unknown acceptance remains
+preserved for explicit reconciliation; an empty event stream alone never authorizes a second
+session.
 
 For an imported legacy `attention-required` implementation without terminal-failure proof, an
 explicitly authorized move to Failed can retire the matching legacy queue event after identity/owner

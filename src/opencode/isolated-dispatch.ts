@@ -74,8 +74,18 @@ export function isolatedOpenCodeDispatch(
     read(location);
   // Operator-selected executable directories, not the rest of their home.
   for (const location of (environment.PATH ?? "").split(path.delimiter)) read(location);
+  // Node installations (notably nvm) keep Yarn/npm symlink targets and their
+  // runtime modules beside bin, under lib/node_modules. Mounting bin alone
+  // leaves the advertised package-manager executables broken inside isolation.
+  const nodeBin = path.dirname(process.execPath);
+  if (path.basename(nodeBin) === "bin" && path.dirname(nodeBin) !== path.parse(nodeBin).root)
+    read(path.dirname(nodeBin));
   const home = environment.HOME;
   const config = environment.XDG_CONFIG_HOME ?? (home && path.join(home, ".config"));
+  // OpenCode discovers HOME/.opencode even when only its bin directory is on
+  // PATH. Exposing bin alone makes existing bootstrap/config files disappear,
+  // causing an attempted .gitignore write on the read-only synthetic parent.
+  read(home && path.join(home, ".opencode"));
   read(environment.OPENCODE_CONFIG);
   read(environment.OPENCODE_CONFIG_DIR ?? (config && path.join(config, "opencode")));
   read(environment.GOOGLE_APPLICATION_CREDENTIALS);

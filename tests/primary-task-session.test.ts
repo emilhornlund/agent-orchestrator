@@ -140,6 +140,143 @@ function recoveryBaseline() {
 }
 
 describe("runWithPrimaryTaskSession", () => {
+  it("records initial provider outage dispatches separately from genuine startup failures", async () => {
+    const { store } = createFixture();
+    store.create(createRecord());
+    vi.spyOn(store, "readProcessExecution").mockImplementation((_card, id) => ({
+      executionId: id,
+      command: "opencode run --model planning-model --variant high",
+      cwd: "/owned/worktree",
+      status: "nonzero",
+      treeStopped: true,
+    }));
+    const run = vi.fn<RunOpenCode>(async (options) => {
+      await options.onExecutionPrepared?.({
+        executionId: "outage",
+        metadataPath: "/evidence/outage/execution.json",
+        artifactRoot: "/evidence",
+      });
+      return {
+        exitCode: 1,
+        output: "",
+        errorOutput: "",
+        processExecutionId: "outage",
+        failureClassification: "dependency-outage",
+      };
+    });
+    await expect(
+      runWithPrimaryTaskSession(
+        store,
+        new OpenCodeClient(run),
+        "project-one",
+        "card-one",
+        createRunOptions(),
+        {
+          inspectCreation: async () => "absent",
+        },
+      ),
+    ).rejects.toMatchObject({
+      name: "PrimaryOperationWaitingError",
+      operationId: "initial-planning:session-creation",
+    });
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(store.read("card-one")).toMatchObject({
+      sessionCreationAttempts: 1,
+      sessionCreationFailures: 0,
+    });
+    expect(store.read("card-one")?.sessionCreationStatus).toBeUndefined();
+  });
+  it("retries initial startup only with stopped execution and authoritative absence of an unbound session", async () => {
+    const { store } = createFixture();
+    store.create(createRecord());
+    vi.spyOn(store, "readProcessExecution").mockImplementation((_card, id) => ({
+      executionId: id,
+      command: "opencode run --model planning-model --variant high",
+      cwd: "/owned/worktree",
+      status: "nonzero",
+      treeStopped: true,
+      exitCode: 1,
+    }));
+    let attempts = 0;
+    const run = vi.fn<RunOpenCode>(async (options) => {
+      const id = `startup-${++attempts}`;
+      await options.onExecutionPrepared?.({
+        executionId: id,
+        metadataPath: `/evidence/${id}/execution.json`,
+        artifactRoot: "/evidence",
+      });
+      return attempts === 1
+        ? { exitCode: 1, output: "", errorOutput: "bootstrap failed", processExecutionId: id }
+        : {
+            exitCode: 0,
+            output: sessionEvent("ses_created"),
+            errorOutput: "",
+            processExecutionId: id,
+          };
+    });
+    await expect(
+      runWithPrimaryTaskSession(
+        store,
+        new OpenCodeClient(run),
+        "project-one",
+        "card-one",
+        createRunOptions(),
+        {
+          inspectCreation: async () => "absent",
+        },
+      ),
+    ).resolves.toMatchObject({ sessionId: "ses_created" });
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(store.read("card-one")).toMatchObject({
+      sessionCreationStatus: "bound",
+      sessionCreationAttempts: 2,
+    });
+  });
+
+  it("bounds verified initial startup failures and never retries a possibly created session", async () => {
+    for (const inspection of ["absent", "present", "unknown"] as const) {
+      const { store } = createFixture();
+      store.create(createRecord());
+      vi.spyOn(store, "readProcessExecution").mockImplementation((_card, id) => ({
+        executionId: id,
+        command: "opencode run --model planning-model --variant high",
+        cwd: "/owned/worktree",
+        status: "nonzero",
+        treeStopped: true,
+      }));
+      const run = vi.fn<RunOpenCode>(async (options) => {
+        await options.onExecutionPrepared?.({
+          executionId: "startup",
+          metadataPath: "/evidence/startup/execution.json",
+          artifactRoot: "/evidence",
+        });
+        return {
+          exitCode: 1,
+          output: "",
+          errorOutput: "bootstrap failed",
+          processExecutionId: "startup",
+        };
+      });
+      await expect(
+        runWithPrimaryTaskSession(
+          store,
+          new OpenCodeClient(run),
+          "project-one",
+          "card-one",
+          createRunOptions(),
+          {
+            inspectCreation: async () => inspection,
+          },
+        ),
+      ).rejects.toThrow(
+        inspection === "absent" ? "3 verified stopped attempts" : "outcome is ambiguous",
+      );
+      expect(run).toHaveBeenCalledTimes(inspection === "absent" ? 3 : 1);
+      fs.rmSync(temporaryRoot!, { recursive: true, force: true });
+      temporaryRoot = undefined;
+    }
+  });
+
   it("recovers a bound advisory timeout only after process evidence confirms it stopped", async () => {
     const { store } = createFixture();
     store.create(

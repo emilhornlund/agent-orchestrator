@@ -18,6 +18,9 @@ import { sanitizePrimarySessionContextBundle } from "./build-primary-session-con
 import { withAiExecutionCapacity } from "../orchestrator/ai-execution-capacity.js";
 import { ProjectRunAuthority } from "./project-run-authority.js";
 import { assertNoTerminalPr } from "./terminal-pr-fence.js";
+import { OpenCodeSessionIdCaptureError } from "../opencode/opencode-client.js";
+import { isVerifiedStoppedExecution } from "../process/process-runtime.js";
+import { OPERATION_RECOVERY_MAX_EXECUTIONS } from "./operation-recovery-policy.js";
 
 export class PrimaryTaskSessionError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -25,6 +28,8 @@ export class PrimaryTaskSessionError extends Error {
     this.name = "PrimaryTaskSessionError";
   }
 }
+
+export class PrimarySessionCreationExhaustedError extends PrimaryTaskSessionError {}
 
 export class PrimarySessionReconstructionRequiredError extends PrimaryTaskSessionError {
   readonly operationId: string | undefined;
@@ -516,16 +521,86 @@ async function runWithPrimaryTaskSessionOwned(
     );
   }
 
-  const creatingRecord = updateSessionCreationStatus(store, record, "creating");
+  if ((record.sessionCreationFailures ?? 0) >= OPERATION_RECOVERY_MAX_EXECUTIONS)
+    throw new PrimarySessionCreationExhaustedError(
+      "Primary session creation exhausted verified startup failures",
+    );
+  let creatingRecord = store.compareAndSwap(cardId, record.revision, {
+    ...record,
+    sessionCreationStatus: "creating",
+    sessionCreationAttempts: (record.sessionCreationAttempts ?? 0) + 1,
+    revision: nextRevision(record),
+    updatedAt: nextTimestamp(record.updatedAt),
+  });
   let result: OpenCodeRunResult;
 
   try {
-    result = await openCode.run({ ...runOptions, captureSessionId: true });
+    result = await openCode.run({
+      ...runOptions,
+      captureSessionId: true,
+      onExecutionPrepared: async (evidence) => {
+        creatingRecord = store.compareAndSwap(cardId, creatingRecord.revision, {
+          ...creatingRecord,
+          sessionCreationExecutionId: evidence.executionId,
+          revision: nextRevision(creatingRecord),
+          updatedAt: nextTimestamp(creatingRecord.updatedAt),
+        });
+        await runOptions.onExecutionPrepared?.(evidence);
+      },
+    });
 
     if (result.sessionId === undefined) {
       throw new PrimaryTaskSessionError("OpenCode did not return the created primary session ID");
     }
   } catch (error) {
+    // A malformed/empty event stream alone is NOT proof that creation failed.
+    // First verify the owned process stopped, then inspect the authoritative
+    // session inventory. Only conclusive no-session failures permit redispatch.
+    const executionId = creatingRecord.sessionCreationExecutionId;
+    if (
+      !runOptions.signal.aborted &&
+      error instanceof OpenCodeSessionIdCaptureError &&
+      error.runResult.exitCode !== 0 &&
+      executionId !== undefined &&
+      error.runResult.processExecutionId === executionId &&
+      isVerifiedStoppedExecution(
+        store.readProcessExecution(cardId, executionId, "process-executions"),
+        {
+          executionId,
+          command: `opencode run${runOptions.model === undefined ? "" : ` --model ${runOptions.model}`}${runOptions.variant === undefined ? "" : ` --variant ${runOptions.variant}`}`,
+          cwd: runOptions.cwd,
+        },
+      ) &&
+      (await recovery.inspectCreation?.()) === "absent"
+    ) {
+      const retryable = store.compareAndSwap(cardId, creatingRecord.revision, {
+        ...creatingRecord,
+        sessionCreationStatus: undefined,
+        sessionCreationFailures:
+          (creatingRecord.sessionCreationFailures ?? 0) +
+          (error.runResult.failureClassification === "dependency-outage" ? 0 : 1),
+        revision: nextRevision(creatingRecord),
+        updatedAt: nextTimestamp(creatingRecord.updatedAt),
+      });
+      if (error.runResult.failureClassification === "dependency-outage")
+        throw new PrimaryOperationWaitingError(`${record.operationKey}:session-creation`, {
+          cause: error,
+        });
+      if (retryable.sessionCreationFailures! >= OPERATION_RECOVERY_MAX_EXECUTIONS)
+        throw new PrimarySessionCreationExhaustedError(
+          `Primary OpenCode session creation failed after ${OPERATION_RECOVERY_MAX_EXECUTIONS} verified stopped attempts; diagnostics: ${executionId}`,
+          { cause: error },
+        );
+      return runWithPrimaryTaskSessionOwned(
+        store,
+        openCode,
+        projectId,
+        cardId,
+        runOptions,
+        recovery,
+        execution,
+      );
+    }
     try {
       updateSessionCreationStatus(store, creatingRecord, "ambiguous");
     } catch (stateError) {
@@ -579,6 +654,7 @@ export interface PrimarySessionContextBundle {
 }
 
 export interface PrimarySessionRecoveryOptions {
+  inspectCreation?: () => Promise<"absent" | "present" | "unknown">;
   inspect?: (
     sessionId: string,
   ) => Promise<"reachable" | "confirmed-absent" | "conflict" | "unknown">;

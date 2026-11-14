@@ -345,16 +345,20 @@ describe("production workflow client journal", () => {
       "main",
     );
     let edits = 0;
-    const github = new GitHubClient(async (_cwd, args) => {
-      if (args[0] === "pr" && args[1] === "view" && args[args.indexOf("--json") + 1] === "body")
-        return JSON.stringify({ body });
-      if (args[0] === "pr" && args[1] === "edit") {
-        edits++;
-        body = args[args.indexOf("--body") + 1]!;
-        return "";
-      }
-      throw new Error("Unexpected terminal body fixture command");
-    });
+    const github = new GitHubClient(
+      async (_cwd, args) => {
+        if (args[0] === "pr" && args[1] === "view" && args[args.indexOf("--json") + 1] === "body")
+          return JSON.stringify({ body });
+        if (args[0] === "pr" && args[1] === "edit") {
+          edits++;
+          body = args[args.indexOf("--body") + 1]!;
+          return "";
+        }
+        throw new Error("Unexpected terminal body fixture command");
+      },
+      undefined,
+      async () => JSON.stringify({ body }),
+    );
     vi.spyOn(github, "getPullRequestStateByNumber").mockResolvedValue(pr);
     const request = {
       cwd: f.pinned.repositoryPath,
@@ -406,22 +410,33 @@ describe("production workflow client journal", () => {
     let body = "Human original";
     let race = true;
     let edits = 0;
-    const github = new GitHubClient(async (_cwd, args) => {
-      if (args[0] === "pr" && args[1] === "view" && args[args.indexOf("--json") + 1] === "body") {
+    const github = new GitHubClient(
+      async (_cwd, args) => {
+        if (args[0] === "pr" && args[1] === "view" && args[args.indexOf("--json") + 1] === "body") {
+          const snapshot = body;
+          if (race) {
+            race = false;
+            body = "Human original\nHuman concurrent addition";
+          }
+          return JSON.stringify({ body: snapshot });
+        }
+        if (args[0] === "pr" && args[1] === "edit") {
+          edits++;
+          body = args[args.indexOf("--body") + 1]!;
+          return "";
+        }
+        throw new Error("Unexpected body-update fixture command");
+      },
+      undefined,
+      async () => {
         const snapshot = body;
         if (race) {
           race = false;
           body = "Human original\nHuman concurrent addition";
         }
         return JSON.stringify({ body: snapshot });
-      }
-      if (args[0] === "pr" && args[1] === "edit") {
-        edits++;
-        body = args[args.indexOf("--body") + 1]!;
-        return "";
-      }
-      throw new Error("Unexpected body-update fixture command");
-    });
+      },
+    );
     vi.spyOn(github, "getPullRequestStateByNumber").mockResolvedValue({
       state: "OPEN",
     } as Awaited<ReturnType<GitHubClient["getPullRequestStateByNumber"]>>);

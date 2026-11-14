@@ -58,10 +58,10 @@ describe("GitHubClient", () => {
       JSON.stringify({
         title: "Task",
         body: "body with correlation marker",
-        isDraft: true,
+        draft: true,
       }),
     );
-    const client = new GitHubClient(run);
+    const client = new GitHubClient(undefined, undefined, run);
     await expect(
       client.getPullRequestPublicationFields({
         cwd: "/repo",
@@ -73,21 +73,17 @@ describe("GitHubClient", () => {
       body: "body with correlation marker",
       isDraft: true,
     });
-    expect(run.mock.calls[0]?.[1]).toEqual([
-      "pr",
-      "view",
-      "https://github.com/owner/repo/pull/4",
-      "--repo",
-      "owner/repo",
-      "--json",
-      "title,body,isDraft",
-    ]);
+    expect(run.mock.calls[0]?.[0]).toMatchObject({
+      cwd: "/repo",
+      repository: "owner/repo",
+      number: 4,
+    });
   });
 
   it.each(["", "{}", '{"title":"Task","body":"body","isDraft":"true"}', "not-json"])(
     "rejects malformed initial-publication readback %s without treating it as absence",
     async (output) => {
-      const client = new GitHubClient(successfulOutputRunner([output]));
+      const client = new GitHubClient(undefined, undefined, async () => output);
       await expect(
         client.getPullRequestPublicationFields({
           cwd: "/repo",
@@ -777,12 +773,9 @@ describe("GitHubClient", () => {
   });
 
   it("reads the latest pull request body before updating its managed status", async () => {
-    const runGitHubCommand = vi
-      .fn<RunGitHubCommand>()
-      .mockResolvedValueOnce(JSON.stringify({ body: "Human description" }))
-      .mockResolvedValueOnce(JSON.stringify({ body: "Human description" }))
-      .mockResolvedValueOnce("");
-    const github = new GitHubClient(runGitHubCommand);
+    const runGitHubCommand = vi.fn<RunGitHubCommand>().mockResolvedValue("");
+    const readBody = vi.fn().mockResolvedValue(JSON.stringify({ body: "Human description" }));
+    const github = new GitHubClient(runGitHubCommand, undefined, readBody);
 
     await expect(
       github.updatePullRequestDescriptionStatus({
@@ -793,16 +786,8 @@ describe("GitHubClient", () => {
       }),
     ).resolves.toBe(true);
 
+    expect(readBody).toHaveBeenCalledTimes(2);
     expect(runGitHubCommand).toHaveBeenNthCalledWith(1, "/tmp/repository", [
-      "pr",
-      "view",
-      "https://github.com/example/repository/pull/123",
-      "--repo",
-      "example/repository",
-      "--json",
-      "body",
-    ]);
-    expect(runGitHubCommand).toHaveBeenNthCalledWith(3, "/tmp/repository", [
       "pr",
       "edit",
       "https://github.com/example/repository/pull/123",
@@ -826,7 +811,8 @@ describe("GitHubClient", () => {
       AGENT_ORCHESTRATOR_STATUS_END,
     ].join("\n");
     const runGitHubCommand = vi.fn<RunGitHubCommand>().mockResolvedValue(JSON.stringify({ body }));
-    const github = new GitHubClient(runGitHubCommand);
+    const readBody = vi.fn().mockResolvedValue(JSON.stringify({ body }));
+    const github = new GitHubClient(runGitHubCommand, undefined, readBody);
 
     await expect(
       github.updatePullRequestDescriptionStatus({
@@ -837,7 +823,8 @@ describe("GitHubClient", () => {
       }),
     ).resolves.toBe(false);
 
-    expect(runGitHubCommand).toHaveBeenCalledTimes(1);
+    expect(readBody).toHaveBeenCalledTimes(1);
+    expect(runGitHubCommand).not.toHaveBeenCalled();
   });
 
   it("finds an existing pull request", async () => {

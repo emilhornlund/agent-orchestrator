@@ -49,6 +49,7 @@ export interface OpenCodeRunOptions {
   signal: AbortSignal;
   sessionId?: string;
   captureSessionId?: boolean;
+  structuredOutput?: boolean;
   readOnly?: boolean;
   refinementResultDirectory?: string;
   environment?: Record<string, string>;
@@ -125,7 +126,7 @@ export function reportUnavailableOpenCodeSelection(
 
 type OpenCodeArgumentOptions = Pick<
   OpenCodeRunOptions,
-  "cwd" | "model" | "variant" | "prompt" | "sessionId" | "captureSessionId"
+  "cwd" | "model" | "variant" | "prompt" | "sessionId" | "captureSessionId" | "structuredOutput"
 >;
 
 export function buildOpenCodeConfigContent(readOnly = false): string {
@@ -152,7 +153,7 @@ function assertValidSessionId(sessionId: string): void {
 }
 
 export function buildOpenCodeArguments(options: OpenCodeArgumentOptions): string[] {
-  const { cwd, model, variant, prompt, sessionId, captureSessionId } = options;
+  const { cwd, model, variant, prompt, sessionId, captureSessionId, structuredOutput } = options;
 
   if (sessionId !== undefined) {
     assertValidSessionId(sessionId);
@@ -167,12 +168,13 @@ export function buildOpenCodeArguments(options: OpenCodeArgumentOptions): string
   return [
     "run",
     "--auto",
+    "--pure",
     ...(model === undefined ? [] : ["--model", model]),
     ...(variant === undefined ? [] : ["--variant", variant]),
     "--dir",
     cwd,
     ...(sessionId === undefined ? [] : ["--session", sessionId]),
-    ...(captureSessionId === true ? ["--format", "json"] : []),
+    ...(captureSessionId === true || structuredOutput === true ? ["--format", "json"] : []),
     prompt,
   ];
 }
@@ -285,6 +287,27 @@ export function parseOpenCodeSessionId(output: string): string {
   }
 
   return sessionId;
+}
+
+/** Some CLI plugins print import-time banners even under --pure. Allow only
+ * bounded, tagged bootstrap diagnostics before the first event, never malformed
+ * JSON events or interleaved output. Original bytes remain in stdout.txt. */
+export function stripOpenCodePluginPreamble(output: string): string {
+  const lines = output.split(/\r?\n/u);
+  let start = 0;
+  let bytes = 0;
+  while (start < lines.length) {
+    const line = lines[start]!;
+    if (line.trim() === "") {
+      start++;
+      continue;
+    }
+    if (!/^\[[A-Za-z][A-Za-z0-9_.-]{0,63}\] [^\r\n]*$/u.test(line)) break;
+    bytes += Buffer.byteLength(line);
+    if (start >= 16 || bytes > 4096) return output;
+    start++;
+  }
+  return lines.slice(start).join("\n");
 }
 
 export function extractOpenCodeTextOutput(output: string): string {
@@ -404,6 +427,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
   signal,
   sessionId,
   captureSessionId,
+  structuredOutput,
   readOnly,
   refinementResultDirectory,
   environment,
@@ -486,6 +510,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
         prompt: redactSecrets(prompt, secretValues),
         ...(sessionId === undefined ? {} : { sessionId }),
         ...(captureSessionId === undefined ? {} : { captureSessionId }),
+        ...(structuredOutput === undefined ? {} : { structuredOutput }),
       });
       const authority = ProjectRunAuthority.currentProjectId();
       let dispatch = { command: "opencode", args: arguments_ };
@@ -510,6 +535,17 @@ const defaultRunOpenCode: RunOpenCode = async ({
         stdio: ["inherit", "pipe", "pipe"],
         detached: process.platform !== "win32",
         env: childEnvironment,
+      });
+      child.once("spawn", () => {
+        try {
+          execution.dispatched(child.pid);
+        } catch (error) {
+          recorderFailure ??=
+            error instanceof Error
+              ? error
+              : new ProcessEvidenceError("Could not record OpenCode dispatch");
+          terminate();
+        }
       });
 
       let output = "";
@@ -732,13 +768,14 @@ const defaultRunOpenCode: RunOpenCode = async ({
           clearTimeout(forceKillTimeout);
         }
         effectiveSignal.removeEventListener("abort", handleAbort);
+        output = stripOpenCodePluginPreamble(output);
         let capturedSessionId: string | undefined;
+        let sessionCaptureError: unknown;
         if (captureSessionId === true) {
           try {
             capturedSessionId = parseOpenCodeSessionId(output);
           } catch (error) {
-            reject(error);
-            return;
+            sessionCaptureError = error;
           }
         }
         try {
@@ -797,6 +834,23 @@ const defaultRunOpenCode: RunOpenCode = async ({
 
         if (effectiveSignal.aborted) {
           reject(new OpenCodeRunAbortedError());
+          return;
+        }
+
+        if (sessionCaptureError !== undefined) {
+          reject(
+            new OpenCodeSessionIdCaptureError(
+              `Could not capture the created OpenCode session ID; diagnostics: ${execution.metadataPath}`,
+              {
+                exitCode: code ?? 1,
+                output,
+                errorOutput,
+                processExecutionId: execution.executionId,
+                ...(failureClassification === undefined ? {} : { failureClassification }),
+              },
+              { cause: sessionCaptureError },
+            ),
+          );
           return;
         }
 

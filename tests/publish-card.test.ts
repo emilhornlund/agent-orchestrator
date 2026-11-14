@@ -1732,7 +1732,9 @@ describe("publishCard", () => {
     await publishCard({
       trello,
       git: new GitClient(runGit, credentials),
-      github: new GitHubClient(runGitHubCommand, credentials),
+      github: new GitHubClient(runGitHubCommand, credentials, async () => {
+        throw new Error("Description unavailable in fixture");
+      }),
       project,
       card: createCard(),
       worktreePath: "/tmp/example-worktrees/card-1",
@@ -1744,7 +1746,7 @@ describe("publishCard", () => {
 
     expect(events).toEqual(["push", "find-pr", "move", "comment"]);
 
-    expect(runGitHubCommand).toHaveBeenCalledTimes(2);
+    expect(runGitHubCommand).toHaveBeenCalledTimes(1);
     expect(getInstallationToken).toHaveBeenCalledTimes(5);
     expect(getInstallationToken).toHaveBeenNthCalledWith(
       1,
@@ -2367,7 +2369,9 @@ describe("publishCard", () => {
       publishCard({
         trello,
         git: new GitClient(runGit),
-        github: new GitHubClient(runGitHubCommand),
+        github: new GitHubClient(runGitHubCommand, undefined, async () => {
+          throw new Error("Description unavailable in fixture");
+        }),
         project: createProject(),
         card: createCard(),
         worktreePath: "/tmp/example-worktrees/card-1",
@@ -2378,7 +2382,7 @@ describe("publishCard", () => {
       }),
     ).rejects.toThrow("was published, but the Trello card could not be moved to Human Review");
 
-    expect(runGitHubCommand).toHaveBeenCalledTimes(2);
+    expect(runGitHubCommand).toHaveBeenCalledTimes(1);
     expect(moveCard).toHaveBeenCalledWith("card-1", "review-list");
   });
 });

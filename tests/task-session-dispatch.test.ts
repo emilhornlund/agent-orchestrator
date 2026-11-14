@@ -1521,7 +1521,13 @@ describe("task-session production dispatch", () => {
       }
       return "";
     });
-    const github = new GitHubClient(githubRun);
+    const github = new GitHubClient(githubRun, undefined, async () =>
+      JSON.stringify({
+        title: card.name,
+        body: pullRequestBody,
+        draft: pullRequestDraft,
+      }),
+    );
     const plan = {
       version: 1,
       projectId: "project",
