@@ -63,6 +63,7 @@ import { inspectPrimaryOperationEvidence } from "../task-session/inspect-primary
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { getProcessRuntime } from "../process/process-runtime.js";
 import { canResumeFeedbackReviewRepair } from "../task-session/can-resume-failed-feedback-review.js";
+import { isShutdownCancellation } from "../runtime/shutdown-cancellation.js";
 import {
   findPrimaryRecoveryError,
   persistPrimaryOperationRecovery,
@@ -1574,7 +1575,11 @@ export async function runTaskSessionFeedbackCycle(
     options.mutationQueue.complete(operationId);
     return "published";
   } catch (error) {
-    cardLog.event("Requested-changes workflow failed");
+    cardLog.event(
+      isShutdownCancellation(error, signal)
+        ? "Requested-changes workflow cancelled; checkpoint preserved"
+        : "Requested-changes workflow failed",
+    );
     if (signal.aborted) {
       if (options.mutationQueue.ownsActive(operationId))
         options.mutationQueue.releaseForRecovery(operationId);

@@ -11,6 +11,7 @@ import {
   OpenCodeClient,
   OpenCodeRunAbortedError,
   OpenCodeTimeoutError,
+  extractOpenCodeTextOutput,
 } from "../src/opencode/opencode-client.js";
 import {
   configureProcessRuntime,
@@ -112,6 +113,34 @@ describe("OpenCode streaming output", () => {
       "[example-plugin] v1.0",
     );
     expect(spawnMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves initial planning JSON while redacting credential-shaped source excerpts", async () => {
+    const child = fakeChild();
+    spawnMock.mockReturnValue(child);
+    const pending = new OpenCodeClient().run({
+      cwd: directory,
+      prompt: "plan",
+      captureSessionId: true,
+      timeoutMilliseconds: 60_000,
+      signal: new AbortController().signal,
+    });
+    await vi.waitFor(() => expect(spawnMock).toHaveBeenCalled());
+    const plan = {
+      version: 1,
+      verification: 'parseConfig("secret: [planning-source-canary", {})',
+      after: "retained",
+    };
+    const wire = `${JSON.stringify({ type: "text", sessionID: "ses_plan", part: { type: "text", text: JSON.stringify(plan) } })}\n`;
+    for (const character of wire) child.stdout.emit("data", Buffer.from(character));
+    child.emit("close", 0, null);
+    const result = await pending;
+    expect(result.sessionId).toBe("ses_plan");
+    expect(result.output).not.toContain("planning-source-canary");
+    expect(JSON.parse(extractOpenCodeTextOutput(result.output))).toMatchObject({
+      version: 1,
+      after: "retained",
+    });
   });
 
   it("finalizes stopped process evidence when startup fails before emitting a session ID", async () => {

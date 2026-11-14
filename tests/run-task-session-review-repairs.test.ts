@@ -7,6 +7,8 @@ import type { ProjectConfig } from "../src/config/config.js";
 import type { TaskExecutionRecord } from "../src/task-session/task-execution-record.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import { Logger } from "../src/logging/logger.js";
+import { withProcessCancellationSignal } from "../src/process/process-runtime.js";
+import { OpenCodeRunAbortedError } from "../src/opencode/opencode-client.js";
 import {
   hasUndisposedReviewConcerns,
   parsePrimaryReviewDispositionReport,
@@ -151,6 +153,34 @@ function fixture() {
 }
 
 describe("runTaskSessionReviewWithRepairs", () => {
+  it.each([true, false])(
+    "distinguishes review shutdown cancellation from a concurrent real failure (cancelled=%s)",
+    async (cancelled) => {
+      const f = fixture();
+      const cycle = f.run(["pass"]);
+      const controller = new AbortController();
+      const error = cancelled
+        ? new OpenCodeRunAbortedError()
+        : new Error("Independent review failure");
+      cycle.reviewRun.mockImplementationOnce(async () => {
+        controller.abort();
+        throw error;
+      });
+      const events = vi.spyOn(Logger.prototype, "event").mockImplementation(() => undefined);
+      try {
+        await expect(
+          withProcessCancellationSignal(controller.signal, () => cycle.run()),
+        ).rejects.toBe(error);
+        const output = events.mock.calls.map(([message]) => message).join("\n");
+        expect(output).toContain(`"event":"${cancelled ? "cycle-cancelled" : "cycle-failed"}"`);
+        expect(output).not.toContain(`"event":"${cancelled ? "cycle-failed" : "cycle-cancelled"}"`);
+        expect(f.store.read("card")?.retryCounters.review).toBe(0);
+        expect(f.store.read("card")?.phase).toBe("review");
+      } finally {
+        events.mockRestore();
+      }
+    },
+  );
   it("consumes a cached first review once and requests current source for later rounds", async () => {
     const f = fixture();
     const identities = [

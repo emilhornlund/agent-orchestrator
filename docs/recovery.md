@@ -106,6 +106,13 @@ original blocker rather than only reporting that the task was already escalated.
 environment or software defect does not automatically clear an existing attention fence; the
 original attempt must be revalidated under its project lease before resumption.
 
+A completed human-feedback writer still owns its validation checkpoint before the first feedback
+review cycle is initialized. Recovery resumes that completed operation's quality stage on the
+existing PR; it does not treat the Working card as a new implementation claim. Original feedback
+identities and queue ownership must remain verifiable, including when a verified replacement session
+is used. Missing round context or ambiguous execution preserves the checkpoint and blocks
+initial-publication fallthrough instead of replaying the writer.
+
 If a different live worker owns the queue, a second poll does not steal its event. A failed or
 uncertain event retains ownership until verified recovery; do not manually clear it to start another
 task. Exhausted quality improvements are reported on the existing draft PR, not restarted by normal

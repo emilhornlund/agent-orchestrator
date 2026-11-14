@@ -193,6 +193,10 @@ describe("runTaskSessionFeedbackVerification", () => {
     expect(run.mock.calls[0]?.[0].sessionId).toBeUndefined();
     expect(run.mock.calls[0]?.[0].prompt).toContain("Fix the edge case.");
     expect(run.mock.calls[0]?.[0].prompt).toContain("Advisory task plan:");
+    expect(run.mock.calls[0]?.[0].prompt).toContain('"feedbackId": "inline-comment:comment-1"');
+    expect(run.mock.calls[0]?.[0].prompt).toContain(
+      "array of nonempty strings, never path/detail objects",
+    );
   });
 
   it("verifies feedback against the original task when no plan is available", async () => {

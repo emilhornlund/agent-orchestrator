@@ -38,8 +38,16 @@ export function buildTaskSessionFeedbackVerificationPrompt(input: {
     "Previously successful local quality and independent review evidence:",
     JSON.stringify(input.qualityEvidence, null, 2),
     "Feedback items requiring one disposition each:",
-    JSON.stringify(input.actionableFeedback, null, 2),
+    JSON.stringify(
+      input.actionableFeedback.map((entry) => ({
+        ...entry,
+        feedbackId: `${entry.kind}:${entry.id}`,
+      })),
+      null,
+      2,
+    ),
     ...taskSessionRepositoryGuidance,
     "Return only JSON matching {version:1, projectId, cardId, headSha, contentIdentity, dispositions:[...]}. Each disposition must contain feedbackId and either status=verified-fixed with nonempty supporting evidence paths/tests, status=unresolved for an established remaining request, or status=uncertain when available evidence cannot establish fulfillment. Unresolved and uncertain dispositions require a concrete reason. Failed/pending checks are context, not a veto on evaluating available corrections. Never claim fulfillment solely from the implementation agent's declaration. Do not omit or invent an item.",
+    'Exact disposition shapes: {"feedbackId":"<supplied feedbackId>","status":"verified-fixed","evidence":["src/file.ts: observed implementation behavior","tests/file.test.ts: supporting regression"]}, {"feedbackId":"<supplied feedbackId>","status":"unresolved","reason":"concrete remaining issue"}, or {"feedbackId":"<supplied feedbackId>","status":"uncertain","reason":"concrete evidence gap"}. Copy each supplied feedbackId exactly, including its kind prefix; do not substitute the raw id field. The evidence field is an array of nonempty strings, never path/detail objects. Do not add extra fields.',
   ].join("\n");
 }

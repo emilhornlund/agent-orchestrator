@@ -924,7 +924,9 @@ describe("task-session production dispatch", () => {
       // canonical task has moved into its validation checkpoint. The published
       // Trello card intentionally remains in Human Review; the feedback queue
       // event remains the persisted owner and must not be mistaken for the
-      // original implementation claim or replay feedback remediation.
+      // original implementation claim or replay feedback remediation. This
+      // legacy-shaped checkpoint omits its original feedback IDs; recovery must
+      // preserve that ambiguity instead of falling through to initial publication.
       const checkpointOperationId = `feedback:${feedbackHeadSha}:checkpoint`;
       feedbackQueue.enqueue({
         projectId: project.id,
@@ -1043,7 +1045,7 @@ describe("task-session production dispatch", () => {
             prepareAttachmentContext: async () => undefined,
           }),
         ),
-      ).rejects.toThrow("Publication configuration differs from attempt pins");
+      ).rejects.toThrow("Reserved feedback review has no matching persisted feedback context");
       const afterValidationRestart = await feedbackAuthority.run(() => feedbackStore.read(card.id));
       expect(afterValidationRestart?.primarySessionId).toBe(
         validationSessionState === "reachable"
@@ -1056,10 +1058,10 @@ describe("task-session production dispatch", () => {
           status: "reconstruction-verified",
         });
       else expect(afterValidationRestart?.sessionRecovery).toBeUndefined();
-      expect(afterValidationRestart?.phase).toBe("publication");
+      expect(afterValidationRestart?.phase).toBe("validation");
       expect(afterValidationRestart?.operationKey).toBe("original-task-operation");
-      expect(cardListId).toBe(project.trello.workingListId);
-      expect(card.idList).toBe(project.trello.workingListId);
+      expect(cardListId).toBe(project.trello.reviewListId);
+      expect(card.idList).toBe(project.trello.reviewListId);
       expect(feedbackQueue.getActive()).toMatchObject({
         eventId: checkpointOperationId,
         kind: "feedback",

@@ -270,6 +270,13 @@ describe("production child adapter outcome matrix", () => {
       } else if (scenario === "abort") {
         expect(evidence.stdout).toBe(`${markers.stdout}:partial-before-abort`);
         expect(evidence.stderr).toBe(`${markers.stderr}:partial-before-abort`);
+      } else if (scenario === "timeout") {
+        // The deadline includes executable/namespace startup. A timeout may
+        // precede either write; retain whatever prefix actually arrived while
+        // requiring authoritative timeout and process-tree stop evidence.
+        expect(`${markers.stdout}\n`.startsWith(evidence.stdout)).toBe(true);
+        expect(`${markers.stderr}\n`.startsWith(evidence.stderr)).toBe(true);
+        expect(evidence.metadata).toMatchObject({ status: "timeout", treeStopped: true });
       } else {
         expect(evidence.stdout).toBe(`${markers.stdout}\n`);
         if (family === "command" && scenario === "crash")

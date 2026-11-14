@@ -60,6 +60,43 @@ describe("failed feedback recovery eligibility", () => {
     },
   );
 
+  it("resumes completed feedback validation before its first review is initialized", () => {
+    const completed = {
+      ...ownedRecord,
+      phase: "validation" as const,
+      reviewRepair: undefined,
+      primaryOperations: {
+        [eventId]: {
+          id: eventId,
+          activity: "feedback-remediation",
+          role: "primary" as const,
+          status: "completed" as const,
+          executions: 1,
+          lastSessionId: "session",
+          updatedAt: "2026-10-24T09:00:00.000Z",
+        },
+      },
+    };
+    expect(canResumeFeedbackReviewRepair(completed, { ...ownedEvent, status: "failed" })).toBe(
+      true,
+    );
+    for (const patch of [
+      { phase: "implementation" as const },
+      { primaryOperations: {} },
+      {
+        primaryOperations: {
+          [eventId]: { ...completed.primaryOperations[eventId]!, status: "ambiguous" as const },
+        },
+      },
+      {
+        primaryOperations: {
+          [eventId]: { ...completed.primaryOperations[eventId]!, lastSessionId: "other" },
+        },
+      },
+    ])
+      expect(canResumeFeedbackReviewRepair({ ...completed, ...patch }, ownedEvent)).toBe(false);
+  });
+
   it("does not select a mismatched queue, head, cycle, prompt or operation", () => {
     for (const event of [
       null,

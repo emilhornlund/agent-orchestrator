@@ -3,6 +3,35 @@ import { describe, expect, it } from "vitest";
 import { createSecretRedactor, redactSecrets } from "../src/security/redact-secrets.js";
 
 describe("secret redaction", () => {
+  it.each([
+    { output: 'parseConfig("secret: [sensitive-config-value", { suppressWarnings: true })' },
+    { output: "https://example.test/?token=sensitive-query-value" },
+    {
+      output:
+        "https://example.test/?token=sensitive-query-value,sensitive-tail;sensitive-more}sensitive-end",
+    },
+    { output: "Bearer sensitive-bearer-value" },
+    { token: "sensitive-token-value\\" },
+    { output: 'password=sensitive-password-value\\\\" after' },
+  ])(
+    "preserves serialized quote boundaries while redacting credentials across every split (%#)",
+    (value) => {
+      const input = JSON.stringify({ type: "tool_use", value, after: "retained" });
+      expect(() => JSON.parse(redactSecrets(input))).not.toThrow();
+      for (let boundary = 0; boundary <= input.length; boundary++) {
+        const redactor = createSecretRedactor();
+        const output =
+          redactor.push(input.slice(0, boundary)) +
+          redactor.push(input.slice(boundary)) +
+          redactor.flush();
+        expect(output, `split ${boundary}`).not.toMatch(/sensitive-[a-z-]+/u);
+        expect(JSON.parse(output), `split ${boundary}`).toMatchObject({
+          type: "tool_use",
+          after: "retained",
+        });
+      }
+    },
+  );
   it("redacts literal secrets split at every chunk boundary", () => {
     const secret = "split-secret-value";
     for (let boundary = 1; boundary < secret.length; boundary += 1) {

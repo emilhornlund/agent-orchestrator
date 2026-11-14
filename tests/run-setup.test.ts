@@ -386,11 +386,15 @@ describe("runRepositorySetup", () => {
         }),
       ).resolves.toMatchObject({ exitCode: 7 });
       expect(fs.readFileSync(path.join(root, "failure.txt"), "utf8")).toBe("before-failure");
+      // The operation deadline includes namespace/supervisor startup. Preserve
+      // existing task effects even when timeout precedes payload execution;
+      // do not assume a new shell can write a marker within fifty milliseconds.
+      fs.writeFileSync(path.join(root, "timeout.txt"), "preserved setup effects");
       let timedOutExecutionId: string | undefined;
       await expect(
         runRepositorySetup(runner, {
           cwd: root,
-          command: "printf before-timeout > timeout.txt; sleep 10",
+          command: "sleep 10",
           timeoutMilliseconds: 50,
           sessionLogPath: path.join(root, "timeout.log"),
           sessionLabel: "setup timeout test",
@@ -399,7 +403,9 @@ describe("runRepositorySetup", () => {
           },
         }),
       ).rejects.toThrow(/timeout/i);
-      expect(fs.readFileSync(path.join(root, "timeout.txt"), "utf8")).toBe("before-timeout");
+      expect(fs.readFileSync(path.join(root, "timeout.txt"), "utf8")).toBe(
+        "preserved setup effects",
+      );
       expect(
         JSON.parse(
           fs.readFileSync(
