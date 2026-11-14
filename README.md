@@ -130,6 +130,68 @@ external integration operation or complete runtime readiness: authentication, re
 isolation namespaces, coordination provisioning, and runtime permissions remain unverified and are
 reported as skipped.
 
+For machine-readable results, use `yarn doctor --json`. The doctor program emits exactly one JSON
+document to stdout, with no text headings. Yarn itself may add wrapper output; use
+`yarn --silent doctor --json` when capturing stdout for a JSON parser.
+
+The version-1 contract is:
+
+- `schemaVersion`: the integer `1`, identifying this report schema.
+- `requiredLocalChecksPassed`: a boolean covering configuration and local executable compatibility
+  only. Exit status is `0` when true and nonzero when false.
+- `runtimeReadiness`: always `"not-verified"`; local success does not certify runtime readiness.
+- `checks`: an ordered array with stable `id`, `status` (`"passed"`, `"failed"`, or `"skipped"`),
+  and a sanitized actionable `summary`. Summary wording is human guidance, not a parsing interface.
+  IDs are `configuration`, `git`, `github-cli`, `opencode`, `external-integrations`, and
+  `runtime-prerequisites`, in that order. The last two are always skipped and do not affect the
+  required-local-check outcome.
+
+Example successful report:
+
+```json
+{
+  "schemaVersion": 1,
+  "requiredLocalChecksPassed": true,
+  "runtimeReadiness": "not-verified",
+  "checks": [
+    {
+      "id": "configuration",
+      "status": "passed",
+      "summary": "config.yaml exists and is valid."
+    },
+    {
+      "id": "git",
+      "status": "passed",
+      "summary": "installed version and required executable capabilities are compatible."
+    },
+    {
+      "id": "github-cli",
+      "status": "passed",
+      "summary": "installed version and required executable capabilities are compatible."
+    },
+    {
+      "id": "opencode",
+      "status": "passed",
+      "summary": "installed version and required executable capabilities are compatible."
+    },
+    {
+      "id": "external-integrations",
+      "status": "skipped",
+      "summary": "authentication, permissions, connectivity, and service operation are not checked."
+    },
+    {
+      "id": "runtime-prerequisites",
+      "status": "skipped",
+      "summary": "isolation namespaces, coordination provisioning, runtime filesystem permissions, and credential configuration are not checked."
+    }
+  ]
+}
+```
+
+Unsupported arguments produce `Usage: yarn doctor [--json]` and a nonzero exit status before
+configuration loading or executable probes. Usage errors are text rather than diagnostic JSON
+reports. Both formats omit configuration values, parser excerpts, and raw executable output.
+
 First provision the required shared coordination namespace using the
 [configuration instructions](docs/configuration.md#provisioning-a-shared-host-coordination-namespace).
 Start the orchestrator with:

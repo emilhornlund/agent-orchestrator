@@ -53,19 +53,54 @@ export interface DoctorDependencies {
   write: (line: string) => void;
 }
 
+export interface DoctorCheck {
+  id:
+    | "configuration"
+    | "git"
+    | "github-cli"
+    | "opencode"
+    | "external-integrations"
+    | "runtime-prerequisites";
+  status: "passed" | "failed" | "skipped";
+  summary: string;
+}
+
+export interface DoctorReport {
+  schemaVersion: 1;
+  requiredLocalChecksPassed: boolean;
+  runtimeReadiness: "not-verified";
+  checks: DoctorCheck[];
+}
+
 export async function runDoctor(
   dependencies: DoctorDependencies = {
     loadConfig: () => loadConfig("config.yaml", { suppressWarnings: true }),
     runProbe: runDoctorProbe,
     write: (line) => console.log(line),
   },
+  args: readonly string[] = [],
 ): Promise<number> {
   const { write } = dependencies;
+  if (args.length !== 0 && (args.length !== 1 || args[0] !== "--json")) {
+    write("Usage: yarn doctor [--json]");
+    return 1;
+  }
+  const json = args[0] === "--json";
+  const results: DoctorCheck[] = [];
+  const record = (
+    id: DoctorCheck["id"],
+    name: string,
+    status: DoctorCheck["status"],
+    summary: string,
+  ) => {
+    results.push({ id, status, summary });
+    if (!json) write(`${status.toUpperCase()} ${name}: ${summary}`);
+  };
   let failed = false;
-  write("Agent Orchestrator local environment diagnostics");
+  if (!json) write("Agent Orchestrator local environment diagnostics");
   try {
     dependencies.loadConfig();
-    write("PASSED Configuration: config.yaml exists and is valid.");
+    record("configuration", "Configuration", "passed", "config.yaml exists and is valid.");
   } catch (error) {
     failed = true;
     // Parser errors may contain source excerpts; schema errors may contain input values.
@@ -77,31 +112,42 @@ export async function runDoctor(
         : message.startsWith("Invalid configuration:")
           ? "config.yaml has invalid settings; check required fields and supported values against config.example.yaml and docs/configuration.md."
           : "cannot read config.yaml; check file access and permissions.";
-    write(`FAILED Configuration: ${detail}`);
+    record("configuration", "Configuration", "failed", detail);
   }
 
   const commands = { run: dependencies.runProbe };
-  const checks: readonly [string, () => Promise<void>][] = [
-    ["Git", () => validateGit(commands, probeTimeoutMilliseconds)],
+  const checks: readonly [DoctorCheck["id"], string, () => Promise<void>][] = [
+    ["git", "Git", () => validateGit(commands, probeTimeoutMilliseconds)],
     [
+      "github-cli",
       "GitHub CLI",
       () =>
         validateGitHubCliCompatibility(async (args) => {
-          const result = await dependencies.runProbe({
-            cwd: process.cwd(),
-            command: ["gh", ...args].join(" "),
-          });
+          // The shared validator includes underlying exception messages. Never let
+          // arbitrary probe errors enter that message in either output format.
+          let result: CommandRunResult;
+          try {
+            result = await dependencies.runProbe({
+              cwd: process.cwd(),
+              command: ["gh", ...args].join(" "),
+            });
+          } catch {
+            throw new Error("local probe failed; check installation and PATH, then retry");
+          }
           if (result.exitCode !== 0) throw new Error("local probe exited unsuccessfully");
           return `${result.output ?? ""}\n${result.errorOutput ?? ""}`;
         }, []),
     ],
-    ["OpenCode", () => validateOpenCode(commands, probeTimeoutMilliseconds)],
+    ["opencode", "OpenCode", () => validateOpenCode(commands, probeTimeoutMilliseconds)],
   ];
-  for (const [name, check] of checks) {
+  for (const [id, name, check] of checks) {
     try {
       await check();
-      write(
-        `PASSED ${name}: installed version and required executable capabilities are compatible.`,
+      record(
+        id,
+        name,
+        "passed",
+        "installed version and required executable capabilities are compatible.",
       );
     } catch (error) {
       failed = true;
@@ -112,27 +158,43 @@ export async function runDoctor(
               error instanceof GitHubCliCompatibilityError
             ? error.message
             : "local check failed; verify installation and PATH.";
-      write(`FAILED ${name}: ${detail}`);
+      record(id, name, "failed", detail);
     }
   }
-  write(
-    "SKIPPED External integrations: authentication, permissions, connectivity, and service operation are not checked.",
+  record(
+    "external-integrations",
+    "External integrations",
+    "skipped",
+    "authentication, permissions, connectivity, and service operation are not checked.",
   );
-  write(
-    "SKIPPED Remaining runtime prerequisites: isolation namespaces, coordination provisioning, runtime filesystem permissions, and credential configuration are not checked.",
+  record(
+    "runtime-prerequisites",
+    "Remaining runtime prerequisites",
+    "skipped",
+    "isolation namespaces, coordination provisioning, runtime filesystem permissions, and credential configuration are not checked.",
   );
-  write(
-    failed
-      ? "Required local checks failed. Address the failures above."
-      : "Required local checks passed.",
-  );
-  write("These local checks do not establish complete runtime readiness.");
+  if (json) {
+    const report: DoctorReport = {
+      schemaVersion: 1,
+      requiredLocalChecksPassed: !failed,
+      runtimeReadiness: "not-verified",
+      checks: results,
+    };
+    write(JSON.stringify(report));
+  } else {
+    write(
+      failed
+        ? "Required local checks failed. Address the failures above."
+        : "Required local checks passed.",
+    );
+    write("These local checks do not establish complete runtime readiness.");
+  }
   return failed ? 1 : 0;
 }
 
 const entrypoint = process.argv[1];
 if (entrypoint !== undefined && pathToFileURL(path.resolve(entrypoint)).href === import.meta.url) {
-  void runDoctor().then(
+  void runDoctor(undefined, process.argv.slice(2)).then(
     (exitCode) => {
       process.exitCode = exitCode;
     },
