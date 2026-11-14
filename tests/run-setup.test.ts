@@ -470,6 +470,8 @@ describe("runRepositorySetup", () => {
         typeof data === "string" &&
         data.includes('"dispatchState": "dispatched"')
       ) {
+        // The shell publishes this file by rename only after writing the PID.
+        // Waiting for a directly redirected file can observe it while empty.
         const deadline = Date.now() + 2_000;
         while (!fs.existsSync(pidFile) && Date.now() < deadline)
           Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
@@ -486,7 +488,7 @@ describe("runRepositorySetup", () => {
       await expect(
         new CommandRunner().run({
           cwd: root,
-          command: `sleep 20 & child=$!; printf '%s' "$child" > '${pidFile}'; wait "$child"`,
+          command: `sleep 20 & child=$!; printf '%s' "$child" > '${pidFile}.tmp'; mv '${pidFile}.tmp' '${pidFile}'; wait "$child"`,
           timeoutMilliseconds: 10_000,
           artifactDirectory: artifacts,
           onExecutionStarted: (id) => {
