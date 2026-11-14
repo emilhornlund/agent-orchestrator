@@ -1,5 +1,7 @@
 import type { CommandRunner, CommandRunResult } from "../process/command-runner.js";
 
+type ToolchainCommands = Pick<CommandRunner, "run">;
+
 export const MINIMUM_GIT_VERSION = "2.30.0";
 export const MINIMUM_OPENCODE_VERSION = "1.0.0";
 // Exercise the namespace/mount operations used by writable dispatch, not merely
@@ -36,7 +38,7 @@ function compare(left: Version, right: Version): number {
 }
 
 async function probe(
-  commands: CommandRunner,
+  commands: ToolchainCommands,
   executable: "git" | "opencode",
   args: readonly string[],
   timeoutMilliseconds: number,
@@ -67,7 +69,7 @@ async function probe(
 }
 
 async function validateVersion(
-  commands: CommandRunner,
+  commands: ToolchainCommands,
   executable: "git" | "opencode",
   minimum: string,
   displayName: string,
@@ -93,7 +95,7 @@ async function validateVersion(
 
 /** Checks only capabilities actually consumed by this application. */
 export async function validateGitAndOpenCode(
-  commands: CommandRunner,
+  commands: ToolchainCommands,
   timeoutMilliseconds = 5 * 60_000,
 ): Promise<void> {
   await validateVersion(commands, "git", MINIMUM_GIT_VERSION, "Git", timeoutMilliseconds);
@@ -104,6 +106,37 @@ export async function validateGitAndOpenCode(
     "OpenCode",
     timeoutMilliseconds,
   );
+  await validateGitCapabilities(commands, timeoutMilliseconds);
+  await validateOpenCodeCapabilities(commands, timeoutMilliseconds);
+  await validateIsolation(commands, timeoutMilliseconds);
+}
+
+export async function validateGit(
+  commands: ToolchainCommands,
+  timeoutMilliseconds: number,
+): Promise<void> {
+  await validateVersion(commands, "git", MINIMUM_GIT_VERSION, "Git", timeoutMilliseconds);
+  await validateGitCapabilities(commands, timeoutMilliseconds);
+}
+
+export async function validateOpenCode(
+  commands: ToolchainCommands,
+  timeoutMilliseconds: number,
+): Promise<void> {
+  await validateVersion(
+    commands,
+    "opencode",
+    MINIMUM_OPENCODE_VERSION,
+    "OpenCode",
+    timeoutMilliseconds,
+  );
+  await validateOpenCodeCapabilities(commands, timeoutMilliseconds);
+}
+
+async function validateGitCapabilities(
+  commands: ToolchainCommands,
+  timeoutMilliseconds: number,
+): Promise<void> {
   const gitCommands = await probe(commands, "git", ["--list-cmds=main"], timeoutMilliseconds);
   const requiredGitCommands = [
     "branch",
@@ -127,6 +160,12 @@ export async function validateGitAndOpenCode(
       "Git",
       `installation is missing required commands: ${missingGitCommands.join(", ")}`,
     );
+}
+
+async function validateOpenCodeCapabilities(
+  commands: ToolchainCommands,
+  timeoutMilliseconds: number,
+): Promise<void> {
   const result = await probe(commands, "opencode", ["run", "--help"], timeoutMilliseconds);
   const help = [result.output ?? "", result.errorOutput ?? ""].join("\n");
   const required = ["--auto", "--model", "--variant", "--dir", "--session", "--format"];
@@ -136,6 +175,12 @@ export async function validateGitAndOpenCode(
       "OpenCode",
       `run command is missing required options: ${missing.join(", ")}`,
     );
+}
+
+async function validateIsolation(
+  commands: ToolchainCommands,
+  timeoutMilliseconds: number,
+): Promise<void> {
   try {
     const result = await commands.run({
       cwd: process.cwd(),

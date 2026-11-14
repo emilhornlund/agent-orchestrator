@@ -117,6 +117,19 @@ every setting, default, and validation rule.
 
 ## Running
 
+Check your local configuration and executable compatibility before starting:
+
+```bash
+yarn doctor
+```
+
+This read-only command reports passed, failed, or skipped checks for `config.yaml`, Git, GitHub CLI,
+and OpenCode. Required failures include remediation guidance and produce a nonzero exit status. It
+does not start workers or write repository/runtime state. Successful local checks do not establish
+external integration operation or complete runtime readiness: authentication, remote resources,
+isolation namespaces, coordination provisioning, and runtime permissions remain unverified and are
+reported as skipped.
+
 First provision the required shared coordination namespace using the
 [configuration instructions](docs/configuration.md#provisioning-a-shared-host-coordination-namespace).
 Start the orchestrator with:

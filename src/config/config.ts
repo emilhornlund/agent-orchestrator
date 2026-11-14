@@ -423,11 +423,17 @@ export function canonicalizeGitHubRepository(input: string): string {
   return value.toLocaleLowerCase("en-US");
 }
 
-export function parseConfig(raw: string): Config {
+interface ConfigParsingOptions {
+  suppressWarnings?: boolean;
+}
+
+export function parseConfig(raw: string, options: ConfigParsingOptions = {}): Config {
   let parsed: unknown;
 
   try {
-    parsed = YAML.parse(raw);
+    // Doctor must not emit source-bearing warnings. Keep parser errors enabled:
+    // YAML's "silent" level also suppresses syntax errors and is not suitable here.
+    parsed = options.suppressWarnings ? YAML.parse(raw, { logLevel: "error" }) : YAML.parse(raw);
   } catch (error) {
     throw new Error(`Invalid YAML: ${error instanceof Error ? error.message : String(error)}`, {
       cause: error,
@@ -448,12 +454,12 @@ export function parseConfig(raw: string): Config {
   return result.data;
 }
 
-export function loadConfig(configPath = "config.yaml"): Config {
+export function loadConfig(configPath = "config.yaml", options: ConfigParsingOptions = {}): Config {
   const resolvedPath = path.resolve(configPath);
 
   if (!fs.existsSync(resolvedPath)) {
     throw new Error(`Config file not found: ${resolvedPath}`);
   }
 
-  return parseConfig(fs.readFileSync(resolvedPath, "utf8"));
+  return parseConfig(fs.readFileSync(resolvedPath, "utf8"), options);
 }
