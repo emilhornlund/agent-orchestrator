@@ -43,8 +43,9 @@ available GitHub repository rules and static repository workflow contracts. An u
 expected-check set waits or fails closed; visible green checks alone are never treated as proof that
 all expected checks have started. See the [configuration](docs/configuration.md),
 [workflow](docs/workflow.md), and [recovery](docs/recovery.md) references for operation and safe
-recovery. Local mocked tests cover the workflow; no live Trello/GitHub/OpenCode pilot or
-deployed-service test has been performed.
+recovery. Local mocked tests cover the workflow. A live task reached Human Review and reconciled CI
+on 2026-11-14 with operator-assisted startup recovery; the recovery reference records qualification
+limits and the separately tested automatic interrupted-creation recovery cases.
 
 ## Documentation
 

@@ -1840,9 +1840,7 @@ describe("task lifecycle through pollProject", () => {
         expect(store.read("first")!.pullRequest!.headSha).toBe(maintained.pullRequest!.headSha);
         return;
       }
-      expect(firstPr?.isDraft).toBe(
-        draft || ackLoss || quality !== "both" || preparedReview !== undefined,
-      );
+      expect(firstPr?.isDraft).toBe(draft || preparedReview !== undefined);
       if (preparedReview !== undefined) {
         expect(reviewerRounds).toBe(2);
         if (preparedReview === "material") {
@@ -2851,7 +2849,7 @@ describe("task lifecycle through pollProject", () => {
       ).toEqual(initialHashes);
       expect(accepted).toEqual([firstPr?.url]);
       expect(firstPr?.number).toBe(41);
-      expect(firstPr?.isDraft).toBe(draft || ackLoss || quality !== "both");
+      expect(firstPr?.isDraft).toBe(draft || correctionFailure === true);
       expect(
         ledger.filter(({ action }) => action.startsWith("attempt:") && /merge/u.test(action)),
       ).toHaveLength(0);

@@ -50,6 +50,7 @@ export interface OpenCodeRunOptions {
   sessionId?: string;
   captureSessionId?: boolean;
   structuredOutput?: boolean;
+  sessionTitle?: string;
   readOnly?: boolean;
   refinementResultDirectory?: string;
   environment?: Record<string, string>;
@@ -126,7 +127,14 @@ export function reportUnavailableOpenCodeSelection(
 
 type OpenCodeArgumentOptions = Pick<
   OpenCodeRunOptions,
-  "cwd" | "model" | "variant" | "prompt" | "sessionId" | "captureSessionId" | "structuredOutput"
+  | "cwd"
+  | "model"
+  | "variant"
+  | "prompt"
+  | "sessionId"
+  | "captureSessionId"
+  | "structuredOutput"
+  | "sessionTitle"
 >;
 
 export function buildOpenCodeConfigContent(readOnly = false): string {
@@ -153,7 +161,16 @@ function assertValidSessionId(sessionId: string): void {
 }
 
 export function buildOpenCodeArguments(options: OpenCodeArgumentOptions): string[] {
-  const { cwd, model, variant, prompt, sessionId, captureSessionId, structuredOutput } = options;
+  const {
+    cwd,
+    model,
+    variant,
+    prompt,
+    sessionId,
+    captureSessionId,
+    structuredOutput,
+    sessionTitle,
+  } = options;
 
   if (sessionId !== undefined) {
     assertValidSessionId(sessionId);
@@ -174,6 +191,7 @@ export function buildOpenCodeArguments(options: OpenCodeArgumentOptions): string
     "--dir",
     cwd,
     ...(sessionId === undefined ? [] : ["--session", sessionId]),
+    ...(sessionTitle === undefined ? [] : ["--title", sessionTitle]),
     ...(captureSessionId === true || structuredOutput === true ? ["--format", "json"] : []),
     prompt,
   ];
@@ -428,6 +446,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
   sessionId,
   captureSessionId,
   structuredOutput,
+  sessionTitle,
   readOnly,
   refinementResultDirectory,
   environment,
@@ -511,6 +530,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
         ...(sessionId === undefined ? {} : { sessionId }),
         ...(captureSessionId === undefined ? {} : { captureSessionId }),
         ...(structuredOutput === undefined ? {} : { structuredOutput }),
+        ...(sessionTitle === undefined ? {} : { sessionTitle }),
       });
       const authority = ProjectRunAuthority.currentProjectId();
       let dispatch = { command: "opencode", args: arguments_ };
@@ -794,6 +814,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
             {
               pid: child.pid,
               exitCode: code ?? 1,
+              treeStopped: true,
               result: {
                 exitCode: code ?? 1,
                 output,

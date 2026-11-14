@@ -33,7 +33,7 @@ const supported = {
     "branch cat-file commit diff fetch ls-remote merge-base push rev-parse status worktree",
   ),
   "opencode --version": ok(MINIMUM_OPENCODE_VERSION),
-  "opencode run --help": ok("--auto --pure --model --variant --dir --session --format"),
+  "opencode run --help": ok("--auto --pure --model --variant --dir --session --format --title"),
 };
 
 describe("Git and OpenCode startup compatibility", () => {
@@ -44,11 +44,14 @@ describe("Git and OpenCode startup compatibility", () => {
   });
 
   it.each([
-    ["stdout", { output: "--auto --pure --model --variant --dir --session --format" }],
-    ["stderr", { errorOutput: "--auto --pure --model --variant --dir --session --format" }],
+    ["stdout", { output: "--auto --pure --model --variant --dir --session --format --title" }],
+    ["stderr", { errorOutput: "--auto --pure --model --variant --dir --session --format --title" }],
     [
       "both streams",
-      { output: "--auto --pure --model --variant", errorOutput: "--dir --session --format" },
+      {
+        output: "--auto --pure --model --variant",
+        errorOutput: "--dir --session --format --title",
+      },
     ],
   ])("accepts OpenCode help on %s", async (_label, streams) => {
     const { commands } = runner({
@@ -64,7 +67,7 @@ describe("Git and OpenCode startup compatibility", () => {
       "opencode run --help": {
         exitCode,
         output: "--auto --pure --model --variant",
-        errorOutput: "--dir --session",
+        errorOutput: "--dir --session --title",
       },
     });
     await expect(validateGitAndOpenCode(commands)).rejects.toThrow(
@@ -125,7 +128,7 @@ describe("Git and OpenCode startup compatibility", () => {
       );
       writeExecutable(
         "opencode",
-        `if [ "$1" = "--version" ]; then printf '${MINIMUM_OPENCODE_VERSION}\\n'; else printf '%03000d' 0; printf '%s\\n' '--auto --pure --model --variant --dir --session --format'; printf '%03000d' 0 >&2; fi`,
+        `if [ "$1" = "--version" ]; then printf '${MINIMUM_OPENCODE_VERSION}\\n'; else printf '%03000d' 0; printf '%s\\n' '--auto --pure --model --variant --dir --session --format --title'; printf '%03000d' 0 >&2; fi`,
       );
       writeExecutable("bwrap", "exit 0");
       process.env.PATH = fixtureRoot;

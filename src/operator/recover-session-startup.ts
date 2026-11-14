@@ -10,12 +10,12 @@ import {
 } from "../opencode/inspect-primary-session.js";
 import { CommandRunner } from "../process/command-runner.js";
 import { configureProcessRuntime } from "../process/process-runtime.js";
-import { isVerifiedSuccessfulExecution } from "../process/process-runtime.js";
 import { configureLoggerRuntime } from "../logging/logger.js";
 import { TaskExecutionStore } from "../task-session/task-execution-store.js";
 import { runTaskResources } from "../task-session/task-resources.js";
 import { TrelloClient } from "../trello/trello-client.js";
 import { acquireProjectRunOperatorContext } from "./project-run-operator-context.js";
+import { hasPendingSessionCreation } from "../task-session/reconcile-session-creation.js";
 
 /** Explicit recovery for older startup failures without stopped-process evidence.
  * The operator attests termination; absence of a PID is never used as proof. */
@@ -56,8 +56,7 @@ export async function recoverSessionStartup(args: readonly string[]): Promise<vo
         run.publicationState !== "none" ||
         run.pendingOperations.some((operation) => operation.status !== "completed") ||
         !task ||
-        task.phase !== "attention-required" ||
-        task.sessionCreationStatus !== "ambiguous" ||
+        !hasPendingSessionCreation(task) ||
         task.primarySessionId ||
         task.terminalFailure ||
         task.pullRequest ||
@@ -108,22 +107,9 @@ export async function recoverSessionStartup(args: readonly string[]): Promise<vo
         if ((await inspectUnboundOpenCodeSessions(inspection)) !== "absent")
           throw new Error("An unbound session may exist; refusing duplicate creation");
       } else {
-        const executionId = task.sessionCreationExecutionId;
-        const evidence =
-          executionId === undefined
-            ? null
-            : store.readProcessExecution(task.cardId, executionId, "process-executions");
-        if (
-          !executionId ||
-          !isVerifiedSuccessfulExecution(evidence, {
-            executionId,
-            command: "opencode run",
-            cwd: resources.path,
-          }) ||
-          (await inspectPrimaryOpenCodeSession({ ...inspection, sessionId })) !== "reachable"
-        )
+        if ((await inspectPrimaryOpenCodeSession({ ...inspection, sessionId })) !== "reachable")
           throw new Error(
-            "Session binding requires a successful stopped initial process and exact worktree session identity",
+            "Operator-confirmed stopped session binding requires exact worktree session identity",
           );
       }
       context.lease.assertHeld();
@@ -142,6 +128,7 @@ export async function recoverSessionStartup(args: readonly string[]): Promise<vo
         ...task,
         phase: "planning",
         sessionCreationStatus: sessionId === undefined ? undefined : "bound",
+        recoveryWait: undefined,
         ...(sessionId === undefined ? {} : { primarySessionId: sessionId }),
         revision: task.revision + 1,
         updatedAt: new Date(Math.max(Date.now(), Date.parse(task.updatedAt) + 1)).toISOString(),

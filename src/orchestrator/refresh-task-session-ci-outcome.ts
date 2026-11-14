@@ -5,6 +5,8 @@ import type { TrelloCard } from "../trello/trello-client.js";
 import type { TaskExecutionRecord } from "../task-session/task-execution-record.js";
 import type { PrMaintenanceStore } from "../task-session/pr-maintenance-store.js";
 import { refreshPrAutomationOutcome } from "./refresh-pr-automation-outcome.js";
+import { decideValidatedHumanReviewPublication } from "../task-session/verified-publication-decision.js";
+import { restorePersistedTaskSessionQualityEvidence } from "../task-session/run-task-session-validation.js";
 import {
   implementationReviewResultSchema,
   hasUndisposedReviewConcerns,
@@ -44,9 +46,21 @@ export async function refreshTaskSessionCiOutcome(options: {
   const qualityUnresolved = maintenance
     ? maintenance.qualityVerification?.status !== "passed"
     : !quality ||
-      quality.validation.status !== "passed" ||
-      (project.repository.coverageCommand !== undefined &&
-        quality.coverageEvidence?.status !== "passed") ||
+      !decideValidatedHumanReviewPublication({
+        currentContentIdentity: quality.contentIdentity,
+        ...(project.repository.validationCommand === undefined
+          ? {}
+          : { validationCommand: project.repository.validationCommand }),
+        ...(project.repository.coverageCommand === undefined
+          ? {}
+          : { coverageCommand: project.repository.coverageCommand }),
+        validation: restorePersistedTaskSessionQualityEvidence(quality.validation),
+        coverage:
+          quality.coverageEvidence === undefined
+            ? null
+            : restorePersistedTaskSessionQualityEvidence(quality.coverageEvidence),
+        review: null,
+      }).allowed ||
       !review.success ||
       hasUndisposedReviewConcerns(
         review.data,

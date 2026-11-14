@@ -174,6 +174,45 @@ describe("PR-first human-review publication", () => {
 });
 
 describe("validated advisory review policy", () => {
+  it.each(["validation", "coverage", "both", "neither"])(
+    "requires only configured optional quality commands (%s)",
+    (configured) => {
+      const hasValidation = configured === "validation" || configured === "both";
+      const hasCoverage = configured === "coverage" || configured === "both";
+      const decision = decideValidatedHumanReviewPublication({
+        currentContentIdentity: identity,
+        ...(hasValidation ? { validationCommand: validation.command } : {}),
+        ...(hasCoverage ? { coverageCommand: coverage.command } : {}),
+        validation: hasValidation ? validation : skippedCoverage,
+        coverage: hasCoverage ? coverage : skippedCoverage,
+        review,
+      });
+      expect(decision.allowed).toBe(true);
+      expect(decision.reasons).toEqual([]);
+      expect(skippedCoverage.status).toBe("skipped");
+    },
+  );
+
+  it.each(["skipped", "uncertain", "failed", "timed-out", "aborted"] as const)(
+    "keeps configured %s checks unresolved",
+    (status) => {
+      for (const kind of ["validation", "coverage"] as const) {
+        const result = {
+          ...(kind === "validation" ? validation : coverage),
+          status,
+          exitCode: null,
+        };
+        const evidence = input({
+          coverageCommand: coverage.command,
+          coverage,
+          ...(kind === "validation" ? { validation: result } : { coverage: result }),
+        });
+        expect(decideValidatedHumanReviewPublication(evidence).allowed).toBe(false);
+        expect(decideHumanReviewPublication(evidence, undefined).allowed).toBe(true);
+      }
+    },
+  );
+
   it("permits missing and failing AI reviews without weakening automated approval", () => {
     for (const result of [null, { ...review, verdict: "fail" as const }]) {
       expect(decideValidatedHumanReviewPublication(input({ review: result })).allowed).toBe(true);

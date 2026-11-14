@@ -69,7 +69,12 @@ import { buildTaskSessionCiRepairPrompt } from "../opencode/build-task-session-c
 import {
   inspectPrimaryOpenCodeSession,
   inspectUnboundOpenCodeSessions,
+  readOpenCodeSessionInventory,
 } from "../opencode/inspect-primary-session.js";
+import {
+  hasPendingSessionCreation,
+  reconcileSessionCreation,
+} from "../task-session/reconcile-session-creation.js";
 import { PrimarySessionCreationExhaustedError } from "../task-session/primary-task-session.js";
 import {
   runTaskPlanningOperation,
@@ -82,6 +87,7 @@ import {
 } from "../task-session/run-plan-verification.js";
 import {
   runTaskSessionImplementation,
+  assertOwnedTaskWorktreePath,
   TaskSessionImplementationWaitingError,
 } from "../task-session/run-task-session-implementation.js";
 import {
@@ -118,6 +124,7 @@ import {
 import { canResumeCiReviewRepair } from "../task-session/can-resume-ci-review-repair.js";
 import {
   decideHumanReviewPublication,
+  decideValidatedHumanReviewPublication,
   type VerifiedPublicationDecisionInput,
 } from "../task-session/verified-publication-decision.js";
 import { TaskExecutionStore } from "../task-session/task-execution-store.js";
@@ -133,7 +140,10 @@ import {
   transitionTaskExecutionRecord,
   type TaskExecutionEvent,
 } from "../task-session/task-execution-transition.js";
-import type { TaskExecutionRecord } from "../task-session/task-execution-record.js";
+import {
+  primaryOperationSchema,
+  type TaskExecutionRecord,
+} from "../task-session/task-execution-record.js";
 import { runPrMaintenanceReview } from "../task-session/run-pr-maintenance-review.js";
 import {
   getTaskSessionReadOnlyIdentity,
@@ -1461,6 +1471,14 @@ export async function runTaskSessionWorkflow(
       worktreePath: sourceWorktree,
       record: sourceRecord,
       plan: storedPlan?.plan ?? null,
+      ...(sourceRecord.sessionCreationResult === undefined
+        ? {}
+        : {
+            recoveredPlanningOutput:
+              primaryOperationSchema.shape.result.parse(
+                taskStore.readPrimaryResultArtifact(sourceRecord.sessionCreationResult.reference),
+              )?.output ?? "",
+          }),
       ...(storedPlan === null ? {} : { planRevision: storedPlan.planRevision }),
       ...(storedPlan?.verification === undefined
         ? {}
@@ -3064,7 +3082,7 @@ export async function runTaskSessionWorkflow(
             const validationEvidence = quality.validation;
             const gateInput: VerifiedPublicationDecisionInput = {
               currentContentIdentity: qualityIdentity,
-              validationCommand,
+              ...(project.repository.validationCommand === undefined ? {} : { validationCommand }),
               validation: validationEvidence,
               ...(project.repository.coverageCommand === undefined
                 ? {}
@@ -3202,7 +3220,9 @@ export async function runTaskSessionWorkflow(
                 const identity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
                 preparedGate = {
                   currentContentIdentity: identity,
-                  validationCommand,
+                  ...(project.repository.validationCommand === undefined
+                    ? {}
+                    : { validationCommand }),
                   validation: validationNow,
                   ...(project.repository.coverageCommand === undefined
                     ? {}
@@ -3792,6 +3812,82 @@ export async function runTaskSessionWorkflow(
       throw error;
     }
     return;
+  }
+  const creationOwner = queue.getActive();
+  const creationRecord =
+    creationOwner?.kind === "implementation"
+      ? taskStore.read(creationOwner.cardId)
+      : canonicalCardId
+        ? taskStore.read(canonicalCardId)
+        : null;
+  if (creationRecord && hasPendingSessionCreation(creationRecord)) {
+    const ownedPath = taskResources(project, creationRecord.cardId).path;
+    const outcome = await reconcileSessionCreation({
+      store: taskStore,
+      cardId: creationRecord.cardId,
+      cwd: ownedPath,
+      retryIntervalMs: options.retryIntervalMs ?? 15_000,
+      verifyOwnership: async () => {
+        assertOwnedTaskWorktreePath(project, ownedPath);
+        const card = await trello.getCard(creationRecord.cardId);
+        return (
+          creationOwner?.kind === "implementation" &&
+          creationOwner.operationKey === creationRecord.operationKey &&
+          creationRecord.expectedBranch === taskResources(project, creationRecord.cardId).branch &&
+          card.id === creationRecord.cardId &&
+          card.idList === project.trello.workingListId &&
+          (await git.getCurrentBranch(ownedPath)) === creationRecord.expectedBranch &&
+          (await git.getRebaseState(ownedPath)) === null &&
+          queue.claimForRecovery(creationOwner.eventId) !== null
+        );
+      },
+      readSessions: () =>
+        readOpenCodeSessionInventory({
+          commands,
+          cwd: ownedPath,
+          signal,
+          timeoutMilliseconds: 30_000,
+        }),
+    }).catch((error: unknown) => {
+      if (creationOwner && queue.ownsActive(creationOwner.eventId))
+        queue.releaseForRecovery(creationOwner.eventId);
+      throw error;
+    });
+    if (outcome === "waiting") {
+      if (creationOwner && queue.ownsActive(creationOwner.eventId))
+        queue.releaseForRecovery(creationOwner.eventId);
+      const waiting = taskStore.read(creationRecord.cardId);
+      if (
+        waiting &&
+        (waiting.recoveryWait?.attempts ?? 0) >= OPERATION_RECOVERY_MAX_EXECUTIONS &&
+        !waiting.sessionCreationAttentionNotified &&
+        emailNotifier &&
+        emailNotifier.isEventEnabled?.("attentionRequired") !== false
+      ) {
+        await notifyAttentionRequired(
+          emailNotifier,
+          {
+            project,
+            category: "Session creation recovery",
+            reason:
+              "Initial OpenCode session creation remains unresolved. Automatic evidence rechecks retain ownership; inspect the retained process and session diagnostics if operator proof is needed.",
+            cardIds: [waiting.cardId],
+            sessionLogPaths: [getSessionLogPath(project.id, waiting.cardId)],
+          },
+          logger.child({ projectId: project.id, cardId: waiting.cardId }),
+        );
+        const current = taskStore.read(waiting.cardId)!;
+        taskStore.compareAndSwap(current.cardId, current.revision, {
+          ...current,
+          sessionCreationAttentionNotified: true,
+          revision: current.revision + 1,
+          updatedAt: timestamp(current),
+        });
+      }
+      return;
+    }
+    if (creationOwner && queue.ownsActive(creationOwner.eventId))
+      queue.releaseForRecovery(creationOwner.eventId);
   }
   const strandedMutation = queue.getActive();
   const strandedTask =
@@ -5766,7 +5862,7 @@ export async function runTaskSessionWorkflow(
       const currentIdentity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
       const failedEvidence: VerifiedPublicationDecisionInput = {
         currentContentIdentity: currentIdentity,
-        validationCommand,
+        ...(project.repository.validationCommand === undefined ? {} : { validationCommand }),
         validation: quality.validation,
         ...(project.repository.coverageCommand === undefined
           ? {}
@@ -6432,7 +6528,7 @@ export async function runTaskSessionWorkflow(
     const identity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
     const initialEvidence: VerifiedPublicationDecisionInput = {
       currentContentIdentity: identity,
-      validationCommand,
+      ...(project.repository.validationCommand === undefined ? {} : { validationCommand }),
       validation: currentValidation,
       ...(project.repository.coverageCommand === undefined
         ? {}
@@ -6458,9 +6554,7 @@ export async function runTaskSessionWorkflow(
     let preparedReviewPublication: PreparedReviewPublication = {
       reviewResult,
       reviewDisclosure: exhaustedReview ?? null,
-      qualityNeedsDraft:
-        initialEvidence.validation?.status !== "passed" ||
-        initialEvidence.coverage?.status !== "passed",
+      qualityNeedsDraft: !decideValidatedHumanReviewPublication(initialEvidence).allowed,
     };
     const trustedCheckpoint = readTrustedCommitState(project, activeCard.id);
     const allowRecoveredExhaustedReview =
@@ -6784,8 +6878,12 @@ export async function runTaskSessionWorkflow(
         preparedReviewPublication = {
           reviewResult,
           reviewDisclosure: null,
-          qualityNeedsDraft:
-            freshValidation.status !== "passed" || freshCoverage.status !== "passed",
+          qualityNeedsDraft: !decideValidatedHumanReviewPublication({
+            ...initialEvidence,
+            currentContentIdentity: freshIdentity,
+            validation: freshValidation,
+            coverage: freshCoverage,
+          }).allowed,
         };
       } else {
         if (currentReview === null)
@@ -6839,13 +6937,17 @@ export async function runTaskSessionWorkflow(
         preparedReviewPublication = {
           reviewResult,
           reviewDisclosure: exhaustedReview ?? null,
-          qualityNeedsDraft:
-            freshValidation.status !== "passed" || freshCoverage.status !== "passed",
+          qualityNeedsDraft: !decideValidatedHumanReviewPublication({
+            ...initialEvidence,
+            currentContentIdentity: freshIdentity,
+            validation: freshValidation,
+            coverage: freshCoverage,
+          }).allowed,
         };
       }
       preparedEvidence = {
         currentContentIdentity: freshIdentity,
-        validationCommand,
+        ...(project.repository.validationCommand === undefined ? {} : { validationCommand }),
         validation: freshValidation,
         ...(project.repository.coverageCommand === undefined
           ? {}
@@ -6869,9 +6971,7 @@ export async function runTaskSessionWorkflow(
         branch: worktree.branch,
         commitSha: recoveredTrustedCommit.commitSha,
         reviewResult,
-        qualityNeedsDraft:
-          preparedEvidence.validation?.status !== "passed" ||
-          preparedEvidence.coverage?.status !== "passed",
+        qualityNeedsDraft: !decideValidatedHumanReviewPublication(preparedEvidence).allowed,
         remediationResult: `${finalReview.attempts} review repair(s)`,
         ...(exhaustedReview === undefined ? {} : { exhaustedReview }),
         ...(emailNotifier === undefined ? {} : { emailNotifier }),
@@ -6926,9 +7026,7 @@ export async function runTaskSessionWorkflow(
         commitMessage,
         ...(setupDisposition === undefined ? {} : { setupDisposition }),
         reviewResult,
-        qualityNeedsDraft:
-          preparedEvidence.validation?.status !== "passed" ||
-          preparedEvidence.coverage?.status !== "passed",
+        qualityNeedsDraft: !decideValidatedHumanReviewPublication(preparedEvidence).allowed,
         remediationResult: `${finalReview.attempts} review repair(s)`,
         ...(exhaustedReview === undefined ? {} : { exhaustedReview }),
         getPreparedReviewPublication: () => preparedReviewPublication,
@@ -7005,6 +7103,17 @@ export async function runTaskSessionWorkflow(
           : taskStore.read(recoveryRecord.cardId)
         : failedRecord;
     if (recoveryCandidate !== null && options.retryIntervalMs !== undefined) {
+      if (hasPendingSessionCreation(recoveryCandidate)) {
+        persistPrimaryOperationRecovery(
+          taskStore,
+          recoveryCandidate,
+          new PrimaryOperationWaitingError(`${recoveryCandidate.operationKey}:session-creation`),
+          options.retryIntervalMs,
+        );
+        if (mutation && queue.ownsActive(mutation.eventId))
+          queue.releaseForRecovery(mutation.eventId);
+        return;
+      }
       const disposition = persistPrimaryOperationRecovery(
         taskStore,
         recoveryCandidate,

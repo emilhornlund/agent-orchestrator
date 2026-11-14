@@ -298,23 +298,45 @@ uncertainty refuses recovery. It does not permit resetting interrupted implement
 unknown session ownership.
 
 With `--session`, the same command instead binds the explicitly identified original session after
-verifying a successful stopped initial process and the session's exact worktree identity. It does
-not create a replacement session. This handles older plugin-contaminated startup output; subsequent
-orchestrated runs use OpenCode's `--pure` mode so external plugin console output cannot corrupt the
-JSON event protocol. Startup requires that CLI capability. Some plugins still emit tagged
-import-time banners under `--pure`; the process adapter removes only a bounded tagged bootstrap
-preamble from returned output, retaining the original bytes in child stdout evidence. Malformed JSON
-and interleaved diagnostics remain errors; strict event parsing remains unchanged. Resumed planning
-also explicitly requests JSON events rather than accidentally switching to formatted terminal
-output.
+the operator confirms process-tree termination and the command verifies the session's exact worktree
+identity. This explicit attestation is retained separately from automatic process evidence; it does
+not fabricate a successful process result or create a replacement session. Both legacy attention
+states and automatically monitored planning waits are supported. This handles older
+plugin-contaminated startup output; subsequent orchestrated runs use OpenCode's `--pure` mode so
+external plugin console output cannot corrupt the JSON event protocol. Startup requires that CLI
+capability. Some plugins still emit tagged import-time banners under `--pure`; the process adapter
+removes only a bounded tagged bootstrap preamble from returned output, retaining the original bytes
+in child stdout evidence. Malformed JSON and interleaved diagnostics remain errors; strict event
+parsing remains unchanged. Resumed planning also explicitly requests JSON events rather than
+accidentally switching to formatted terminal output.
 
-New initial-session dispatches persist their execution identity before spawning and finalize process
-evidence even when the session event stream is missing or malformed. A nonzero startup can be
-retried only after stopped-process evidence and authoritative absence of a worktree session are
-established. Three verified failures exhaust the existing operation recovery bound and trigger
-verified Failed handling rather than leaving the card in Working. Unknown acceptance remains
-preserved for explicit reconciliation; an empty event stream alone never authorizes a second
-session.
+New initial-session dispatches persist a unique `--title` correlation intent, then bind execution
+identity before spawning, and finalize process evidence even when the event stream is malformed.
+Startup verifies the CLI supports `--title`. Polling automatically reconciles persisted `creating`
+and `ambiguous` initial creation before general task recovery:
+
+- Verify the original card, project queue, worktree and branch ownership before resuming anything.
+- Recover the original session from finalized process/result evidence or the persisted correlation
+  title and complete session inventory, only after process-tree termination is established.
+- Reuse a hashed completed planning result instead of repeating its OpenCode dispatch. A known lost
+  session enters the existing context-reconstruction protocol; its recovered planning output is
+  retained in reconstruction history rather than replaced with context-free work.
+- If advisory output is unavailable or corrupt, preserve it without replaying or declaring it valid;
+  a separately verified stopped original session can reacquire advice without creating another
+  session or treating the missing advice as a primary execution failure.
+- Retry a conclusively stopped creation with no surviving session, or a new intent proven never
+  dispatched. Genuine startup failures, including conclusive pre-dispatch failures, retain the
+  existing three-failure allowance; provider outages do not consume it. Exhaustion uses verified
+  Failed move/comment handling before project release.
+- Unknown termination, incomplete session inventory, contradictory identity/process evidence or
+  legacy missing provenance retain ownership in an explicit wait with paced rechecks. Attention
+  reporting is deduplicated after repeated inconclusive checks. These are evidence-dependent waiting
+  conditions, not an absorbing internal attention state or permission to create a duplicate session.
+  Missing PIDs, elapsed time, and a negative immediate read are never stopped-process proof.
+
+When authoritative evidence becomes available, a later poll resumes automatically. If an old lost
+supervisor cannot supply termination proof, the explicit operator attestation command above remains
+necessary; automatic recovery never invents safety evidence or discards preserved work.
 
 For an imported legacy `attention-required` implementation without terminal-failure proof, an
 explicitly authorized move to Failed can retire the matching legacy queue event after identity/owner
@@ -331,5 +353,10 @@ and deliberate retries never require internal-file edits. Unsupported or ambiguo
 be established safely stays preserved for operator/support resolution rather than receiving a
 destructive generic reset command.
 
-Recovery has been tested only with local fixtures and mocked services. No live Trello/GitHub pilot,
-real OpenCode session restart, or external API availability test has been performed.
+Live qualification on 2026-11-14 delivered
+[PR #229](https://github.com/emilhornlund/agent-orchestrator/pull/229) through Human Review and
+reconciled CI, including original-session reuse and a restart during validation. Its initial startup
+blockage required operator assistance. Interrupted-creation failure injection and the automatic
+reconciliation cases above are qualified with local durable-state fixtures and simulated external
+boundaries; arbitrary supervisor loss and real service outages are not claimed universally
+qualified.

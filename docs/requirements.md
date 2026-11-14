@@ -403,6 +403,9 @@ the final outcome.
 - The orchestrator runs each configured command itself and accurately reports its results. An
   unconfigured command is skipped and must not be represented as having passed.
 - Not configuring either quality command must not prevent implementation or pull request delivery.
+- An optional validation or coverage command that is not configured is informationally skipped and
+  does not by itself require a draft PR. A configured command that was skipped, failed, or could not
+  be verified still leaves a quality concern requiring accurate draft publication.
 
 ## AI model configuration
 

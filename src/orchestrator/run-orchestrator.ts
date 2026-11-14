@@ -63,6 +63,7 @@ import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { resumeInitialPublication } from "./initial-publication.js";
 import { reconcileWorkflowMutations } from "./reconcile-workflow-mutations.js";
 import { parseTaskExecutionRecord } from "../task-session/task-execution-record.js";
+import { hasPendingSessionCreation } from "../task-session/reconcile-session-creation.js";
 import { isConclusiveOperationResolution } from "../task-session/run-record.js";
 import { isRetryableGitHubError } from "../github/github-client.js";
 
@@ -75,6 +76,8 @@ export function hasDueTaskSessionRecoveryWait(
   if (projection === undefined) return false;
   const taskProjection = parseTaskExecutionRecord(projection);
   const recoveryWait = taskProjection.recoveryWait;
+  if (hasPendingSessionCreation(taskProjection))
+    return recoveryWait === undefined || now >= Date.parse(recoveryWait.retryAt);
   return (
     taskProjection.phase !== "attention-required" &&
     recoveryWait !== undefined &&

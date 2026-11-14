@@ -7,6 +7,7 @@ import type { GitClient } from "../git/git-client.js";
 import type { ImplementationReviewResult } from "../task-session/implementation-review-result.js";
 import {
   decideHumanReviewPublication,
+  decideValidatedHumanReviewPublication,
   type VerifiedPublicationDecisionInput,
 } from "../task-session/verified-publication-decision.js";
 import {
@@ -347,8 +348,7 @@ export async function publishTaskSessionCard(
             : preparedReviewPublication.reviewDisclosure,
         qualityNeedsDraft:
           preparedReviewPublication?.qualityNeedsDraft ??
-          (preparedEvidence.validation?.status !== "passed" ||
-            preparedEvidence.coverage?.status !== "passed"),
+          !decideValidatedHumanReviewPublication(preparedEvidence).allowed,
         readinessEvidence: preparedEvidence,
       };
     },

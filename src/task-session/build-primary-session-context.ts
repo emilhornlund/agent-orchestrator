@@ -101,6 +101,7 @@ export async function buildPrimarySessionContext(input: {
   worktreePath: string;
   record: TaskExecutionRecord;
   plan: unknown | null;
+  recoveredPlanningOutput?: string;
   planRevision?: number;
   planReviewAdvice?: PlanVerificationResult;
   attachments?: CardAttachmentPromptContext;
@@ -288,6 +289,7 @@ export async function buildPrimarySessionContext(input: {
       retryCounters: input.record.retryCounters,
       lastEvent: input.record.lastEvent ?? null,
       taskRecord: input.record,
+      recoveredPlanningOutput: input.recoveredPlanningOutput ?? null,
       feedbackLedger: sanitizedFeedbackLedger(),
       recovery: input.record.sessionRecovery ?? null,
     }),

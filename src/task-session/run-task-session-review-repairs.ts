@@ -4,6 +4,7 @@ import type {
   PrimaryReviewDispositionReport,
 } from "./implementation-review-result.js";
 import type { TaskExecutionRecord } from "./task-execution-record.js";
+import type { TaskSessionValidationStatus } from "./run-task-session-validation.js";
 import { transitionTaskExecutionRecord } from "./task-execution-transition.js";
 import { logger } from "../logging/logger.js";
 import { TaskExecutionStore } from "./task-execution-store.js";
@@ -209,16 +210,18 @@ function logReviewDiagnostic(
 }
 
 function qualityDiagnostic(record: TaskExecutionRecord): {
-  validation: "passed" | "not-passed";
-  coverage: "passed" | "unavailable";
+  validation: TaskSessionValidationStatus | "not-passed";
+  coverage: TaskSessionValidationStatus | "unavailable";
   validationContentIdentity?: string;
   coverageContentIdentity?: string;
 } {
   const validation = record.validationRepair;
-  const coverageConfigured = validation?.coverageEvidence !== undefined;
   return {
-    validation: validation?.status === "passed" ? "passed" : "not-passed",
-    coverage: coverageConfigured ? "passed" : "unavailable",
+    validation:
+      validation?.evidence?.status ?? (validation?.status === "passed" ? "passed" : "not-passed"),
+    coverage:
+      validation?.coverageEvidence?.status ??
+      (validation?.coverageEvidence?.exitCode === 0 ? "passed" : "unavailable"),
     ...(validation?.evidence === undefined
       ? {}
       : { validationContentIdentity: validation.evidence.contentIdentity }),

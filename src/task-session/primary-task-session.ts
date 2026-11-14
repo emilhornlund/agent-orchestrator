@@ -21,6 +21,7 @@ import { assertNoTerminalPr } from "./terminal-pr-fence.js";
 import { OpenCodeSessionIdCaptureError } from "../opencode/opencode-client.js";
 import { isVerifiedStoppedExecution } from "../process/process-runtime.js";
 import { OPERATION_RECOVERY_MAX_EXECUTIONS } from "./operation-recovery-policy.js";
+import { primaryOperationSchema } from "./task-execution-record.js";
 
 export class PrimaryTaskSessionError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -157,6 +158,55 @@ async function runWithPrimaryTaskSessionOwned(
     );
 
   if (record.primarySessionId !== undefined) {
+    if (
+      record.phase === "planning" &&
+      execution.role === "advisory" &&
+      execution.activity === "planning" &&
+      record.sessionCreationResult !== undefined
+    ) {
+      try {
+        const recovered = primaryOperationSchema.shape.result.parse(
+          store.readPrimaryResultArtifact(record.sessionCreationResult.reference),
+        );
+        if (
+          !recovered ||
+          recovered.exitCode !== 0 ||
+          !recovered.sessionId ||
+          (recovered.sessionId !== record.primarySessionId &&
+            recovered.sessionId !== record.sessionRecovery?.originalSessionId)
+        )
+          throw new PrimaryTaskSessionError(
+            "Recovered initial planning result does not match its bound session",
+          );
+        return {
+          exitCode: recovered.exitCode,
+          output: recovered.output,
+          errorOutput: recovered.errorOutput,
+          sessionId: recovered.sessionId,
+          ...(recovered.processExecutionId === undefined
+            ? {}
+            : { processExecutionId: recovered.processExecutionId }),
+        };
+      } catch {
+        // Invalid advisory replay evidence is preserved, not treated as a
+        // primary crash. Reacquire advice in the same already-bound session.
+        store.compareAndSwap(cardId, record.revision, {
+          ...record,
+          sessionCreationResult: undefined,
+          revision: nextRevision(record),
+          updatedAt: nextTimestamp(record.updatedAt),
+        });
+        return runWithPrimaryTaskSessionOwned(
+          store,
+          openCode,
+          projectId,
+          cardId,
+          runOptions,
+          recovery,
+          execution,
+        );
+      }
+    }
     if (recovery.inspect !== undefined) {
       const available = await recovery.inspect(record.primarySessionId);
       if (available === "unknown" || available === "conflict") {
@@ -529,6 +579,10 @@ async function runWithPrimaryTaskSessionOwned(
     ...record,
     sessionCreationStatus: "creating",
     sessionCreationAttempts: (record.sessionCreationAttempts ?? 0) + 1,
+    sessionCreationExecutionId: undefined,
+    sessionCreationResult: undefined,
+    sessionCreationTitle: `agent-orchestrator:${projectId}:${cardId}:${randomUUID()}`,
+    sessionCreationCommand: `opencode run${runOptions.model === undefined ? "" : ` --model ${runOptions.model}`}${runOptions.variant === undefined ? "" : ` --variant ${runOptions.variant}`}`,
     revision: nextRevision(record),
     updatedAt: nextTimestamp(record.updatedAt),
   });
@@ -538,6 +592,7 @@ async function runWithPrimaryTaskSessionOwned(
     result = await openCode.run({
       ...runOptions,
       captureSessionId: true,
+      sessionTitle: creatingRecord.sessionCreationTitle!,
       onExecutionPrepared: async (evidence) => {
         creatingRecord = store.compareAndSwap(cardId, creatingRecord.revision, {
           ...creatingRecord,

@@ -698,6 +698,10 @@ const taskExecutionRecordSchema = z
       .max(OPERATION_RECOVERY_MAX_EXECUTIONS)
       .optional(),
     sessionCreationExecutionId: nonBlankIdentifier.optional(),
+    sessionCreationTitle: nonBlankIdentifier.optional(),
+    sessionCreationCommand: nonBlankIdentifier.optional(),
+    sessionCreationAttentionNotified: z.boolean().optional(),
+    sessionCreationResult: primaryOperationSchema.shape.resultArtifact,
     sessionRecovery: sessionRecoveryStateSchema.optional(),
     planningAdvice: advisoryOutcomeSchema.optional(),
     planReviewAdvice: advisoryOutcomeSchema.optional(),
