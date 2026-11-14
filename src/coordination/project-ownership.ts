@@ -380,6 +380,22 @@ function persistOwner(metadataPath: string, record: OwnerRecord): void {
   fs.renameSync(temporaryPath, metadataPath);
 }
 
+function ownershipConflictMessage(lockPath: string, lockStat: fs.Stats): string {
+  const prefix = `Project integration ownership is already held (${lockPath})`;
+  try {
+    const file = lockPath.replace(/\.lock$/u, ".owner.json");
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 16 * 1024) return prefix;
+    const owner = readOwnerRecord(file);
+    if (!owner || owner.pid <= 0 || owner.device !== lockStat.dev || owner.inode !== lockStat.ino)
+      return prefix;
+    const time = Date.parse(owner.acquiredAt);
+    return `${prefix}. Recorded owner PID: ${owner.pid}${Number.isFinite(time) ? `; acquired at ${new Date(time).toISOString()}` : ""}. Stop the active instance gracefully before starting another.`;
+  } catch {
+    return prefix;
+  }
+}
+
 function resourceKeys(identity: ProjectIntegrationIdentity): string[] {
   const boardId = identity.trelloBoardId.trim();
   if (!boardId) throw new ProjectOwnershipError("Trello board identity is blank");
@@ -578,7 +594,7 @@ async function acquireKernelLock(lockPath: string, wait = false): Promise<Kernel
               cancellation === undefined
                 ? new ProjectOwnershipError(
                     code === 1
-                      ? `Project integration ownership is already held (${lockPath})`
+                      ? ownershipConflictMessage(lockPath, stat)
                       : new ProcessExecutionError(
                           "flock",
                           execution.executionId,

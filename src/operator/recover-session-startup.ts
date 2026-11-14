@@ -16,6 +16,7 @@ import { runTaskResources } from "../task-session/task-resources.js";
 import { TrelloClient } from "../trello/trello-client.js";
 import { acquireProjectRunOperatorContext } from "./project-run-operator-context.js";
 import { hasPendingSessionCreation } from "../task-session/reconcile-session-creation.js";
+import { recordStartupStopAttestation } from "../task-session/startup-stop-attestation.js";
 
 /** Explicit recovery for older startup failures without stopped-process evidence.
  * The operator attests termination; absence of a PID is never used as proof. */
@@ -113,16 +114,10 @@ export async function recoverSessionStartup(args: readonly string[]): Promise<vo
           );
       }
       context.lease.assertHeld();
-      store.writePrimaryResultArtifact(`${task.cardId}-operator-startup-recovery`, {
-        version: 1,
-        kind: "operator-confirmed-stopped-startup",
-        attemptId: run.attemptId,
-        taskRevision: task.revision,
-        worktreePath: resources.path,
-        confirmedStopped: true,
-        sessionInventory: sessionId === undefined ? "absent" : "existing-session-verified",
-        sessionId: sessionId ?? null,
-        observedAt: new Date().toISOString(),
+      recordStartupStopAttestation({
+        authority: context.authority,
+        task,
+        ...(sessionId === undefined ? {} : { sessionId }),
       });
       store.compareAndSwap(task.cardId, task.revision, {
         ...task,

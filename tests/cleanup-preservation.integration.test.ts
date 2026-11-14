@@ -88,7 +88,9 @@ describe("cleanup preservation", () => {
     fs.writeFileSync(file, "valuable output");
     if (["staged", "committed"].includes(kind)) f.run(f.worktree, "add", "output");
     if (kind === "committed") f.run(f.worktree, "commit", "-m", "unshipped");
-    await expect(f.cleanup()).rejects.toThrow(/dirty worktree|local-only commits/);
+    if (kind === "ignored")
+      await expect(f.cleanup()).rejects.toMatchObject({ diagnostic: { reason: "ignored-output" } });
+    else await expect(f.cleanup()).rejects.toThrow(/dirty worktree|local-only commits/);
     expect(fs.readFileSync(file, "utf8")).toBe("valuable output");
     expect(f.run(f.repo, "show-ref", "--verify", "refs/heads/agent/card")).toBeTruthy();
   });

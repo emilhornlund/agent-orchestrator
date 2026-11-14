@@ -19,6 +19,9 @@ import type { TaskExecutionStore } from "../task-session/task-execution-store.js
 import type { TaskMutationQueue } from "../task-session/task-mutation-queue.js";
 import { logger } from "../logging/logger.js";
 import { isConclusiveOperationResolution } from "../task-session/run-record.js";
+import { startupStopProofForExecution } from "../task-session/startup-stop-attestation.js";
+
+const reportedTerminalWaits = new Map<string, string>();
 
 function metadata(root: string, file: string): Record<string, unknown> | null {
   try {
@@ -58,7 +61,9 @@ function stopped(value: Record<string, unknown>): boolean {
   return (
     notDispatched(value) ||
     (value.treeStopped === true &&
-      ["success", "nonzero", "timeout", "interrupted"].includes(String(value.status)))
+      ["success", "nonzero", "timeout", "interrupted", "evidence-failure"].includes(
+        String(value.status),
+      ))
   );
 }
 
@@ -149,12 +154,14 @@ export async function prepareTerminalTaskSession(options: {
   if (authority)
     recordTerminalPrFence(authority, task, pullRequest, preserve, project.repository.defaultBranch);
   const fence = readTerminalPrFence(authority);
-  const waiting = () => {
-    logger
-      .child({ projectId: project.id, cardId })
-      .info(
-        "Human PR outcome retains ownership while execution-stop or dispatched-effect evidence is unresolved",
-      );
+  const waitKey = authority?.attemptScopeKey ?? `${project.id}/${cardId}`;
+  const waiting = (reason = "execution-stop or dispatched-effect evidence is unresolved") => {
+    if (reportedTerminalWaits.get(waitKey) !== reason) {
+      reportedTerminalWaits.set(waitKey, reason);
+      logger
+        .child({ projectId: project.id, cardId })
+        .warn(`Terminal PR reconciliation retains ownership: ${reason}`);
+    }
     return {
       ready: false,
       preserveArtifacts: fence?.preserveArtifacts ?? preserve,
@@ -174,6 +181,7 @@ export async function prepareTerminalTaskSession(options: {
     if (fence!.preserveArtifacts !== preserveArtifacts)
       markTerminalWritersStopped(authority, fence!.proofArtifact!, preserveArtifacts);
     queue.cancelAfterTerminal(cardId);
+    reportedTerminalWaits.delete(waitKey);
     return {
       ready: true,
       preserveArtifacts: readTerminalPrFence(authority)!.preserveArtifacts,
@@ -181,6 +189,7 @@ export async function prepareTerminalTaskSession(options: {
   }
   const root = path.resolve(authority?.store.storageRoot ?? getProcessRuntime().artifactRoot);
   let checkedEvidenceRecords = 0;
+  const startupStopAttestations = new Set<string>();
   const digest = createHash("sha256");
   const checked = (file: string) => {
     checkedEvidenceRecords++;
@@ -201,7 +210,21 @@ export async function prepareTerminalTaskSession(options: {
       for (const id of fs.readdirSync(directory)) {
         const file = path.join(directory, id, "execution.json");
         const value = metadata(root, file);
-        if (!value || value.executionId !== id || !stopped(value)) return waiting();
+        if (!value || value.executionId !== id)
+          return waiting(`invalid process metadata; diagnostics: ${path.relative(root, file)}`);
+        if (!stopped(value)) {
+          const attestation = startupStopProofForExecution({
+            authority,
+            task,
+            file,
+            metadata: value,
+          });
+          if (!attestation)
+            return waiting(
+              `process termination lacks verified evidence; diagnostics: ${path.relative(root, file)}`,
+            );
+          startupStopAttestations.add(attestation);
+        }
         checked(file);
       }
     }
@@ -244,6 +267,7 @@ export async function prepareTerminalTaskSession(options: {
         checkedEvidenceRecords,
         digest: digest.digest("hex"),
         cancellations,
+        startupStopAttestations: [...startupStopAttestations],
       }),
     ),
     "application/json",
@@ -302,6 +326,7 @@ export async function prepareTerminalTaskSession(options: {
       )
         queue.retireSupersededObservation(entry.eventId);
   }
+  reportedTerminalWaits.delete(waitKey);
   return {
     ready: true,
     preserveArtifacts: readTerminalPrFence(authority)?.preserveArtifacts ?? preserveArtifacts,

@@ -40,6 +40,12 @@ present. Never delete an unknown worktree or discard changes as a first response
 
 ## Restart and task ownership
 
+If startup reports that project ownership is already held, inspect the recorded owner PID in the
+error: another foreground or background instance may still be running and polling. Stop that
+instance gracefully before starting a replacement. Kernel locking determines ownership; a retained
+lock pathname or old owner metadata alone does not mean the project is locked, and deleting those
+files is not a recovery procedure.
+
 New initial publications use a durable initial-publication checkpoint. Commit, push, PR creation and
 initial Trello synchronization retain their original mutation intents and verified identities across
 restart. These checkpoints use automatic paced rechecks when GitHub or Trello is unavailable; they
@@ -152,6 +158,14 @@ does not approve reviews, dismiss decisions, or resolve reviewer threads.
 
 ## Terminal pull requests
 
+Terminal process-stop checks retain earlier explicit operator startup-stop attestations. New
+attestations bind the exact initial execution IDs and metadata hashes and are referenced durably.
+Older retained attestations are recognised only for unchanged, pre-attestation initial OpenCode
+metadata with the historical missing-finalization signature, matching attempt/worktree and no
+primary-operation ownership. This does not rewrite process history or infer termination from PID
+absence; later or unassociated unknown executions remain blocked. A deferred terminal transition
+reports the specific process-evidence artifact rather than only a generic cleanup message.
+
 An authoritative merged PR moves its card to `Done`; a deliberately closed unmerged PR moves its
 card to `Backlog`. A persisted terminal queue event owns the operation across external moves and
 cleanup. On restart, polling rechecks PR identity/state and resumes the matching event. Repeated
@@ -166,6 +180,11 @@ history. Known owned isolated resources may remain preserved without blocking te
 unknown identity, execution or pending effects cannot. Required terminal moves and comments must be
 verified before the next task. An unknown comment outcome remains pending even when the card already
 appears in its destination list.
+
+A verified terminal Trello outcome is separate from removing local artifacts. Known owned worktrees
+containing ignored setup/build output remain preserved with an `ignored-output` cleanup diagnostic;
+this does not mean the merge was unobserved or that tracked task changes are dirty. Safe
+preservation must not prevent verified Done reconciliation or project release.
 
 ## Additive maintenance and legacy rewrite fences
 
