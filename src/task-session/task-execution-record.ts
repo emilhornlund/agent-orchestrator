@@ -690,6 +690,14 @@ const taskExecutionRecordSchema = z
     recoveryWait: recoveryWaitSchema.optional(),
     primarySessionId: nonBlankIdentifier.optional(),
     sessionCreationStatus: sessionCreationStatus.optional(),
+    sessionCreationAttempts: z.number().int().nonnegative().safe().optional(),
+    sessionCreationFailures: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(OPERATION_RECOVERY_MAX_EXECUTIONS)
+      .optional(),
+    sessionCreationExecutionId: nonBlankIdentifier.optional(),
     sessionRecovery: sessionRecoveryStateSchema.optional(),
     planningAdvice: advisoryOutcomeSchema.optional(),
     planReviewAdvice: advisoryOutcomeSchema.optional(),

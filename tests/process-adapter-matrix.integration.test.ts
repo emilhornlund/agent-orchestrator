@@ -534,7 +534,7 @@ describe("production child adapter outcome matrix", () => {
     );
     fs.writeFileSync(
       path.join(binaries, "opencode"),
-      `#!${process.execPath}\nconst args=process.argv.slice(2); if(args[0]==="--version") console.log("1.2.0"); else if(args[0]==="run" && args[1]==="--help") console.log("--auto --model --variant --dir --session --format"); else process.exit(2);\n`,
+      `#!${process.execPath}\nconst args=process.argv.slice(2); if(args[0]==="--version") console.log("1.2.0"); else if(args[0]==="run" && args[1]==="--help") console.log("--auto --pure --model --variant --dir --session --format"); else process.exit(2);\n`,
       { mode: 0o700 },
     );
     process.env.PATH = binaries;

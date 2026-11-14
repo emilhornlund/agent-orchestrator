@@ -50,6 +50,35 @@ export function parseOpenCodeSessionList(output: string): ListedOpenCodeSession[
   });
 }
 
+/** A stopped initial dispatch may be retried only after ruling out an unbound session. */
+export async function inspectUnboundOpenCodeSessions(options: {
+  commands: CommandRunner;
+  cwd: string;
+  signal: AbortSignal;
+  timeoutMilliseconds: number;
+}): Promise<"absent" | "present" | "unknown"> {
+  try {
+    const result = await options.commands.run({
+      cwd: options.cwd,
+      command: "opencode session list --format json --pure --max-count 10000",
+      signal: options.signal,
+      timeoutMilliseconds: options.timeoutMilliseconds,
+      captureOutput: true,
+      capturePolicy: "complete",
+      maxCaptureOutputLength: 4 * 1024 * 1024,
+      suppressOutput: true,
+    });
+    if (result.exitCode !== 0 || result.output === undefined) return "unknown";
+    const sessions = parseOpenCodeSessionList(result.output);
+    if (sessions.length >= 10_000) return "unknown";
+    return sessions.some((session) => session.directory === path.resolve(options.cwd))
+      ? "present"
+      : "absent";
+  } catch {
+    return "unknown";
+  }
+}
+
 /** Return null when session availability cannot be authoritatively checked. */
 export async function inspectPrimaryOpenCodeSession(options: {
   commands: CommandRunner;

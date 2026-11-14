@@ -47,6 +47,7 @@ export interface RunTaskPlanningOptions {
   attachments?: readonly TrelloAttachment[];
   attachmentContext?: CardAttachmentPromptContext;
   runOptions: Omit<OpenCodeRunOptions, "prompt" | "sessionId" | "captureSessionId">;
+  inspectSessionCreation?: () => Promise<"absent" | "present" | "unknown">;
   /** Durable advisory operation identity and trusted evidence location. */
   primaryOperation?: {
     operationId: string;
@@ -112,8 +113,10 @@ export async function runTaskPlanningOperation(
     openCode,
     projectId,
     card.id,
-    { ...runOptions, prompt },
-    {},
+    { ...runOptions, prompt, structuredOutput: true },
+    options.inspectSessionCreation === undefined
+      ? {}
+      : { inspectCreation: options.inspectSessionCreation },
     {
       role: "advisory",
       operationId:

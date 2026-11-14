@@ -16,6 +16,7 @@ import {
 import { getGitHubOperationProject } from "./github-operation-context.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { sanitizeControlledText } from "../security/redact-secrets.js";
+import { readPullRequestFields, type ReadPullRequestFields } from "./read-pull-request-fields.js";
 import { ProjectResourceError } from "../startup/project-resource-error.js";
 import {
   beginProcessEvidence,
@@ -1318,6 +1319,7 @@ export class GitHubClient {
   constructor(
     private readonly runGitHubCommand: RunGitHubCommand = defaultRunGitHubCommand,
     credentials: GitHubCredentialProvider = new GitHubCredentialProvider(),
+    private readonly readExactPullRequestFields: ReadPullRequestFields = readPullRequestFields,
   ) {
     this.credentials = credentials;
   }
@@ -2319,13 +2321,14 @@ export class GitHubClient {
     project?: ProjectConfig;
   }): Promise<string> {
     const credential = await this.resolveCredential(options.project);
-    const pullRequestUrl = parsePullRequestUrl(options.pullRequestUrl);
-    const runResult = await this.runWithOrigin(
-      options.cwd,
-      ["pr", "view", pullRequestUrl, "--repo", options.repository, "--json", "body"],
+    const number = getPullRequestNumberForRepository(options.pullRequestUrl, options.repository);
+    const output = await this.readExactPullRequestFields({
+      cwd: options.cwd,
+      repository: options.repository,
+      number,
       credential,
-    );
-    return parsePullRequestBody(runResult.output, runResult.origin);
+    });
+    return parsePullRequestBody(output);
   }
 
   async editPullRequestDescription(options: {
@@ -2425,14 +2428,7 @@ export class GitHubClient {
     options: PullRequestDescriptionStatusOptions,
   ): Promise<boolean> {
     rejectJournaledDispatch();
-    const credential = await this.resolveCredential(options.project);
-    const pullRequestUrl = parsePullRequestUrl(options.pullRequestUrl);
-    const runResult = await this.runWithOrigin(
-      options.cwd,
-      ["pr", "view", pullRequestUrl, "--repo", options.repository, "--json", "body"],
-      credential,
-    );
-    const currentBody = parsePullRequestBody(runResult.output, runResult.origin);
+    const currentBody = await this.getPullRequestDescription(options);
     const nextBody = reconcileManagedPullRequestStatus(
       currentBody,
       options.status,
@@ -3166,34 +3162,27 @@ export class GitHubClient {
     pullRequestUrl: string;
     project?: ProjectConfig;
   }): Promise<{ title: string; body: string; isDraft: boolean }> {
-    getPullRequestNumberForRepository(options.pullRequestUrl, options.repository);
+    const number = getPullRequestNumberForRepository(options.pullRequestUrl, options.repository);
     const credential = await this.resolveCredential(options.project);
-    const result = await this.runWithOrigin(
-      options.cwd,
-      [
-        "pr",
-        "view",
-        options.pullRequestUrl,
-        "--repo",
-        options.repository,
-        "--json",
-        "title,body,isDraft",
-      ],
+    const output = await this.readExactPullRequestFields({
+      cwd: options.cwd,
+      repository: options.repository,
+      number,
       credential,
-    );
+    });
     return validateGitHubJson(
-      result.output,
+      output,
       (value) => {
         if (
           !isRecord(value) ||
           typeof value.title !== "string" ||
           typeof value.body !== "string" ||
-          typeof value.isDraft !== "boolean"
+          typeof value.draft !== "boolean"
         )
           throw new Error("Malformed publication fields");
-        return { title: value.title, body: value.body, isDraft: value.isDraft };
+        return { title: value.title, body: value.body, isDraft: value.draft };
       },
-      result.origin,
+      undefined,
       "pull request publication fields",
     );
   }

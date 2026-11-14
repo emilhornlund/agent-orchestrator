@@ -84,6 +84,72 @@ describe("OpenCode streaming output", () => {
     });
   });
 
+  it("captures the original session despite tagged plugin bootstrap banners and retains raw evidence", async () => {
+    const child = fakeChild();
+    spawnMock.mockReturnValue(child);
+    let metadataPath = "";
+    const pending = new OpenCodeClient().run({
+      cwd: directory,
+      model: "test-model",
+      timeoutMilliseconds: 60_000,
+      prompt: "plan",
+      captureSessionId: true,
+      signal: new AbortController().signal,
+      onExecutionPrepared: (evidence) => {
+        metadataPath = evidence.metadataPath;
+      },
+    });
+    await vi.waitFor(() => expect(spawnMock).toHaveBeenCalled());
+    const event = JSON.stringify({ type: "step_start", sessionID: "ses_original" });
+    child.stdout.emit("data", `[example-plugin] v1.0\n${event}\n`);
+    child.emit("close", 0, null);
+    await expect(pending).resolves.toMatchObject({
+      sessionId: "ses_original",
+      output: `${event}\n`,
+    });
+    expect(fs.readFileSync(path.join(path.dirname(metadataPath), "stdout.txt"), "utf8")).toContain(
+      "[example-plugin] v1.0",
+    );
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("finalizes stopped process evidence when startup fails before emitting a session ID", async () => {
+    const child = fakeChild();
+    spawnMock.mockReturnValue(child);
+    let metadataPath: string | undefined;
+    const pending = new OpenCodeClient().run({
+      cwd: directory,
+      model: "test-model",
+      timeoutMilliseconds: 60_000,
+      prompt: "plan",
+      captureSessionId: true,
+      signal: new AbortController().signal,
+      onExecutionPrepared: (evidence) => {
+        metadataPath = evidence.metadataPath;
+      },
+    });
+    const rejected = expect(pending).rejects.toMatchObject({
+      name: "OpenCodeSessionIdCaptureError",
+      runResult: { exitCode: 1, errorOutput: "startup failed\n" },
+    });
+    await vi.waitFor(() => expect(spawnMock).toHaveBeenCalled());
+    child.emit("spawn");
+    expect(JSON.parse(fs.readFileSync(metadataPath!, "utf8"))).toMatchObject({
+      status: "running",
+      dispatchState: "dispatched",
+    });
+    child.stderr.emit("data", "startup failed\n");
+    child.emit("close", 1, null);
+    await rejected;
+    expect(JSON.parse(fs.readFileSync(metadataPath!, "utf8"))).toMatchObject({
+      status: "nonzero",
+      exitCode: 1,
+      treeStopped: true,
+      dispatchState: "dispatched",
+      resultArtifact: { path: "result.json" },
+    });
+  });
+
   it("uses only each project's explicitly selected provider credential at spawn", async () => {
     vi.stubEnv("OPENAI_API_KEY", "openai-project-secret");
     vi.stubEnv("ANTHROPIC_API_KEY", "anthropic-project-secret");

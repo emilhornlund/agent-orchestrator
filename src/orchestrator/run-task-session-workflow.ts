@@ -66,7 +66,11 @@ import {
   reviewConcernsDismissedAsNonMaterialLabel,
 } from "../task-session/implementation-review-result.js";
 import { buildTaskSessionCiRepairPrompt } from "../opencode/build-task-session-ci-repair-prompt.js";
-import { inspectPrimaryOpenCodeSession } from "../opencode/inspect-primary-session.js";
+import {
+  inspectPrimaryOpenCodeSession,
+  inspectUnboundOpenCodeSessions,
+} from "../opencode/inspect-primary-session.js";
+import { PrimarySessionCreationExhaustedError } from "../task-session/primary-task-session.js";
 import {
   runTaskPlanningOperation,
   TaskPlanningOperationError,
@@ -5034,6 +5038,13 @@ export async function runTaskSessionWorkflow(
             openCode,
             projectId: project.id,
             card: activeCard,
+            inspectSessionCreation: () =>
+              inspectUnboundOpenCodeSessions({
+                commands,
+                cwd: worktreePath,
+                signal,
+                timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+              }),
             ...(attachmentContext === undefined ? {} : { attachmentContext }),
             primaryOperation: {
               operationId: `${operationKey}:planning`,
@@ -5060,6 +5071,26 @@ export async function runTaskSessionWorkflow(
             },
           });
         } catch (error) {
+          if (error instanceof PrimarySessionCreationExhaustedError) {
+            const current = taskStore.read(activeCard.id)!;
+            const terminal = transitionTaskExecutionRecord(current, {
+              type: "attention-required",
+              eventId: `${operationKey}:session-creation-exhausted`,
+              projectId: project.id,
+              cardId: activeCard.id,
+              operationKey,
+              occurredAt: timestamp(current),
+            });
+            taskStore.compareAndSwap(activeCard.id, current.revision, {
+              ...terminal,
+              terminalFailure: {
+                kind: "implementation",
+                reason: error.message,
+                outcome: "pending",
+              },
+            });
+            throw error;
+          }
           const failedPlanningOperation =
             error instanceof PrimaryOperationWaitingError
               ? taskStore.read(activeCard.id)?.primaryOperations?.[error.operationId]

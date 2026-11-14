@@ -33,7 +33,7 @@ const supported = {
     "branch cat-file commit diff fetch ls-remote merge-base push rev-parse status worktree",
   ),
   "opencode --version": ok(MINIMUM_OPENCODE_VERSION),
-  "opencode run --help": ok("--auto --model --variant --dir --session --format"),
+  "opencode run --help": ok("--auto --pure --model --variant --dir --session --format"),
 };
 
 describe("Git and OpenCode startup compatibility", () => {
@@ -44,11 +44,11 @@ describe("Git and OpenCode startup compatibility", () => {
   });
 
   it.each([
-    ["stdout", { output: "--auto --model --variant --dir --session --format" }],
-    ["stderr", { errorOutput: "--auto --model --variant --dir --session --format" }],
+    ["stdout", { output: "--auto --pure --model --variant --dir --session --format" }],
+    ["stderr", { errorOutput: "--auto --pure --model --variant --dir --session --format" }],
     [
       "both streams",
-      { output: "--auto --model --variant", errorOutput: "--dir --session --format" },
+      { output: "--auto --pure --model --variant", errorOutput: "--dir --session --format" },
     ],
   ])("accepts OpenCode help on %s", async (_label, streams) => {
     const { commands } = runner({
@@ -63,7 +63,7 @@ describe("Git and OpenCode startup compatibility", () => {
       ...supported,
       "opencode run --help": {
         exitCode,
-        output: "--auto --model --variant",
+        output: "--auto --pure --model --variant",
         errorOutput: "--dir --session",
       },
     });
@@ -125,7 +125,7 @@ describe("Git and OpenCode startup compatibility", () => {
       );
       writeExecutable(
         "opencode",
-        `if [ "$1" = "--version" ]; then printf '${MINIMUM_OPENCODE_VERSION}\\n'; else printf '%03000d' 0; printf '%s\\n' '--auto --model --variant --dir --session --format'; printf '%03000d' 0 >&2; fi`,
+        `if [ "$1" = "--version" ]; then printf '${MINIMUM_OPENCODE_VERSION}\\n'; else printf '%03000d' 0; printf '%s\\n' '--auto --pure --model --variant --dir --session --format'; printf '%03000d' 0 >&2; fi`,
       );
       writeExecutable("bwrap", "exit 0");
       process.env.PATH = fixtureRoot;
