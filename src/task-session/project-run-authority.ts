@@ -242,6 +242,67 @@ export class ProjectRunAuthority {
     );
   }
 
+  /** Housekeeping never republishes an old attempt as active. */
+  static resumeTerminalCleanup(options: {
+    projectId: string;
+    attemptId: string;
+    pinned: RunRecord["pinned"];
+    projectLease: ProjectOwnershipLease;
+  }): ProjectRunAuthority {
+    options.projectLease.assertHeld();
+    const integrationId = JSON.stringify({
+      trelloBoardId: options.projectLease.identity.trelloBoardId,
+      githubRepository: options.projectLease.identity.githubRepository,
+    });
+    if (integrationId !== options.pinned.integrationId)
+      throw new RunStoreConflictError("Cleanup lease identity mismatch");
+    const lease: RunStoreLease = {
+      integrationId,
+      instanceId: options.projectLease.instanceId,
+      token: options.projectLease.token,
+      assertHeld: () => options.projectLease.assertHeld(),
+    };
+    const store = new RunStore(
+      options.pinned.storageRoot,
+      options.attemptId,
+      options.pinned,
+      lease,
+    );
+    let record = store.read();
+    if (
+      !record ||
+      record.projectId !== options.projectId ||
+      !["done", "cancelled"].includes(record.lifecycle) ||
+      record.terminalSync !== "verified" ||
+      !["merged", "closed-unmerged"].includes(record.terminalEvidence?.prOutcome ?? "")
+    )
+      throw new RunStoreConflictError("Cleanup requires a verified terminal PR attempt");
+    const pointer = new RunRegistry(options.pinned.storageRoot, integrationId, lease).read();
+    if (pointer && pointer.attemptId !== record.attemptId) {
+      const active = RunStore.openWithPersistedIdentity(
+        options.pinned.storageRoot,
+        pointer.attemptId,
+        lease,
+      )?.read();
+      if (
+        !active ||
+        !["done", "refined", "failed", "cancelled"].includes(active.lifecycle) ||
+        active.terminalSync !== "verified"
+      )
+        throw new RunStoreConflictError("Cleanup cannot run beside an active attempt");
+    }
+    if (record.owner.instanceId !== lease.instanceId || record.owner.token !== lease.token)
+      record = store.takeOwnership(record.revision, record.owner.generation, lease.token);
+    return new ProjectRunAuthority(
+      options.projectId,
+      store,
+      record.owner.generation,
+      undefined,
+      (pid) => options.projectLease.markProcessGroupAmbiguous(pid),
+      record.cardId,
+    );
+  }
+
   claim(): RunRecord {
     const current = this.store.read();
     if (!current || current.lifecycle !== "preparing")

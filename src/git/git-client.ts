@@ -1004,8 +1004,23 @@ export class GitClient {
       "status",
       "--porcelain=v1",
       "--untracked-files=all",
-      "--ignored",
+      "--ignored=matching",
     ]);
+  }
+
+  async getIgnoredCleanupPaths(repositoryPath: string): Promise<string[]> {
+    const output = await this.runGit(repositoryPath, [
+      "ls-files",
+      "--others",
+      "--ignored",
+      "--exclude-standard",
+      "--directory",
+      "-z",
+    ]);
+    return output
+      .split("\0")
+      .filter(Boolean)
+      .map((entry) => entry.replace(/\/$/u, ""));
   }
 
   async getUntrackedFiles(
