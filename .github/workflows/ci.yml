@@ -47,9 +47,11 @@ jobs:
           # The executable-specific Ubuntu profile also affects nested bwrap
           # after its no-new-privileges transition. Remove only that profile on
           # this disposable runner, retaining other AppArmor profiles.
-          if [ -f /etc/apparmor.d/bwrap ] && [ -d /sys/kernel/security/apparmor ]; then
-            sudo apparmor_parser --remove /etc/apparmor.d/bwrap
-          fi
+          for profile in /etc/apparmor.d/bwrap /etc/apparmor.d/bwrap-userns-restrict; do
+            if [ -f "$profile" ] && [ -d /sys/kernel/security/apparmor ]; then
+              sudo apparmor_parser --remove "$profile"
+            fi
+          done
           bwrap --version
           if ! bwrap --die-with-parent --new-session --unshare-pid --ro-bind / / --proc /proc --dev /dev -- \
             bwrap --die-with-parent --new-session --unshare-pid --ro-bind / / --proc /proc --dev /dev -- /bin/true; then
