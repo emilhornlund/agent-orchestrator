@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
@@ -240,6 +240,7 @@ function ensureDirectory(directory: string): void {
 
 export class TaskMutationQueue {
   private readonly filePath: string;
+  private readonly archiveRoot: string;
   private readonly projectId: string;
   private readonly ownerToken = randomUUID();
   private readonly authority: ProjectRunAuthority | undefined;
@@ -261,6 +262,12 @@ export class TaskMutationQueue {
     if (authority && authority.projectId !== project.id)
       throw new Error("Task mutation queue authority project mismatch");
     this.filePath = path.join(root, "task-mutation-queues", `${project.id}.json`);
+    this.archiveRoot = path.join(
+      this.authority?.store.storageRoot ?? root,
+      "task-mutation-history",
+      project.id,
+      this.authority?.store.attemptId ?? "legacy",
+    );
   }
 
   enqueue(input: Omit<TaskMutationEvent, "status" | "ownerToken" | "ownerPid">): TaskMutationEvent {
@@ -268,7 +275,9 @@ export class TaskMutationQueue {
     if (event.projectId !== this.projectId)
       throw new Error("Mutation event belongs to another project");
     return this.update((queue) => {
-      const existing = queue.events.find((item) => item.eventId === event.eventId);
+      const existing =
+        queue.events.find((item) => item.eventId === event.eventId) ??
+        this.readArchived(event.eventId);
       if (existing !== undefined) {
         const comparable = (value: TaskMutationEvent) => ({
           ...value,
@@ -284,7 +293,20 @@ export class TaskMutationQueue {
         }
         return { queue, result: existing };
       }
-      const next = { ...queue, events: [...queue.events, event] };
+      const prerequisites: TaskMutationEvent[] = [];
+      const include = (id: string): void => {
+        if (
+          queue.events.some((item) => item.eventId === id) ||
+          prerequisites.some((item) => item.eventId === id)
+        )
+          return;
+        const archived = this.readArchived(id);
+        if (!archived) return; // Schema validation reports absent prerequisites.
+        prerequisites.push(archived);
+        for (const dependency of archived.prerequisites ?? []) include(dependency);
+      };
+      for (const id of event.prerequisites ?? []) include(id);
+      const next = { ...queue, events: [...queue.events, ...prerequisites, event] };
       return { queue: next, result: event };
     });
   }
@@ -313,6 +335,106 @@ export class TaskMutationQueue {
 
   list(): TaskMutationEvent[] {
     return this.readQueue().events;
+  }
+
+  /** Includes compacted history without loading the task's lifetime into memory. */
+  get(eventId: string): TaskMutationEvent | null {
+    return (
+      this.readQueue().events.find((event) => event.eventId === eventId) ??
+      this.readArchived(eventId) ??
+      null
+    );
+  }
+
+  private archivePath(eventId: string): string {
+    return path.join(
+      this.archiveRoot,
+      `${createHash("sha256").update(eventId).digest("hex")}.json`,
+    );
+  }
+
+  private readArchived(eventId: string): TaskMutationEvent | undefined {
+    ensureDirectory(this.archiveRoot);
+    const file = this.archivePath(eventId);
+    let fd: number;
+    try {
+      fd = fs.openSync(
+        file,
+        fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    }
+    try {
+      const stat = fs.fstatSync(fd);
+      if (!stat.isFile() || stat.size > 1_048_576) throw new Error("Unsafe mutation history file");
+      const event = eventSchema.parse(JSON.parse(fs.readFileSync(fd, "utf8")) as unknown);
+      if (
+        event.eventId !== eventId ||
+        event.projectId !== this.projectId ||
+        !["completed", "retired"].includes(event.status)
+      )
+        throw new Error("Mutation history identity or outcome mismatch");
+      return event;
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+
+  private compact(queue: QueueRecord): QueueRecord {
+    if (queue.events.length <= 256) return queue;
+    const terminal = (event: TaskMutationEvent) => ["completed", "retired"].includes(event.status);
+    // Retain recent outcomes and the complete prerequisite closure of all retained work.
+    const keep = new Set(
+      queue.events
+        .filter(
+          (event) => !terminal(event) || ["implementation", "refinement"].includes(event.kind),
+        )
+        .map((event) => event.eventId),
+    );
+    for (const event of queue.events.filter(terminal).slice(-128)) keep.add(event.eventId);
+    const byId = new Map(queue.events.map((event) => [event.eventId, event]));
+    const visit = (id: string): void => {
+      for (const prerequisite of byId.get(id)?.prerequisites ?? []) {
+        if (keep.has(prerequisite)) continue;
+        keep.add(prerequisite);
+        visit(prerequisite);
+      }
+    };
+    for (const id of keep) visit(id);
+    ensureDirectory(this.archiveRoot);
+    for (const event of queue.events) {
+      if (keep.has(event.eventId)) continue;
+      const file = this.archivePath(event.eventId);
+      const previous = this.readArchived(event.eventId);
+      if (previous) {
+        if (JSON.stringify(previous) !== JSON.stringify(event))
+          throw new Error("Conflicting mutation history preserved");
+        continue;
+      }
+      // Archive before removing from the atomic queue snapshot. A crash may leave
+      // duplicate evidence, never a missing deduplication identity.
+      const temporary = `${file}.${randomUUID()}.tmp`;
+      const fd = fs.openSync(temporary, "wx", 0o600);
+      try {
+        fs.writeFileSync(fd, JSON.stringify(event));
+        fs.fsyncSync(fd);
+      } catch (error) {
+        fs.unlinkSync(temporary);
+        throw error;
+      } finally {
+        fs.closeSync(fd);
+      }
+      fs.renameSync(temporary, file);
+    }
+    const directory = fs.openSync(this.archiveRoot, fs.constants.O_RDONLY);
+    try {
+      fs.fsyncSync(directory);
+    } finally {
+      fs.closeSync(directory);
+    }
+    return { ...queue, events: queue.events.filter((event) => keep.has(event.eventId)) };
   }
 
   getActive(): TaskMutationEvent | null {
@@ -752,7 +874,7 @@ export class TaskMutationQueue {
           const output = operation(current);
           if (output.queue === current) return { value: current, result: output.result };
           const next = parseTaskMutationQueue({
-            ...output.queue,
+            ...this.compact(output.queue),
             revision: current.revision + 1,
           });
           return { value: next, result: output.result };
@@ -765,7 +887,7 @@ export class TaskMutationQueue {
       const current = this.readQueue();
       const output = operation(current);
       if (output.queue === current) return output.result;
-      this.write({ ...output.queue, revision: current.revision + 1 });
+      this.write({ ...this.compact(output.queue), revision: current.revision + 1 });
       return output.result;
     });
   }

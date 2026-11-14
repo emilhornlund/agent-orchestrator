@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import {
   persistQualityEvidence,
+  refreshCurrentTaskFeedback,
   runTaskSessionFeedbackCycle,
 } from "../src/orchestrator/run-task-session-feedback-cycle.js";
 import { FeedbackLedgerStore } from "../src/task-session/feedback-ledger-store.js";
@@ -161,12 +162,13 @@ describe("Human Review attachment preparation", () => {
     expect(f.common.taskStore.read("card")?.phase).toBe("human-feedback");
   });
 
-  it("does not trigger classification or correction from self, bot, or managed-status comments", async () => {
+  it("does not trigger classification or correction from self or bot comments", async () => {
     const f = fixture();
     const classify = vi.spyOn(f.common.openCode, "run");
     const prepareAttachmentContext = vi.fn(async () => undefined);
     const comments = [
       { id: 1, author: "automation", body: "Fix something" },
+      { id: 4, author: "agent[bot]", body: "Fix something" },
       {
         id: 2,
         author: "other-bot",
@@ -175,7 +177,7 @@ describe("Human Review attachment preparation", () => {
       },
       {
         id: 3,
-        author: "human",
+        author: "automation",
         body: "<!-- agent-orchestrator-feedback:status --> work complete",
       },
     ].map((item) => ({
@@ -197,6 +199,57 @@ describe("Human Review attachment preparation", () => {
     expect(classify).not.toHaveBeenCalled();
     expect(prepareAttachmentContext).not.toHaveBeenCalled();
     expect(f.common.mutationQueue.list()).toEqual([]);
+  });
+
+  it("retains human requests quoting managed markers for semantic classification", async () => {
+    const f = fixture();
+    const body = "Please fix this; prior status: <!-- agent-orchestrator-outcome:start -->";
+    const classify = vi.spyOn(f.common.openCode, "run");
+    await refreshCurrentTaskFeedback({
+      ...f.common,
+      cardId: f.common.card.id,
+      observation: {
+        ...f.observation,
+        automationActor: "automation",
+        conversationComments: [
+          {
+            id: 11,
+            author: "human",
+            body,
+            createdAt: "2026-10-24T09:00:00.000Z",
+            updatedAt: null,
+          },
+        ],
+        requestedChanges: {
+          feedback: {
+            reviews: [
+              {
+                id: 12,
+                author: "human",
+                body,
+                submittedAt: "2026-10-24T09:00:00.000Z",
+                inlineComments: [
+                  { id: 13, author: "human", body, path: "src/example.ts", line: 4 },
+                ],
+              },
+            ],
+          },
+        },
+      } as never,
+    });
+    expect(classify).toHaveBeenCalledOnce();
+    expect(f.common.ledgerStore.read("card")?.entries).toMatchObject([
+      { kind: "review", id: "12", body, actionability: "actionable" },
+      {
+        kind: "inline-comment",
+        id: "13",
+        body,
+        path: "src/example.ts",
+        line: 4,
+        actionability: "actionable",
+      },
+      { kind: "conversation-comment", id: "11", body, actionability: "actionable" },
+    ]);
   });
 
   it("persists semantic discussion classification instead of parking a general PR comment for attention", async () => {

@@ -168,6 +168,108 @@ describe("runOrchestrator", () => {
     fs.rmSync(runtimeStorageRoot, { recursive: true, force: true });
   });
 
+  it.each(["feature", "improvement", "bug", "refinement"] as const)(
+    "leaves Failed cards alone and claims the first eligible %s ahead of lower task types",
+    async (kind) => {
+      const controller = new AbortController();
+      const project = createProject(`ordering-${kind}`);
+      project.repository.path = path.join(runtimeStorageRoot, "repo");
+      project.repository.worktreeRoot = path.join(runtimeStorageRoot, "worktrees");
+      const coordinationRoot = path.join(runtimeStorageRoot, "coordination");
+      fs.mkdirSync(coordinationRoot);
+      provisionCoordinationNamespace(coordinationRoot, "ordering");
+      const config = createConfig([project], 0.001);
+      config.workflow.contextRoot = path.join(runtimeStorageRoot, "state");
+      config.workflow.coordinationRoot = coordinationRoot;
+      config.workflow.coordinationNamespaceId = "ordering";
+      const lease = await acquireProjectOwnership(
+        coordinationRoot,
+        {
+          trelloBoardId: project.trello.boardId,
+          githubRepository: project.repository.github,
+        },
+        "ordering",
+      );
+      try {
+        const pin = (await verifyAndPinProjects(config, [lease]))[0]!;
+        const pinned = {
+          integrationId: pin.integrationId,
+          projectId: project.id,
+          boardId: project.trello.boardId,
+          lists: {
+            ready: project.trello.readyListId,
+            working: project.trello.workingListId,
+            review: project.trello.reviewListId,
+            failed: project.trello.failedListId,
+            done: project.trello.doneListId,
+            backlog: project.trello.backlogListId,
+          },
+          repository: pin.repository.github,
+          repositoryPath: pin.repository.path,
+          worktreeRoot: pin.repository.worktreeRoot,
+          storageRoot: pin.storageRoot,
+        };
+        const card = (id: string, label: string): TrelloCard => ({
+          id,
+          name: id,
+          desc: "task",
+          url: `https://trello.test/${id}`,
+          idList: project.trello.readyListId,
+          idLabels: [label],
+        });
+        const failed = {
+          ...card("failed-card", project.trello.featureLabelId),
+          idList: project.trello.failedListId,
+        };
+        const eligible = card("first-eligible", project.trello[`${kind}LabelId`]);
+        let readyPolls = 0;
+        const trello = {
+          getCards: vi.fn(async (listId: string) => {
+            if (listId === project.trello.failedListId) return [failed];
+            if (listId !== project.trello.readyListId) return [];
+            readyPolls++;
+            if (readyPolls <= 3) {
+              expect(pollProject).not.toHaveBeenCalled();
+              return [];
+            }
+            return [
+              { ...card("future", project.trello.featureLabelId), start: "2999-01-01T00:00:00Z" },
+              card("unsupported", "unknown-label"),
+              eligible,
+              card("lower-refinement", project.trello.refinementLabelId),
+              card("lower-feature", project.trello.featureLabelId),
+            ];
+          }),
+        } as unknown as TrelloClient;
+        pollProject.mockImplementation(async (...args) => {
+          const authority = args.at(-2) as ProjectRunAuthority;
+          expect(authority.store.read()).toMatchObject({
+            cardId: eligible.id,
+            taskKind: kind === "refinement" ? "refinement" : "implementation",
+          });
+          expect(failed.idList).toBe(project.trello.failedListId);
+          controller.abort();
+        });
+        await runOrchestrator(
+          trello,
+          {} as GitClient,
+          {} as GitHubClient,
+          {} as OpenCodeClient,
+          {} as CommandRunner,
+          config,
+          controller.signal,
+          undefined,
+          undefined,
+          new Map([[project.id, { projectLease: lease, pinned, coordinationRoot }]]),
+        );
+        expect(readyPolls).toBeGreaterThan(3);
+        expect(pollProject).toHaveBeenCalledOnce();
+      } finally {
+        await lease.release();
+      }
+    },
+  );
+
   it("assigns validation repair capacity independently of AI review maxPasses", async () => {
     const controller = new AbortController();
     const project = createProject("validation-budget");

@@ -925,6 +925,9 @@ task worktrees.
   incompatible relocation is rejected or deferred until a verified terminal outcome. Compatible
   state-schema upgrades at that location do not permit relocating active state.
 - Routine recovery does not require manual editing of internal state files.
+- Durable task progress, AI session references, recovery information, and other execution state are
+  stored outside Git repositories and task worktrees; a configured storage location that overlaps a
+  source checkout or task worktree is rejected before task processing.
 
 ### REQ-CFG-006 — Verify required startup dependencies
 

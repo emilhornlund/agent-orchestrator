@@ -193,6 +193,43 @@ it("preserves prior arrivals on outages and rejects stale owner generations", as
   expect(readActivePrArrivals(f.authority)).toHaveLength(1);
 });
 
+it("queues a known CI failure once even when another expected check never finishes", async () => {
+  const f = fixture();
+  vi.mocked(f.github.getPullRequestConversationComments).mockResolvedValue([]);
+  vi.mocked(f.github.getCiObservations).mockResolvedValue({
+    headSha: f.pr.headRefOid,
+    expectationSources: [
+      { kind: "workflow-contract", sourceId: "ci", complete: true, checkNames: ["Build", "Tests"] },
+    ],
+    checks: [
+      {
+        source: "check-run",
+        id: 1,
+        name: "Build",
+        status: "completed",
+        conclusion: "failure",
+        headSha: f.pr.headRefOid,
+        url: null,
+      },
+      {
+        source: "check-run",
+        id: 2,
+        name: "Tests",
+        status: "queued",
+        conclusion: null,
+        headSha: f.pr.headRefOid,
+        url: null,
+      },
+    ],
+  });
+  await observeActivePullRequest(f);
+  const restarted = new ProjectRunAuthority(f.project.id, f.store, 1, undefined, undefined, "card");
+  await observeActivePullRequest({ ...f, authority: restarted });
+  const queue = new TaskMutationQueue(f.project.contextRoot, f.project, restarted);
+  expect(queue.list()).toMatchObject([{ kind: "ci-repair", status: "queued" }]);
+  expect(queue.claimNext()?.kind).toBe("ci-repair");
+});
+
 it("does not persist mixed feedback when the PR changes during observation", async () => {
   const f = fixture();
   vi.mocked(f.github.findPullRequestState)
