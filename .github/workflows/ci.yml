@@ -51,8 +51,17 @@ jobs:
             sudo apparmor_parser --remove /etc/apparmor.d/bwrap
           fi
           bwrap --version
-          bwrap --die-with-parent --new-session --unshare-pid --ro-bind / / --proc /proc --dev /dev -- \
-            bwrap --die-with-parent --new-session --unshare-pid --ro-bind / / --proc /proc --dev /dev -- /bin/true
+          if ! bwrap --die-with-parent --new-session --unshare-pid --ro-bind / / --proc /proc --dev /dev -- \
+            bwrap --die-with-parent --new-session --unshare-pid --ro-bind / / --proc /proc --dev /dev -- /bin/true; then
+            id
+            uname -a
+            command -v bwrap
+            sysctl user.max_user_namespaces kernel.apparmor_restrict_unprivileged_userns kernel.unprivileged_userns_clone
+            cat /proc/self/attr/current
+            sudo aa-status || true
+            sudo journalctl --dmesg --lines=40 --no-pager
+            exit 1
+          fi
 
       - name: Check formatting
         run: yarn format:check
