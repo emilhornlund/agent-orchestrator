@@ -29,6 +29,7 @@ const responses: Record<string, string> = {
 async function diagnose(
   overrides: Record<string, string | Error | CommandRunResult> = {},
   configuration = () => parseConfig(example),
+  args: readonly string[] = [],
 ) {
   const lines: string[] = [];
   const runProbe = vi.fn(async ({ command }: CommandRunOptions) => {
@@ -37,15 +38,79 @@ async function diagnose(
     if (value === undefined) throw new Error(`Unexpected command: ${command}`);
     return typeof value === "string" ? { exitCode: 0, output: value } : value;
   });
-  const exitCode = await runDoctor({
-    loadConfig: configuration,
-    runProbe,
-    write: (line) => lines.push(line),
-  });
+  const exitCode = await runDoctor(
+    {
+      loadConfig: configuration,
+      runProbe,
+      write: (line) => lines.push(line),
+    },
+    args,
+  );
   return { exitCode, output: lines.join("\n"), runProbe };
 }
 
 describe("local environment diagnostics", () => {
+  it("emits a deterministic versioned JSON report with explicit skipped checks", async () => {
+    const result = await diagnose({}, undefined, ["--json"]);
+    expect(result.exitCode).toBe(0);
+    const report = JSON.parse(result.output);
+    expect(report).toEqual({
+      schemaVersion: 1,
+      requiredLocalChecksPassed: true,
+      runtimeReadiness: "not-verified",
+      checks: [
+        { id: "configuration", status: "passed", summary: "config.yaml exists and is valid." },
+        ...["git", "github-cli", "opencode"].map((id) => ({
+          id,
+          status: "passed",
+          summary: "installed version and required executable capabilities are compatible.",
+        })),
+        {
+          id: "external-integrations",
+          status: "skipped",
+          summary: expect.stringContaining("not checked"),
+        },
+        {
+          id: "runtime-prerequisites",
+          status: "skipped",
+          summary: expect.stringContaining("not checked"),
+        },
+      ],
+    });
+    expect((await diagnose({}, undefined, ["--json"])).output).toBe(result.output);
+  });
+
+  it.each([{ args: [] }, { args: ["--json"] }])(
+    "sanitizes arbitrary probe exceptions in mode $args",
+    async ({ args }) => {
+      const result = await diagnose(
+        {
+          "git --version": new Error("sensitive-probe-exception"),
+          "gh --version": new Error("sensitive-probe-exception"),
+          "opencode --version": new Error("sensitive-probe-exception"),
+        },
+        undefined,
+        args,
+      );
+      expect(result.exitCode).toBe(1);
+      expect(result.output).not.toContain("sensitive-probe-exception");
+      expect(result.output).toContain("PATH");
+    },
+  );
+
+  it.each([["--unknown"], ["file"], ["--json", "--unknown"], ["--json", "--json"]])(
+    "rejects unsupported arguments before loading configuration or probing: %j",
+    async (...args) => {
+      const loadConfig = vi.fn();
+      const runProbe = vi.fn();
+      const write = vi.fn();
+      expect(await runDoctor({ loadConfig, runProbe, write }, args)).toBe(1);
+      expect(write).toHaveBeenCalledExactlyOnceWith("Usage: yarn doctor [--json]");
+      expect(loadConfig).not.toHaveBeenCalled();
+      expect(runProbe).not.toHaveBeenCalled();
+    },
+  );
+
   it("reports compatible local checks without claiming integration or runtime readiness", async () => {
     const result = await diagnose();
     expect(result.exitCode).toBe(0);
@@ -72,10 +137,15 @@ describe("local environment diagnostics", () => {
     ["gh pr list --help", "secret-help-value", "missing required options"],
     ["opencode run --help", "secret-help-value", "missing required options"],
   ])("explains incompatible %s results", async (command, response, explanation) => {
-    const result = await diagnose({ [command]: response });
-    expect(result.exitCode).toBe(1);
-    expect(result.output).toContain(explanation);
-    expect(result.output).not.toContain("secret-");
+    for (const args of [[], ["--json"]]) {
+      const result = await diagnose({ [command]: response }, undefined, args);
+      expect(result.exitCode).toBe(1);
+      expect(result.output).toContain(explanation);
+      expect(result.output).not.toContain("secret-");
+      if (args.length) {
+        expect(JSON.parse(result.output).requiredLocalChecksPassed).toBe(false);
+      }
+    }
   });
 
   it.each(["git --version", "gh --version", "opencode --version"])(
@@ -165,30 +235,70 @@ describe("standalone doctor entrypoint", () => {
     if (root) fs.rmSync(root, { recursive: true, force: true });
   });
 
-  it.each([
-    { scenario: "success", configuration: example, failure: false, configFailure: false },
-    { scenario: "executable failure", configuration: example, failure: true, configFailure: false },
-    {
-      scenario: "schema failure with YAML warning",
-      configuration: `${example}\nsecret: !doctor-tag sensitive-config-value\n`,
-      failure: false,
-      configFailure: true,
-    },
-    {
-      scenario: "valid configuration with YAML warning",
-      configuration: example.replace('"project"', '!doctor-tag "sensitive-config-value"'),
-      failure: false,
-      configFailure: false,
-    },
-    {
-      scenario: "YAML syntax failure",
-      configuration: "secret: [sensitive-config-value",
-      failure: false,
-      configFailure: true,
-    },
-  ])(
-    "is read-only and protects both output streams ($scenario)",
-    async ({ configuration, failure, configFailure }) => {
+  it("rejects invalid arguments at the entrypoint without probing", async () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-arguments-"));
+    for (const executable of ["git", "gh", "opencode"]) {
+      fs.writeFileSync(
+        path.join(root, executable),
+        `#!${process.execPath}\nrequire('node:fs').writeFileSync('probe-started', 'unexpected');\n`,
+        { mode: 0o755 },
+      );
+    }
+    await expect(
+      promisify(execFile)(
+        process.execPath,
+        [
+          "--import",
+          import.meta.resolve("tsx"),
+          path.resolve("src/doctor.ts"),
+          "--json",
+          "--unknown",
+        ],
+        {
+          cwd: root,
+          env: { ...process.env, PATH: root },
+          timeout: 10_000,
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: 1,
+      stdout: "Usage: yarn doctor [--json]\n",
+      stderr: "",
+    });
+    expect(fs.existsSync(path.join(root, "probe-started"))).toBe(false);
+  });
+
+  it.each(
+    [
+      { scenario: "success", configuration: example, failure: false, configFailure: false },
+      {
+        scenario: "executable failure",
+        configuration: example,
+        failure: true,
+        configFailure: false,
+      },
+      {
+        scenario: "schema failure with YAML warning",
+        configuration: `${example}\nsecret: !doctor-tag sensitive-config-value\n`,
+        failure: false,
+        configFailure: true,
+      },
+      {
+        scenario: "valid configuration with YAML warning",
+        configuration: example.replace('"project"', '!doctor-tag "sensitive-config-value"'),
+        failure: false,
+        configFailure: false,
+      },
+      {
+        scenario: "YAML syntax failure",
+        configuration: "secret: [sensitive-config-value",
+        failure: false,
+        configFailure: true,
+      },
+    ].flatMap((scenario) => [false, true].map((json) => ({ ...scenario, json }))),
+  )(
+    "is read-only and protects both output streams ($scenario, json=$json)",
+    async ({ configuration, failure, configFailure, json }) => {
       root = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-"));
       const bin = path.join(root, "bin");
       fs.mkdirSync(bin);
@@ -220,11 +330,21 @@ describe("standalone doctor entrypoint", () => {
       let stderr: string;
       let exitCode = 0;
       try {
-        const result = await run(process.execPath, ["--import", tsx, entrypoint], {
-          cwd: root,
-          env: { ...process.env, PATH: bin, HOME: root, XDG_DATA_HOME: root, XDG_CACHE_HOME: root },
-          timeout: 10_000,
-        });
+        const result = await run(
+          process.execPath,
+          ["--import", tsx, entrypoint, ...(json ? ["--json"] : [])],
+          {
+            cwd: root,
+            env: {
+              ...process.env,
+              PATH: bin,
+              HOME: root,
+              XDG_DATA_HOME: root,
+              XDG_CACHE_HOME: root,
+            },
+            timeout: 10_000,
+          },
+        );
         stdout = result.stdout;
         stderr = result.stderr;
       } catch (error) {
@@ -234,14 +354,31 @@ describe("standalone doctor entrypoint", () => {
         stderr = result.stderr;
       }
       expect(exitCode).toBe(failure || configFailure ? 1 : 0);
-      expect(stdout).toContain(failure ? "FAILED GitHub CLI:" : "PASSED GitHub CLI:");
-      expect(stdout).toContain(configFailure ? "FAILED Configuration:" : "PASSED Configuration:");
-      expect(stdout).toContain(
-        failure || configFailure
-          ? "Required local checks failed."
-          : "Required local checks passed.",
-      );
-      expect(stdout).toContain("PASSED OpenCode:");
+      if (json) {
+        const report = JSON.parse(stdout);
+        expect(report.schemaVersion).toBe(1);
+        expect(report.requiredLocalChecksPassed).toBe(!failure && !configFailure);
+        expect(report.runtimeReadiness).toBe("not-verified");
+        expect(
+          report.checks.map((check: { id: string; status: string }) => [check.id, check.status]),
+        ).toEqual([
+          ["configuration", configFailure ? "failed" : "passed"],
+          ["git", "passed"],
+          ["github-cli", failure ? "failed" : "passed"],
+          ["opencode", "passed"],
+          ["external-integrations", "skipped"],
+          ["runtime-prerequisites", "skipped"],
+        ]);
+      } else {
+        expect(stdout).toContain(failure ? "FAILED GitHub CLI:" : "PASSED GitHub CLI:");
+        expect(stdout).toContain(configFailure ? "FAILED Configuration:" : "PASSED Configuration:");
+        expect(stdout).toContain(
+          failure || configFailure
+            ? "Required local checks failed."
+            : "Required local checks passed.",
+        );
+        expect(stdout).toContain("PASSED OpenCode:");
+      }
       expect(stdout + stderr).not.toContain("secret-process-output");
       expect(stdout + stderr).not.toContain("sensitive-config-value");
       expect(stderr).toBe("");
