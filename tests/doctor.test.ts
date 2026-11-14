@@ -54,6 +54,14 @@ describe("local environment diagnostics", () => {
     { args: [], json: false, configPath: "config.yaml" },
     { args: ["--json"], json: true, configPath: "config.yaml" },
     { args: ["--config", "configs/local.yaml"], json: false, configPath: "configs/local.yaml" },
+    { args: ["--config=configs/local.yaml"], json: false, configPath: "configs/local.yaml" },
+    { args: ["--json", "--config=/tmp/local.yaml"], json: true, configPath: "/tmp/local.yaml" },
+    {
+      args: ["--config=local config.yaml", "--json"],
+      json: true,
+      configPath: "local config.yaml",
+    },
+    { args: ["--config=local=settings.yaml"], json: false, configPath: "local=settings.yaml" },
     { args: ["--json", "--config", "/tmp/local.yaml"], json: true, configPath: "/tmp/local.yaml" },
     {
       args: ["--config", "local config.yaml", "--json"],
@@ -67,15 +75,20 @@ describe("local environment diagnostics", () => {
   it.each([[], ["--json"]])(
     "loads the selected file with warnings suppressed: %j",
     async (...mode) => {
-      const loadConfig = vi.fn(() => parseConfig(example));
-      const result = await diagnose({}, loadConfig, [...mode, "--config", "local config.yaml"]);
-      expect(loadConfig).toHaveBeenCalledExactlyOnceWith("local config.yaml", {
-        suppressWarnings: true,
-      });
-      expect(result.exitCode).toBe(0);
-      expect(result.output).toContain(
-        mode.length ? '\\"local config.yaml\\"' : '"local config.yaml"',
-      );
+      for (const configArgs of [
+        ["--config", "local config.yaml"],
+        ["--config=local config.yaml"],
+      ]) {
+        const loadConfig = vi.fn(() => parseConfig(example));
+        const result = await diagnose({}, loadConfig, [...mode, ...configArgs]);
+        expect(loadConfig).toHaveBeenCalledExactlyOnceWith("local config.yaml", {
+          suppressWarnings: true,
+        });
+        expect(result.exitCode).toBe(0);
+        expect(result.output).toContain(
+          mode.length ? '\\"local config.yaml\\"' : '"local config.yaml"',
+        );
+      }
     },
   );
 
@@ -140,7 +153,13 @@ describe("local environment diagnostics", () => {
     ["--json", "--config"],
     ["--config", "one.yaml", "--config", "two.yaml"],
     ["--config", "one.yaml", "extra.yaml"],
-    ["--config=one.yaml"],
+    ["--config="],
+    ["--config=   "],
+    ["--json", "--config=\t"],
+    ["--config=one.yaml", "--config=two.yaml"],
+    ["--config", "one.yaml", "--config=two.yaml"],
+    ["--config=one.yaml", "--config", "two.yaml"],
+    ["--config=one.yaml", "--unknown"],
   ])(
     "rejects unsupported arguments before loading configuration or probing: %j",
     async (...args) => {
@@ -149,7 +168,9 @@ describe("local environment diagnostics", () => {
       const write = vi.fn();
       expect(await runDoctor({ loadConfig, runProbe, write }, args)).toBe(1);
       expect(parseDoctorArguments(args)).toBeUndefined();
-      expect(write).toHaveBeenCalledExactlyOnceWith("Usage: yarn doctor [--json] [--config PATH]");
+      expect(write).toHaveBeenCalledExactlyOnceWith(
+        "Usage: yarn doctor [--json] [--config PATH | --config=PATH]",
+      );
       expect(loadConfig).not.toHaveBeenCalled();
       expect(runProbe).not.toHaveBeenCalled();
     },
@@ -305,6 +326,12 @@ describe("standalone doctor entrypoint", () => {
     ["--config", ""],
     ["--config", "one.yaml", "--config", "two.yaml"],
     ["--config", "--json"],
+    ["--config="],
+    ["--config=   "],
+    ["--json", "--config=\t"],
+    ["--config=one.yaml", "--config=two.yaml"],
+    ["--config", "one.yaml", "--config=two.yaml"],
+    ["--config=one.yaml", "--config", "two.yaml"],
   ])("rejects invalid arguments at the entrypoint without probing: %j", async (...args) => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-arguments-"));
     for (const executable of ["git", "gh", "opencode"]) {
@@ -326,7 +353,7 @@ describe("standalone doctor entrypoint", () => {
       ),
     ).rejects.toMatchObject({
       code: 1,
-      stdout: "Usage: yarn doctor [--json] [--config PATH]\n",
+      stdout: "Usage: yarn doctor [--json] [--config PATH | --config=PATH]\n",
       stderr: "",
     });
     expect(fs.existsSync(path.join(root, "probe-started"))).toBe(false);
@@ -373,16 +400,19 @@ describe("standalone doctor entrypoint", () => {
       },
     ].flatMap((scenario) =>
       [false, true].flatMap((json) =>
-        ["default", "relative", "absolute", "spaces"].map((selection) => ({
-          ...scenario,
-          json,
-          selection,
-        })),
+        ["default", "relative", "absolute", "spaces"].flatMap((selection) =>
+          (selection === "default" ? [false] : [false, true]).map((equals) => ({
+            ...scenario,
+            json,
+            selection,
+            equals,
+          })),
+        ),
       ),
     ),
   )(
-    "is read-only and protects both output streams ($scenario, json=$json, $selection)",
-    async ({ configuration, failure, configFailure, json, selection }) => {
+    "is read-only and protects both output streams ($scenario, json=$json, $selection, equals=$equals)",
+    async ({ configuration, failure, configFailure, json, selection, equals }) => {
       root = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-"));
       const bin = path.join(root, "bin");
       fs.mkdirSync(bin);
@@ -401,7 +431,12 @@ describe("standalone doctor entrypoint", () => {
       // default prevent successful diagnosis of a selected file.
       if (selection !== "default")
         fs.writeFileSync(path.join(root, "config.yaml"), configFailure ? example : "invalid: [");
-      const configArgs = selection === "default" ? [] : ["--config", configPath];
+      const configArgs =
+        selection === "default"
+          ? []
+          : equals
+            ? [`--config=${configPath}`]
+            : ["--config", configPath];
       const args =
         selection === "spaces"
           ? [...configArgs, ...(json ? ["--json"] : [])]

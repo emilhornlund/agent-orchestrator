@@ -124,16 +124,20 @@ Check your local configuration and executable compatibility before starting:
 yarn doctor
 ```
 
-Syntax: `yarn doctor [--json] [--config PATH]`. Omit `--config` to check `config.yaml`, or select a
-named file without copying it or changing directories. Relative paths resolve against the invocation
-working directory; absolute paths are also supported. Quote paths containing spaces. `--config PATH`
-may appear before or after `--json`.
+Syntax: `yarn doctor [--json] [--config PATH | --config=PATH]`. Omit `--config` to check
+`config.yaml`, or select a named file without copying it or changing directories. Relative paths
+resolve against the invocation working directory; absolute paths are also supported. Quote paths
+containing spaces. `--config PATH` and `--config=PATH` are equivalent and may appear before or after
+`--json`.
 
 ```bash
 yarn doctor --config configs/local.yaml
 yarn doctor --config "/opt/agent/config files/production.yaml"
 yarn doctor --json --config configs/local.yaml
 yarn doctor --config "configs/local settings.yaml" --json
+yarn doctor --config=configs/local.yaml
+yarn doctor --json --config="configs/local settings.yaml"
+yarn doctor --config="configs/local settings.yaml" --json
 ```
 
 This read-only command reports passed, failed, or skipped checks for the selected configuration
@@ -210,10 +214,11 @@ Example successful report:
 }
 ```
 
-Unsupported arguments, duplicate options, and missing or empty `--config` values produce
-`Usage: yarn doctor [--json] [--config PATH]` and a nonzero exit status before configuration loading
-or executable probes. Usage errors are text rather than diagnostic JSON reports. Both formats omit
-configuration values, parser excerpts, and raw executable output.
+Unsupported arguments, duplicate options (including mixed `--config PATH` and `--config=PATH`
+spellings), and missing, empty or whitespace-only `--config` values produce
+`Usage: yarn doctor [--json] [--config PATH | --config=PATH]` and a nonzero exit status before
+configuration loading or executable probes. Usage errors are text rather than diagnostic JSON
+reports. Both formats omit configuration values, parser excerpts, and raw executable output.
 
 First provision the required shared coordination namespace using the
 [configuration instructions](docs/configuration.md#provisioning-a-shared-host-coordination-namespace).

@@ -89,6 +89,10 @@ export function parseDoctorArguments(args: readonly string[]): DoctorArguments |
       if (value === undefined || value.trim() === "" || value.startsWith("--")) return undefined;
       configPath = value;
       index += 1;
+    } else if (argument?.startsWith("--config=") && configPath === undefined) {
+      const value = argument.slice("--config=".length);
+      if (value.trim() === "" || value.startsWith("--")) return undefined;
+      configPath = value;
     } else {
       return undefined;
     }
@@ -107,7 +111,7 @@ export async function runDoctor(
   const { write } = dependencies;
   const options = parseDoctorArguments(args);
   if (!options) {
-    write("Usage: yarn doctor [--json] [--config PATH]");
+    write("Usage: yarn doctor [--json] [--config PATH | --config=PATH]");
     return 1;
   }
   const { json, configPath } = options;
