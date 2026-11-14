@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { loadConfig, parseConfig } from "../src/config/config.js";
-import { runDoctor, runDoctorProbe } from "../src/doctor.js";
+import { parseDoctorArguments, runDoctor, runDoctorProbe } from "../src/doctor.js";
 import { GITHUB_CLI_COMMAND_CAPABILITIES } from "../src/github/github-cli-compatibility.js";
 import type { CommandRunOptions, CommandRunResult } from "../src/process/command-runner.js";
 
@@ -50,6 +50,35 @@ async function diagnose(
 }
 
 describe("local environment diagnostics", () => {
+  it.each([
+    { args: [], json: false, configPath: "config.yaml" },
+    { args: ["--json"], json: true, configPath: "config.yaml" },
+    { args: ["--config", "configs/local.yaml"], json: false, configPath: "configs/local.yaml" },
+    { args: ["--json", "--config", "/tmp/local.yaml"], json: true, configPath: "/tmp/local.yaml" },
+    {
+      args: ["--config", "local config.yaml", "--json"],
+      json: true,
+      configPath: "local config.yaml",
+    },
+  ])("parses doctor options deterministically: $args", ({ args, json, configPath }) => {
+    expect(parseDoctorArguments(args)).toEqual({ json, configPath });
+  });
+
+  it.each([[], ["--json"]])(
+    "loads the selected file with warnings suppressed: %j",
+    async (...mode) => {
+      const loadConfig = vi.fn(() => parseConfig(example));
+      const result = await diagnose({}, loadConfig, [...mode, "--config", "local config.yaml"]);
+      expect(loadConfig).toHaveBeenCalledExactlyOnceWith("local config.yaml", {
+        suppressWarnings: true,
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain(
+        mode.length ? '\\"local config.yaml\\"' : '"local config.yaml"',
+      );
+    },
+  );
+
   it("emits a deterministic versioned JSON report with explicit skipped checks", async () => {
     const result = await diagnose({}, undefined, ["--json"]);
     expect(result.exitCode).toBe(0);
@@ -98,14 +127,29 @@ describe("local environment diagnostics", () => {
     },
   );
 
-  it.each([["--unknown"], ["file"], ["--json", "--unknown"], ["--json", "--json"]])(
+  it.each([
+    ["--unknown"],
+    ["file"],
+    ["--json", "--unknown"],
+    ["--json", "--json"],
+    ["--config"],
+    ["--config", ""],
+    ["--config", "   "],
+    ["--config", "--json"],
+    ["--config", "--unknown"],
+    ["--json", "--config"],
+    ["--config", "one.yaml", "--config", "two.yaml"],
+    ["--config", "one.yaml", "extra.yaml"],
+    ["--config=one.yaml"],
+  ])(
     "rejects unsupported arguments before loading configuration or probing: %j",
     async (...args) => {
       const loadConfig = vi.fn();
       const runProbe = vi.fn();
       const write = vi.fn();
       expect(await runDoctor({ loadConfig, runProbe, write }, args)).toBe(1);
-      expect(write).toHaveBeenCalledExactlyOnceWith("Usage: yarn doctor [--json]");
+      expect(parseDoctorArguments(args)).toBeUndefined();
+      expect(write).toHaveBeenCalledExactlyOnceWith("Usage: yarn doctor [--json] [--config PATH]");
       expect(loadConfig).not.toHaveBeenCalled();
       expect(runProbe).not.toHaveBeenCalled();
     },
@@ -194,12 +238,32 @@ describe("local environment diagnostics", () => {
       "required fields",
     ],
   ])("handles %s configuration safely", async (_name, configuration, explanation) => {
-    const result = await diagnose({}, configuration);
-    expect(result.exitCode).toBe(1);
-    expect(result.output).toContain("FAILED Configuration:");
-    expect(result.output).toContain(explanation);
-    expect(result.output).not.toContain("secret-config-value");
-    expect(result.output).toContain("PASSED OpenCode:");
+    for (const args of [
+      [],
+      ["--json"],
+      ["--config", "selected.yaml"],
+      ["--json", "--config", "selected.yaml"],
+    ]) {
+      const result = await diagnose({}, configuration, args);
+      expect(result.exitCode).toBe(1);
+      expect(result.output).toContain(explanation);
+      expect(result.output).not.toContain("secret-config-value");
+      if (args.includes("--config")) expect(result.output).toContain("selected.yaml");
+      if (args.includes("--json")) {
+        const report = JSON.parse(result.output);
+        expect(report.checks[0].status).toBe("failed");
+        expect(report.requiredLocalChecksPassed).toBe(false);
+      } else {
+        expect(result.output).toContain("FAILED Configuration:");
+        expect(result.output).toContain("PASSED OpenCode:");
+      }
+    }
+  });
+
+  it("escapes control characters in selected-file summaries", async () => {
+    const result = await diagnose({}, undefined, ["--config", "local\nconfig.yaml"]);
+    expect(result.output).toContain('"local\\nconfig.yaml" exists and is valid.');
+    expect(result.output).not.toContain("local\nconfig.yaml");
   });
 
   it("rejects commands outside the diagnostic probe allowlist", async () => {
@@ -235,7 +299,13 @@ describe("standalone doctor entrypoint", () => {
     if (root) fs.rmSync(root, { recursive: true, force: true });
   });
 
-  it("rejects invalid arguments at the entrypoint without probing", async () => {
+  it.each([
+    ["--json", "--unknown"],
+    ["--config"],
+    ["--config", ""],
+    ["--config", "one.yaml", "--config", "two.yaml"],
+    ["--config", "--json"],
+  ])("rejects invalid arguments at the entrypoint without probing: %j", async (...args) => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-arguments-"));
     for (const executable of ["git", "gh", "opencode"]) {
       fs.writeFileSync(
@@ -247,13 +317,7 @@ describe("standalone doctor entrypoint", () => {
     await expect(
       promisify(execFile)(
         process.execPath,
-        [
-          "--import",
-          import.meta.resolve("tsx"),
-          path.resolve("src/doctor.ts"),
-          "--json",
-          "--unknown",
-        ],
+        ["--import", import.meta.resolve("tsx"), path.resolve("src/doctor.ts"), ...args],
         {
           cwd: root,
           env: { ...process.env, PATH: root },
@@ -262,7 +326,7 @@ describe("standalone doctor entrypoint", () => {
       ),
     ).rejects.toMatchObject({
       code: 1,
-      stdout: "Usage: yarn doctor [--json]\n",
+      stdout: "Usage: yarn doctor [--json] [--config PATH]\n",
       stderr: "",
     });
     expect(fs.existsSync(path.join(root, "probe-started"))).toBe(false);
@@ -295,14 +359,53 @@ describe("standalone doctor entrypoint", () => {
         failure: false,
         configFailure: true,
       },
-    ].flatMap((scenario) => [false, true].map((json) => ({ ...scenario, json }))),
+      {
+        scenario: "missing configuration",
+        configuration: undefined,
+        failure: false,
+        configFailure: true,
+      },
+      {
+        scenario: "unreadable directory",
+        configuration: null,
+        failure: false,
+        configFailure: true,
+      },
+    ].flatMap((scenario) =>
+      [false, true].flatMap((json) =>
+        ["default", "relative", "absolute", "spaces"].map((selection) => ({
+          ...scenario,
+          json,
+          selection,
+        })),
+      ),
+    ),
   )(
-    "is read-only and protects both output streams ($scenario, json=$json)",
-    async ({ configuration, failure, configFailure, json }) => {
+    "is read-only and protects both output streams ($scenario, json=$json, $selection)",
+    async ({ configuration, failure, configFailure, json, selection }) => {
       root = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-"));
       const bin = path.join(root, "bin");
       fs.mkdirSync(bin);
-      fs.writeFileSync(path.join(root, "config.yaml"), configuration);
+      const relativeConfig =
+        selection === "default"
+          ? "config.yaml"
+          : selection === "spaces"
+            ? "selected config.yaml"
+            : "selected.yaml";
+      const configPath =
+        selection === "absolute" ? path.join(root, relativeConfig) : relativeConfig;
+      const selectedFile = path.join(root, relativeConfig);
+      if (configuration === null) fs.mkdirSync(selectedFile);
+      else if (configuration !== undefined) fs.writeFileSync(selectedFile, configuration);
+      // A valid default must not mask a selected-file failure, nor an invalid
+      // default prevent successful diagnosis of a selected file.
+      if (selection !== "default")
+        fs.writeFileSync(path.join(root, "config.yaml"), configFailure ? example : "invalid: [");
+      const configArgs = selection === "default" ? [] : ["--config", configPath];
+      const args =
+        selection === "spaces"
+          ? [...configArgs, ...(json ? ["--json"] : [])]
+          : [...(json ? ["--json"] : []), ...configArgs];
       for (const executable of ["git", "gh", "opencode"]) {
         fs.writeFileSync(
           path.join(bin, executable),
@@ -330,21 +433,17 @@ describe("standalone doctor entrypoint", () => {
       let stderr: string;
       let exitCode = 0;
       try {
-        const result = await run(
-          process.execPath,
-          ["--import", tsx, entrypoint, ...(json ? ["--json"] : [])],
-          {
-            cwd: root,
-            env: {
-              ...process.env,
-              PATH: bin,
-              HOME: root,
-              XDG_DATA_HOME: root,
-              XDG_CACHE_HOME: root,
-            },
-            timeout: 10_000,
+        const result = await run(process.execPath, ["--import", tsx, entrypoint, ...args], {
+          cwd: root,
+          env: {
+            ...process.env,
+            PATH: bin,
+            HOME: root,
+            XDG_DATA_HOME: root,
+            XDG_CACHE_HOME: root,
           },
-        );
+          timeout: 10_000,
+        });
         stdout = result.stdout;
         stderr = result.stderr;
       } catch (error) {
@@ -381,6 +480,7 @@ describe("standalone doctor entrypoint", () => {
       }
       expect(stdout + stderr).not.toContain("secret-process-output");
       expect(stdout + stderr).not.toContain("sensitive-config-value");
+      expect(stdout).toContain(relativeConfig);
       expect(stderr).toBe("");
       expect(snapshot()).toEqual(before);
     },
