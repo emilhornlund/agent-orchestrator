@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { containedProcess, observeContainedProcess } from "../process/contained-process.js";
 import { StringDecoder } from "node:string_decoder";
 import {
   buildChildEnvironment,
@@ -24,8 +25,8 @@ import {
 } from "../orchestrator/ai-execution-capacity.js";
 import {
   beginProcessEvidence,
-  drainProcessGroup,
   getProcessRuntime,
+  guardProcessClose,
   signalProcessGroup,
   ProcessEvidenceError,
   appendBoundedOutput,
@@ -522,6 +523,11 @@ const defaultRunOpenCode: RunOpenCode = async ({
         ...buildChildEnvironment("opencode", environment, process.env, effectiveProvider),
         OPENCODE_CONFIG_CONTENT: buildOpenCodeConfigContent(readOnly),
       };
+      if (effectiveSignal.aborted) {
+        execution.finish("not-dispatched", { cancellationRequested: true });
+        reject(new OpenCodeRunAbortedError());
+        return;
+      }
       const arguments_ = buildOpenCodeArguments({
         cwd,
         ...(model === undefined ? {} : { model }),
@@ -533,7 +539,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
         ...(sessionTitle === undefined ? {} : { sessionTitle }),
       });
       const authority = ProjectRunAuthority.currentProjectId();
-      let dispatch = { command: "opencode", args: arguments_ };
+      let dispatch: { command: string; args: string[] };
       try {
         if (
           authority !== undefined &&
@@ -546,19 +552,20 @@ const defaultRunOpenCode: RunOpenCode = async ({
             arguments_,
             refinementResultDirectory,
           );
+        else dispatch = containedProcess("opencode", arguments_);
       } catch (error) {
         execution.finish("not-dispatched");
         throw error;
       }
       const child = spawn(dispatch.command, dispatch.args, {
         cwd,
-        stdio: ["inherit", "pipe", "pipe"],
+        stdio: ["inherit", "pipe", "pipe", "pipe", "pipe"],
         detached: process.platform !== "win32",
         env: childEnvironment,
       });
       child.once("spawn", () => {
         try {
-          execution.dispatched(child.pid);
+          execution.dispatched(child.pid, "linux-pid-namespace");
         } catch (error) {
           recorderFailure ??=
             error instanceof Error
@@ -576,11 +583,39 @@ const defaultRunOpenCode: RunOpenCode = async ({
       const stderrDecoder = new StringDecoder("utf8");
       let settled = false;
       let timedOut = false;
+      let terminationRequested = false;
       let recorderFailure: Error | undefined;
       let captureFailure: Error | undefined;
+      let payloadSpawned: boolean | undefined;
       let redactorsFlushed = false;
 
       let forceKillTimeout: NodeJS.Timeout | undefined;
+      const finishUnknown = (error: unknown) => {
+        if (settled) return;
+        flushOutput();
+        settled = true;
+        clearTimeout(safetyTimeout);
+        if (forceKillTimeout) clearTimeout(forceKillTimeout);
+        effectiveSignal.removeEventListener("abort", handleAbort);
+        closeGuard.dispose();
+        try {
+          execution.finish("process-group-ambiguous", {
+            pid: child.pid,
+            containment: "linux-pid-namespace",
+          });
+        } catch (finishError) {
+          recorderFailure ??=
+            finishError instanceof Error
+              ? finishError
+              : new ProcessEvidenceError("OpenCode evidence finalization failed");
+        }
+        reject(error);
+      };
+      const closeGuard = guardProcessClose(child, finishUnknown);
+      const supervision = observeContainedProcess(child, (error) => {
+        recorderFailure = error;
+        terminate();
+      });
 
       function recordSession(text: string): void {
         if (!sessionLogPath || text.length === 0) return;
@@ -592,7 +627,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
       }
 
       const safetyTimeout = setTimeout(() => {
-        if (settled) {
+        if (settled || terminationRequested) {
           return;
         }
 
@@ -610,6 +645,8 @@ const defaultRunOpenCode: RunOpenCode = async ({
       safetyTimeout.unref();
 
       function terminate(): void {
+        if (settled || terminationRequested) return;
+        terminationRequested = true;
         signalProcessTree(child.pid, "SIGTERM", (signal) => child.kill(signal));
 
         forceKillTimeout = setTimeout(() => {
@@ -620,6 +657,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
           if (sessionLogPath)
             recordSession("\nOpenCode did not exit after SIGTERM; sending SIGKILL\n");
           signalProcessTree(child.pid, "SIGKILL", (signal) => child.kill(signal));
+          closeGuard.afterHardKill();
         }, shutdownGraceMilliseconds);
 
         forceKillTimeout.unref();
@@ -659,7 +697,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
 
       effectiveSignal.addEventListener("abort", handleAbort, { once: true });
 
-      child.stdout.on("data", (chunk: Buffer | string) => {
+      child.stdout!.on("data", (chunk: Buffer | string) => {
         const text = stdoutRedactor.push(
           typeof chunk === "string" ? chunk : stdoutDecoder.write(chunk),
         );
@@ -687,7 +725,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
         if (recorderFailure !== undefined) terminate();
       });
 
-      child.stderr.on("data", (chunk: Buffer | string) => {
+      child.stderr!.on("data", (chunk: Buffer | string) => {
         const text = stderrRedactor.push(
           typeof chunk === "string" ? chunk : stderrDecoder.write(chunk),
         );
@@ -727,6 +765,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
         );
 
         settled = true;
+        closeGuard.dispose();
         try {
           execution.finish("spawn-failure", {
             pid: child.pid,
@@ -748,32 +787,23 @@ const defaultRunOpenCode: RunOpenCode = async ({
         reject(new ProcessExecutionError("OpenCode", execution.executionId, "spawn-failure"));
       });
 
-      child.once("close", async (code, signalName) => {
+      child.once("close", (code, signalName) => {
         if (settled) {
           return;
         }
 
+        const supervisorExitCode = code;
         try {
-          await drainProcessGroup(child.pid, (signal) => child.kill(signal));
+          const payload = supervision.result(code, signalName);
+          code = payload.spawned === false ? 1 : payload.code;
+          signalName = payload.signal;
+          payloadSpawned = payload.spawned;
         } catch (error) {
-          if (settled) return;
-          flushOutput();
-          settled = true;
-          clearTimeout(safetyTimeout);
-          if (forceKillTimeout !== undefined) clearTimeout(forceKillTimeout);
-          effectiveSignal.removeEventListener("abort", handleAbort);
-          try {
-            execution.finish("process-group-ambiguous", { pid: child.pid });
-          } catch (finishError) {
-            recorderFailure ??=
-              finishError instanceof Error
-                ? finishError
-                : new ProcessEvidenceError("OpenCode evidence finalization failed");
-          }
-          reject(error);
-          return;
+          recorderFailure =
+            error instanceof Error
+              ? error
+              : new ProcessEvidenceError("Invalid contained OpenCode result");
         }
-        if (settled) return;
 
         flushOutput();
 
@@ -789,6 +819,9 @@ const defaultRunOpenCode: RunOpenCode = async ({
         }
         effectiveSignal.removeEventListener("abort", handleAbort);
         output = stripOpenCodePluginPreamble(output);
+        const interrupted =
+          effectiveSignal.aborted &&
+          (code === 0 || ["SIGINT", "SIGTERM", "SIGKILL"].includes(signalName ?? ""));
         let capturedSessionId: string | undefined;
         let sessionCaptureError: unknown;
         if (captureSessionId === true) {
@@ -804,17 +837,22 @@ const defaultRunOpenCode: RunOpenCode = async ({
               captureFailure !== undefined ||
               execution.failure !== undefined
               ? "evidence-failure"
-              : timedOut
-                ? "timeout"
-                : effectiveSignal.aborted
-                  ? "interrupted"
-                  : code === 0
-                    ? "success"
-                    : "nonzero",
+              : payloadSpawned === false
+                ? "spawn-failure"
+                : timedOut
+                  ? "timeout"
+                  : interrupted
+                    ? "interrupted"
+                    : code === 0
+                      ? "success"
+                      : "nonzero",
             {
               pid: child.pid,
+              containment: "linux-pid-namespace",
               exitCode: code ?? 1,
               treeStopped: true,
+              supervisorExitCode,
+              ...(payloadSpawned === undefined ? {} : { payloadSpawned }),
               result: {
                 exitCode: code ?? 1,
                 output,
@@ -843,6 +881,10 @@ const defaultRunOpenCode: RunOpenCode = async ({
           reject(recorderFailure);
           return;
         }
+        if (payloadSpawned === false) {
+          reject(new ProcessExecutionError("OpenCode", execution.executionId, "spawn-failure"));
+          return;
+        }
         if (captureFailure !== undefined) {
           reject(captureFailure);
           return;
@@ -853,7 +895,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
           return;
         }
 
-        if (effectiveSignal.aborted) {
+        if (interrupted) {
           reject(new OpenCodeRunAbortedError());
           return;
         }

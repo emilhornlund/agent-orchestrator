@@ -27,7 +27,7 @@ export type PendingPrimaryInspection =
       operationId: string;
       execution: number;
       sessionId?: string;
-      failureClassification?: "dependency-outage";
+      failureClassification?: "dependency-outage" | "cancelled";
     }
   | { status: "running" }
   | { status: "completed"; result: OpenCodeRunResult }

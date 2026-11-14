@@ -61,9 +61,14 @@ function stopped(value: Record<string, unknown>): boolean {
   return (
     notDispatched(value) ||
     (value.treeStopped === true &&
-      ["success", "nonzero", "timeout", "interrupted", "evidence-failure"].includes(
-        String(value.status),
-      ))
+      [
+        "success",
+        "nonzero",
+        "timeout",
+        "interrupted",
+        "evidence-failure",
+        "spawn-failure",
+      ].includes(String(value.status)))
   );
 }
 

@@ -5,6 +5,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { configureProcessRuntime, getProcessRuntime } from "../src/process/process-runtime.js";
 import { GitClient } from "../src/git/git-client.js";
+import { hostPidForFixture } from "./support/namespace-process.js";
 
 import { WorkflowError } from "../src/orchestrator/workflow-error.js";
 import {
@@ -463,6 +464,7 @@ describe("runRepositorySetup", () => {
     const originalWriteFileSync = fs.writeFileSync;
     let failedDispatchWrite = false;
     let descendantIdentity: LinuxProcessIdentity | undefined;
+    let descendantHostPid: number | undefined;
     const writeSpy = vi.spyOn(fs, "writeFileSync").mockImplementation((file, data, options) => {
       if (
         !failedDispatchWrite &&
@@ -476,7 +478,9 @@ describe("runRepositorySetup", () => {
         while (!fs.existsSync(pidFile) && Date.now() < deadline)
           Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
         if (fs.existsSync(pidFile)) {
-          descendantIdentity = readLinuxProcessIdentity(Number(fs.readFileSync(pidFile, "utf8")));
+          const hostPid = hostPidForFixture(Number(fs.readFileSync(pidFile, "utf8")), root);
+          descendantHostPid = hostPid;
+          if (hostPid !== undefined) descendantIdentity = readLinuxProcessIdentity(hostPid);
         }
         failedDispatchWrite = true;
         throw new Error("injected dispatch metadata failure");
@@ -497,9 +501,8 @@ describe("runRepositorySetup", () => {
         }),
       ).rejects.toThrow(/injected dispatch metadata failure/u);
       expect(failedDispatchWrite).toBe(true);
-      const pid = Number(fs.readFileSync(pidFile, "utf8"));
-      expect(Number.isSafeInteger(pid)).toBe(true);
       expect(descendantIdentity).toBeDefined();
+      const pid = descendantHostPid!;
       const originalStartTime = descendantIdentity!.startTime;
       const deadline = Date.now() + 2_000;
       let originalProcessState = readLinuxProcessIdentity(pid);
@@ -523,7 +526,7 @@ describe("runRepositorySetup", () => {
         fs.readFileSync(path.join(artifacts, executionId!, "execution.json"), "utf8"),
       ) as { treeStopped: boolean; status: string };
       expect(metadata).toMatchObject({
-        treeStopped: false,
+        treeStopped: true,
         status: "evidence-failure",
       });
     } finally {

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { runTaskResources } from "../task-session/task-resources.js";
 import type { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import { processSupervisorPath } from "../process/contained-process.js";
 
 /** Mount only execution dependencies and the owned worktree, never the host root.
  * Git metadata stays read-only: commits and refs belong to the orchestrator. */
@@ -36,6 +37,7 @@ export function isolatedOpenCodeDispatch(
     "--die-with-parent",
     "--new-session",
     "--unshare-pid",
+    "--as-pid-1",
     "--unshare-ipc",
     "--unshare-uts",
     "--proc",
@@ -46,6 +48,10 @@ export function isolatedOpenCodeDispatch(
     "/tmp",
     "--tmpfs",
     "/tmp/opencode",
+    // Keep the original checkout hidden even when it lives beneath the private
+    // writable /tmp. Only its separately selected Git metadata is exposed below.
+    "--tmpfs",
+    run.pinned.repositoryPath,
   ];
   const mounted = new Set<string>();
   const read = (location: string | undefined) => {
@@ -91,6 +97,7 @@ export function isolatedOpenCodeDispatch(
   read(environment.GOOGLE_APPLICATION_CREDENTIALS);
   read(common);
   read(run.pinned.storageRoot);
+  read(processSupervisorPath);
   if (!home) throw new Error("OpenCode isolation requires an explicit HOME");
   for (const directory of [
     path.join(home, ".local/share/opencode"),
@@ -132,12 +139,14 @@ export function isolatedOpenCodeDispatch(
     gitFile,
     gitFile,
     "--remount-ro",
-    "/tmp",
+    run.pinned.repositoryPath,
     "--remount-ro",
     "/",
     "--chdir",
     cwd,
     "--",
+    process.execPath,
+    processSupervisorPath,
     "opencode",
     ...arguments_,
   );

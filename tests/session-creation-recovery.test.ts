@@ -443,6 +443,25 @@ it("does not charge genuine failure allowance for a verified provider outage", a
   expect(f.read().terminalFailure).toBeUndefined();
 });
 
+it("does not charge initial-session crash recovery for an intentional stopped shutdown", async () => {
+  const f = fixture("interrupted", { sessionCreationFailures: 2 });
+  f.inventory([]);
+  expect(await f.recover()).toBe("recovered");
+  expect(f.read().sessionCreationFailures).toBe(2);
+  expect(f.read().terminalFailure).toBeUndefined();
+});
+
+it("does not charge a cancellation before initial process preparation as a genuine startup failure", async () => {
+  const f = fixture("running", {
+    sessionCreationExecutionId: undefined,
+    sessionCreationCancelled: true,
+    sessionCreationFailures: 2,
+  });
+  f.inventory([]);
+  expect(await f.recover()).toBe("recovered");
+  expect(f.read().sessionCreationFailures).toBe(2);
+});
+
 it.each(["not-dispatched", "spawn-failure"] as const)(
   "bounds conclusive %s startup failures even before a child starts",
   async (status) => {

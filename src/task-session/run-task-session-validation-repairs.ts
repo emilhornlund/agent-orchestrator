@@ -18,6 +18,7 @@ import { inspectPrimaryOperationEvidence } from "./inspect-primary-operation.js"
 import type { PrimarySessionRecoveryOptions } from "./primary-task-session.js";
 import type { PendingPrimaryInspection } from "./run-primary-operation.js";
 import type { TaskExecutionRecord } from "./task-execution-record.js";
+import { CommandRunAbortedError } from "../process/command-runner.js";
 import { assertOwnedTaskWorktreePath } from "./run-task-session-implementation.js";
 import { createHash } from "node:crypto";
 
@@ -215,6 +216,10 @@ export async function runTaskSessionValidationWithRepairs(
 ): Promise<TaskSessionValidationRepairResult> {
   const { validation, openCode, planStore, card, expectedPrimarySessionId } = options;
   const { project, cardId, expectedBranch, operationKey, worktreePath } = validation;
+  const assertActive = () => {
+    if (validation.signal.aborted) throw new CommandRunAbortedError();
+  };
+  assertActive();
 
   if (!Number.isSafeInteger(validation.timeoutMilliseconds) || validation.timeoutMilliseconds < 1) {
     throw new TaskSessionValidationRepairError("Validation repair timeout must be positive", 0);
@@ -312,7 +317,9 @@ export async function runTaskSessionValidationWithRepairs(
     // Changed content (or legacy state without stored evidence) requires fresh
     // quality observations, but an exhausted cycle never dispatches another writer.
     const validationResult = await runTaskSessionValidation(validation);
+    assertActive();
     const coverageResult = await runTaskSessionCoverage(validation);
+    assertActive();
     const latest = validation.taskRecordStore.read(cardId);
     if (latest === null || latest.operationKey !== operationKey)
       throw new TaskSessionValidationRepairError(
@@ -369,12 +376,14 @@ export async function runTaskSessionValidationWithRepairs(
           },
         });
       } else {
+        const currentCoverage =
+          coverageEvidence === undefined
+            ? await runTaskSessionCoverage(validation)
+            : validationResultFromEvidence(coverageEvidence);
+        assertActive();
         return {
           validation: evidence,
-          coverage:
-            coverageEvidence === undefined
-              ? await runTaskSessionCoverage(validation)
-              : validationResultFromEvidence(coverageEvidence),
+          coverage: currentCoverage,
           attempts: currentRecord.retryCounters.validation,
           record: currentRecord,
         };
@@ -392,9 +401,11 @@ export async function runTaskSessionValidationWithRepairs(
     return { card: repairCard, attachmentContext };
   };
   while (true) {
+    assertActive();
     const reservedOperation = currentRecord.validationRepair?.activePrimaryOperation;
     if (reservedOperation !== undefined) {
       await prepareRepairContext();
+      assertActive();
       if (reservedOperation.promptArtifact === undefined)
         throw new TaskSessionValidationRepairError(
           "Reserved validation repair lacks its persisted prompt; preserving the reservation",
@@ -529,7 +540,9 @@ export async function runTaskSessionValidationWithRepairs(
       continue;
     }
     const validationResult = await runTaskSessionValidation(validation);
+    assertActive();
     const coverageResult = await runTaskSessionCoverage(validation);
+    assertActive();
     if (validationResult.status === "skipped" && coverageResult.status === "skipped") {
       const latestRecord = validation.taskRecordStore.read(cardId);
       if (latestRecord === null || latestRecord.revision !== currentRecord.revision)
@@ -665,6 +678,7 @@ export async function runTaskSessionValidationWithRepairs(
     }
 
     const context = await prepareRepairContext();
+    assertActive();
     const prompt = buildTaskSessionValidationRepairPrompt({
       projectId: project.id,
       card: context.card,

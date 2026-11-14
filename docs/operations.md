@@ -570,6 +570,25 @@ alive with its leases held and an operator-required diagnostic. Allow time for s
 than using forced termination as normal deployment. Orderly signal shutdown exits successfully and
 is not reported as a task failure.
 
+Managed commands require Linux Bubblewrap and working PID/user/mount namespaces. Each Git, GitHub
+CLI, OpenCode and shell execution has a private PID namespace; the packaged
+`scripts/contained-process-supervisor.mjs` runs as namespace init. Graceful signals reach
+descendants through a private control pipe. After the payload exits, kernel namespace teardown stops
+remaining descendants, including processes that detached into another session. Hard termination and
+close verification remain bounded; missing close or malformed process evidence retains the ownership
+fence. Payload exit code/signal and supervisor exit status are recorded separately, rather than
+treating a wrapper exit code as the payload result. Process PIDs in the command's own output belong
+to its namespace and must not be used as host PIDs for manual signalling.
+
+Intentional typed cancellation during startup follows the same successful shutdown path. Real tool
+failures, timeouts, evidence failures and mixed failure/cancellation aggregates retain failure
+diagnostics even when shutdown was also requested. Validation cancellation preserves its checkpoint
+and does not start a repair or consume a correction allowance.
+
+The writable OpenCode sandbox keeps its root and protected source/Git/runtime mounts read-only,
+while allowing its private `/tmp` to be writable. Tools which omit `TMPDIR` therefore retain normal
+temporary-file behavior; this does not expose the host's temporary directory or source checkout.
+
 Startup failures, uncaught exceptions, and unhandled promise rejections are logged as fatal
 diagnostics with the original error details and a UTC timestamp. The first fatal event requests the
 same coordinated shutdown and the process exits with status `1`. Repeated fatal events or signals do
@@ -606,6 +625,12 @@ path components are sanitized for filesystem use. Child stdout/stderr is stored 
 attempt's `artifacts/<project>/<card>/<attempt>/process-executions/` tree. Validation failures
 reported by an agent are concise diagnostics with a session-log reference; the complete redacted
 stdout and stderr remain in that per-card log instead of being dumped to the service log.
+
+PR quality sections summarize observed check status, commands, exit codes, source identity, advisory
+review findings, CI state and outstanding feedback. They use bounded, redacted text without terminal
+control sequences. Full command diagnostics and structured result JSON stay in retained artifacts;
+the PR points to diagnostics rather than embedding raw output. Missing, stale or unverified checks
+are disclosed explicitly, including when the description is refreshed after CI or feedback work.
 
 Vitest suppresses shared logger console output by default while retaining the daily test log.
 Temporarily enable application logger output for a debugging run with `TEST_LOGS=true yarn test`.

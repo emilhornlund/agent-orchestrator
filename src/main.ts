@@ -20,6 +20,7 @@ import {
 } from "./runtime/runtime-lifecycle.js";
 import { runStartup } from "./startup/run-startup.js";
 import { TrelloClient } from "./trello/trello-client.js";
+import { isShutdownCancellation } from "./runtime/shutdown-cancellation.js";
 
 function addConfiguredSecretValues(
   lifecycle: RuntimeLifecycle,
@@ -126,7 +127,9 @@ export async function bootstrap(
   try {
     await main(lifecycle);
   } catch (error) {
-    lifecycle.requestFatal("startup failure", error);
+    if (isShutdownCancellation(error, lifecycle.signal))
+      logger.event("Agent Orchestrator startup cancelled; recoverable state preserved");
+    else lifecycle.requestFatal("startup failure", error);
   } finally {
     removeProcessHandlers();
   }

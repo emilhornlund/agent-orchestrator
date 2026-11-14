@@ -215,6 +215,8 @@ import {
   persistPrimaryOperationRecovery,
 } from "../task-session/persist-primary-operation-recovery.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import { isShutdownCancellation } from "../runtime/shutdown-cancellation.js";
+import { publicationQualityFacts } from "./publication-quality-summary.js";
 import {
   getProcessRuntime,
   isVerifiedStoppedExecution,
@@ -3157,12 +3159,10 @@ export async function runTaskSessionWorkflow(
               claimHumanReviewNotification: (commitSha) =>
                 taskStore.claimHumanReviewNotification(card.id, commitSha),
               verifiedDescriptionFacts: () => [
-                `Approved implementation plan: ${JSON.stringify(planStore.read(card.id)?.plan ?? "unavailable")}`,
-                `Verified validation result: ${JSON.stringify(preparedGate.validation)}`,
-                ...(preparedGate.coverage === null
-                  ? []
-                  : [`Verified coverage result: ${JSON.stringify(preparedGate.coverage)}`]),
-                `Independent review result: ${JSON.stringify(preparedGate.review)}`,
+                ...publicationQualityFacts(preparedGate, {
+                  planAvailable: planStore.read(card.id) !== null,
+                  diagnosticLog: getSessionLogPath(project.id, card.id),
+                }),
               ],
               signal,
               initialEvidence: gateInput,
@@ -5723,7 +5723,11 @@ export async function runTaskSessionWorkflow(
         });
         cardLog.event("Validation passed");
       } catch (error) {
-        cardLog.event("Validation failed");
+        cardLog.event(
+          isShutdownCancellation(error, signal)
+            ? "Validation cancelled; checkpoint preserved for restart"
+            : "Validation failed",
+        );
         throw error;
       }
     } else if (
@@ -6029,9 +6033,10 @@ export async function runTaskSessionWorkflow(
         claimHumanReviewNotification: (commitSha: string) =>
           taskStore.claimHumanReviewNotification(activeCard.id, commitSha),
         verifiedDescriptionFacts: () => [
-          `Approved implementation plan: ${JSON.stringify(planStore.read(activeCard.id)?.plan ?? "unavailable")}`,
-          `Validation result: ${JSON.stringify(preparedEvidence.validation)}`,
-          `Coverage result: ${JSON.stringify(preparedEvidence.coverage)}`,
+          ...publicationQualityFacts(preparedEvidence, {
+            planAvailable: planStore.read(activeCard.id) !== null,
+            diagnosticLog: getSessionLogPath(project.id, activeCard.id),
+          }),
           reason === "review-unavailable"
             ? `AI implementation review unavailable: ${unavailableDiagnostic}`
             : "AI implementation review: not run because validation was exhausted",
@@ -6978,12 +6983,10 @@ export async function runTaskSessionWorkflow(
         claimHumanReviewNotification: (commitSha) =>
           taskStore.claimHumanReviewNotification(activeCard.id, commitSha),
         verifiedDescriptionFacts: () => [
-          `Approved implementation plan: ${JSON.stringify(planStore.read(activeCard.id)?.plan ?? "unavailable")}`,
-          `Validation result: ${JSON.stringify(preparedEvidence.validation)}`,
-          ...(preparedEvidence.coverage === null
-            ? []
-            : [`Coverage result: ${JSON.stringify(preparedEvidence.coverage)}`]),
-          `Independent review result: ${JSON.stringify(preparedEvidence.review)}`,
+          ...publicationQualityFacts(preparedEvidence, {
+            planAvailable: planStore.read(activeCard.id) !== null,
+            diagnosticLog: getSessionLogPath(project.id, activeCard.id),
+          }),
         ],
         signal,
         ...(recoveryRecord?.pullRequest?.url === undefined
@@ -7034,12 +7037,10 @@ export async function runTaskSessionWorkflow(
         claimHumanReviewNotification: (commitSha) =>
           taskStore.claimHumanReviewNotification(activeCard.id, commitSha),
         verifiedDescriptionFacts: () => [
-          `Approved implementation plan: ${JSON.stringify(planStore.read(activeCard.id)?.plan ?? "unavailable")}`,
-          `Verified validation result: ${JSON.stringify(preparedEvidence.validation)}`,
-          ...(preparedEvidence.coverage === null
-            ? []
-            : [`Verified coverage result: ${JSON.stringify(preparedEvidence.coverage)}`]),
-          `Independent review result: ${JSON.stringify(preparedEvidence.review)}`,
+          ...publicationQualityFacts(preparedEvidence, {
+            planAvailable: planStore.read(activeCard.id) !== null,
+            diagnosticLog: getSessionLogPath(project.id, activeCard.id),
+          }),
         ],
         signal,
         initialEvidence,

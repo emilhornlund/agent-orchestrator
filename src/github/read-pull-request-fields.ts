@@ -7,6 +7,7 @@ import {
   registerProcessSecrets,
 } from "../process/process-runtime.js";
 import { redactRegisteredSecrets } from "../security/redact-secrets.js";
+import { containedCredentialRead } from "../process/contained-process.js";
 
 export type ReadPullRequestFields = (options: {
   cwd: string;
@@ -29,20 +30,19 @@ export const readPullRequestFields: ReadPullRequestFields = async (options) => {
       // Credential acquisition is intentionally in-memory only. Never record
       // the auth command's secret stdout or retain an error containing it.
       const { execFile } = await import("node:child_process");
-      const result = await promisify(execFile)(
-        "gh",
-        ["auth", "token", "--hostname", "github.com"],
-        {
-          cwd: options.cwd,
-          encoding: "utf8",
-          timeout: 30_000,
-          maxBuffer: 16 * 1024,
-          env: buildChildEnvironment("github", options.credential.environment),
-          ...(runtime.signal === undefined ? {} : { signal: runtime.signal }),
-        },
-      );
+      const dispatch = containedCredentialRead("gh", ["auth", "token", "--hostname", "github.com"]);
+      const result = await promisify(execFile)(dispatch.command, dispatch.args, {
+        cwd: options.cwd,
+        encoding: "utf8",
+        timeout: 30_000,
+        maxBuffer: 16 * 1024,
+        env: buildChildEnvironment("github", options.credential.environment),
+        ...(runtime.signal === undefined ? {} : { signal: runtime.signal }),
+      });
       token = result.stdout.trim();
     } catch {
+      if (runtime.signal?.aborted)
+        throw new DOMException("GitHub credential read aborted", "AbortError");
       throw new Error("GitHub authentication unavailable for exact publication readback");
     }
   }
@@ -67,6 +67,8 @@ export const readPullRequestFields: ReadPullRequestFields = async (options) => {
       },
     );
   } catch {
+    if (runtime.signal?.aborted)
+      throw new DOMException("GitHub publication read aborted", "AbortError");
     throw new Error("GitHub API network error during exact publication readback");
   }
   if (!response.ok) {
@@ -93,6 +95,8 @@ export const readPullRequestFields: ReadPullRequestFields = async (options) => {
     output = appendBoundedOutput(output, decoder.decode(), "stdout", 4 * 1024 * 1024);
   } catch {
     await reader.cancel().catch(() => undefined);
+    if (runtime.signal?.aborted)
+      throw new DOMException("GitHub publication read aborted", "AbortError");
     throw new Error("GitHub API publication response could not be read completely");
   } finally {
     reader.releaseLock();

@@ -104,9 +104,14 @@ export async function reconcileSessionCreation(options: {
       !neverDispatched &&
       !(
         metadata.treeStopped === true &&
-        ["success", "nonzero", "timeout", "interrupted", "evidence-failure"].includes(
-          String(metadata.status),
-        )
+        [
+          "success",
+          "nonzero",
+          "timeout",
+          "interrupted",
+          "evidence-failure",
+          "spawn-failure",
+        ].includes(String(metadata.status))
       )
     )
       return wait(
@@ -230,9 +235,13 @@ export async function reconcileSessionCreation(options: {
       record.sessionCreationStatus === "ambiguous" &&
       record.sessionCreationTitle !== undefined);
   const outage = metadata?.failureClassification === "dependency-outage";
+  const cancelled =
+    record.sessionCreationCancelled === true ||
+    metadata?.status === "interrupted" ||
+    metadata?.cancellationRequested === true;
   const failures =
     (record.sessionCreationFailures ?? 0) +
-    ((dispatched || failedBeforeDispatch) && !outage ? 1 : 0);
+    ((dispatched || failedBeforeDispatch) && !outage && !cancelled ? 1 : 0);
   if (failures >= OPERATION_RECOVERY_MAX_EXECUTIONS) {
     persist({
       phase: "attention-required",
@@ -252,6 +261,7 @@ export async function reconcileSessionCreation(options: {
     sessionCreationExecutionId: undefined,
     sessionCreationTitle: undefined,
     sessionCreationResult: undefined,
+    sessionCreationCancelled: undefined,
     sessionCreationFailures: failures,
   });
   logger

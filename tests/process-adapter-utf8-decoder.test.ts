@@ -11,17 +11,20 @@ import { GitClient } from "../src/git/git-client.js";
 import { GitHubClient } from "../src/github/github-client.js";
 import { OpenCodeClient } from "../src/opencode/opencode-client.js";
 import { configureProcessRuntime } from "../src/process/process-runtime.js";
+import { attachContainedChildStatus } from "./support/contained-child-status.js";
 
 const secret = "秘密🔐";
 const runtimeRoots: string[] = [];
 
 function fakeChild() {
-  return Object.assign(new EventEmitter(), {
-    stdout: new EventEmitter(),
-    stderr: new EventEmitter(),
-    pid: undefined,
-    kill: vi.fn(() => true),
-  });
+  return attachContainedChildStatus(
+    Object.assign(new EventEmitter(), {
+      stdout: new EventEmitter(),
+      stderr: new EventEmitter(),
+      pid: undefined,
+      kill: vi.fn(() => true),
+    }),
+  );
 }
 
 function writeBytewise(child: ReturnType<typeof fakeChild>, stdout: Buffer, stderr: Buffer) {

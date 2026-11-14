@@ -98,6 +98,7 @@ export async function validateGitAndOpenCode(
   commands: ToolchainCommands,
   timeoutMilliseconds = 5 * 60_000,
 ): Promise<void> {
+  await validateIsolation(commands, timeoutMilliseconds);
   await validateVersion(commands, "git", MINIMUM_GIT_VERSION, "Git", timeoutMilliseconds);
   await validateVersion(
     commands,
@@ -108,7 +109,6 @@ export async function validateGitAndOpenCode(
   );
   await validateGitCapabilities(commands, timeoutMilliseconds);
   await validateOpenCodeCapabilities(commands, timeoutMilliseconds);
-  await validateIsolation(commands, timeoutMilliseconds);
 }
 
 export async function validateGit(

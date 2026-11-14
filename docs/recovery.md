@@ -78,8 +78,17 @@ identity/accounting separately.
 Recognized structured provider outages retain the checkpoint for paced rechecks, including across
 the process-result/ledger-completion gap; ordinary test text naming a transport error is not outage
 proof. Unknown running evidence after supervisor loss remains explicitly ambiguous until
-authoritative termination can be established. The known escaped-descendant limitation is not proof
-that the process stopped or permission for a competing writer.
+authoritative termination can be established. New managed commands run in private PID namespaces:
+namespace-init exit terminates even detached descendants. This does not retroactively prove that
+older process-group-only executions stopped, or turn missing finalization evidence into permission
+for a competing writer. Retained ambiguous executions still require authoritative reconciliation.
+
+Verified intentional cancellation of a primary operation is accounted separately from genuine
+failures. Restart retains the actual dispatch count, session binding and source changes, and retries
+only after process-stop verification; repeated cooperative shutdowns do not exhaust the primary
+operation's three-genuine-failure allowance. A coincident genuine nonzero exit, timeout, malformed
+process evidence or uncertain stop remains a failure or ambiguity, rather than being hidden by the
+shutdown signal.
 
 A queued `Ready for Agent` claim resumes only when its persisted event identity and expected owned
 worktree/branch match the card. An owned `Working` implementation resumes from its recorded phase

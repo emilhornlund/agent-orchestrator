@@ -10,6 +10,7 @@ import {
   beginPrimaryExecution,
   bindPrimaryExecutionEvidence,
   completePrimaryExecution,
+  reconcilePendingPrimaryExecution,
 } from "../src/task-session/primary-operation-ledger.js";
 import { inspectPrimaryOperationEvidence } from "../src/task-session/inspect-primary-operation.js";
 
@@ -82,6 +83,63 @@ function fixture(status = "nonzero") {
   };
 }
 describe("inspectPrimaryOperationEvidence", () => {
+  it("resumes repeated cooperative shutdowns without charging the genuine failure allowance", async () => {
+    const f = fixture("running");
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      if (attempt > 1) {
+        beginPrimaryExecution(f.store, "card", "op", "work", "session");
+        const directory = path.join(f.artifactRoot, `exec-${attempt}`);
+        fs.mkdirSync(directory);
+        bindPrimaryExecutionEvidence(f.store, "card", "op", attempt, {
+          executionId: `exec-${attempt}`,
+          metadataPath: path.join(directory, "execution.json"),
+          artifactRoot: f.artifactRoot,
+        });
+      }
+      const entry = f.store.read("card")!.primaryOperations!.op!;
+      fs.writeFileSync(
+        entry.processMetadataPath!,
+        JSON.stringify({
+          executionId: entry.processExecutionId,
+          cwd: f.cwd,
+          sessionId: "session",
+          status: "interrupted",
+          treeStopped: true,
+          exitCode: 0,
+        }),
+      );
+      completePrimaryExecution(f.store, "card", "op", "ambiguous");
+      const proof = await inspectPrimaryOperationEvidence(f.store, "card", "op", f.identity);
+      expect(proof).toMatchObject({
+        status: "stopped-after-dispatch",
+        failureClassification: "cancelled",
+      });
+      if (proof.status !== "stopped-after-dispatch") throw new Error("Expected stopped proof");
+      reconcilePendingPrimaryExecution(
+        f.store,
+        "card",
+        "op",
+        "stopped",
+        undefined,
+        proof.failureClassification,
+      );
+      reconcilePendingPrimaryExecution(
+        f.store,
+        "card",
+        "op",
+        "stopped",
+        undefined,
+        proof.failureClassification,
+      );
+      expect(f.store.read("card")!.primaryOperations!.op).toMatchObject({
+        executions: attempt,
+        failureExecutions: 0,
+        cancelledExecutions: attempt,
+        status: "failed",
+        retrySafe: true,
+      });
+    }
+  });
   it("recovers only hash- and execution-bound outage classification evidence", async () => {
     const f = fixture();
     const result = {

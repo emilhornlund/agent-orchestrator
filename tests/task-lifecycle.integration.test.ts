@@ -1858,6 +1858,8 @@ describe("task lifecycle through pollProject", () => {
         }
       }
       expect(firstPr?.body).not.toContain("All configured validation and coverage passed.");
+      expect(firstPr?.body).not.toContain('"diagnostic":');
+      expect(firstPr?.body).not.toContain('"completedAt":');
       if (quality === "none") expect(firstPr?.body).toContain("Not configured; skipped");
       expect(
         fs.existsSync(validationMarker),
@@ -2352,7 +2354,8 @@ describe("task lifecycle through pollProject", () => {
           treeStopped: true,
           // Bubblewrap propagates a killed inner process as 128 + SIGKILL.
           // Record the supervisor's actual outcome, not an invented outer signal.
-          exitCode: 137,
+          exitCode: 1,
+          signal: "SIGKILL",
         });
         expect(exhaustedRecord).toMatchObject({
           phase: "human-feedback",

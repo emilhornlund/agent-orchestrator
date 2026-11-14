@@ -14,7 +14,7 @@ import {
   GitHubAppNetworkError,
   type SignGitHubAppJwt,
 } from "../src/github/github-app-authenticator.js";
-import { getProcessRuntime } from "../src/process/process-runtime.js";
+import { getProcessRuntime, configureProcessRuntime } from "../src/process/process-runtime.js";
 import { redactSecrets } from "../src/security/redact-secrets.js";
 import { appendSessionLog } from "../src/logging/session-log.js";
 
@@ -39,6 +39,41 @@ function tokenResponse(token: string, expiresAt: string): Response {
 }
 
 describe("GitHubAppAuthenticator", () => {
+  it("cancels in-flight token acquisition without retaining credential-bearing transport errors", async () => {
+    const controller = new AbortController();
+    configureProcessRuntime({ runtimeRoot: os.tmpdir(), signal: controller.signal });
+    let started!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let receivedSignal: AbortSignal | undefined;
+    const authenticator = new GitHubAppAuthenticator({
+      readPrivateKey: async () => privateKeyPem,
+      request: async (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          receivedSignal = init.signal ?? undefined;
+          receivedSignal?.addEventListener(
+            "abort",
+            () => reject(new Error("private credential transport data")),
+            { once: true },
+          );
+          started();
+        }),
+    });
+    try {
+      const operation = authenticator.getInstallationToken(githubApp, repository);
+      const rejection = expect(operation).rejects.toMatchObject({
+        name: "AbortError",
+        message: "GitHub credential acquisition aborted",
+      });
+      await ready;
+      controller.abort("signal");
+      await rejection;
+      expect(receivedSignal?.aborted).toBe(true);
+    } finally {
+      configureProcessRuntime({ runtimeRoot: os.tmpdir(), signal: new AbortController().signal });
+    }
+  });
   it("registers protected PEM contents for subsequent controlled redaction", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "github-app-key-"));
     const keyPath = path.join(directory, "app.pem");
@@ -136,6 +171,7 @@ describe("GitHubAppAuthenticator", () => {
       "https://api.github.com/app/installations/987654/access_tokens",
       {
         method: "POST",
+        signal: expect.any(AbortSignal),
         headers: {
           Accept: "application/vnd.github+json",
           Authorization: expect.stringMatching(/^Bearer\s+\S+$/),

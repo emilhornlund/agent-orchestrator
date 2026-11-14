@@ -15,10 +15,16 @@ import type { PendingPrimaryInspection } from "./run-primary-operation.js";
 import { reconcilePendingPrimaryExecution } from "./primary-operation-ledger.js";
 import { bindPrimaryExecutionEvidence } from "./primary-operation-ledger.js";
 import { sanitizePrimarySessionContextBundle } from "./build-primary-session-context.js";
-import { withAiExecutionCapacity } from "../orchestrator/ai-execution-capacity.js";
+import {
+  withAiExecutionCapacity,
+  AiCapacityCancelledError,
+} from "../orchestrator/ai-execution-capacity.js";
 import { ProjectRunAuthority } from "./project-run-authority.js";
 import { assertNoTerminalPr } from "./terminal-pr-fence.js";
-import { OpenCodeSessionIdCaptureError } from "../opencode/opencode-client.js";
+import {
+  OpenCodeSessionIdCaptureError,
+  OpenCodeRunAbortedError,
+} from "../opencode/opencode-client.js";
 import { isVerifiedStoppedExecution } from "../process/process-runtime.js";
 import { OPERATION_RECOVERY_MAX_EXECUTIONS } from "./operation-recovery-policy.js";
 import { primaryOperationSchema } from "./task-execution-record.js";
@@ -581,6 +587,7 @@ async function runWithPrimaryTaskSessionOwned(
     sessionCreationAttempts: (record.sessionCreationAttempts ?? 0) + 1,
     sessionCreationExecutionId: undefined,
     sessionCreationResult: undefined,
+    sessionCreationCancelled: undefined,
     sessionCreationTitle: `agent-orchestrator:${projectId}:${cardId}:${randomUUID()}`,
     sessionCreationCommand: `opencode run${runOptions.model === undefined ? "" : ` --model ${runOptions.model}`}${runOptions.variant === undefined ? "" : ` --variant ${runOptions.variant}`}`,
     revision: nextRevision(record),
@@ -657,7 +664,15 @@ async function runWithPrimaryTaskSessionOwned(
       );
     }
     try {
-      updateSessionCreationStatus(store, creatingRecord, "ambiguous");
+      updateSessionCreationStatus(
+        store,
+        {
+          ...creatingRecord,
+          sessionCreationCancelled:
+            error instanceof OpenCodeRunAbortedError || error instanceof AiCapacityCancelledError,
+        },
+        "ambiguous",
+      );
     } catch (stateError) {
       throw new PrimaryTaskSessionError(
         `Primary OpenCode session creation outcome is ambiguous for ${projectId}/${cardId}, and ambiguity could not be persisted`,

@@ -89,6 +89,7 @@ export class GitHubCredentialProvider {
         project.repository.github,
       );
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
       throw new GitHubCredentialResolutionError(project, error);
     }
 

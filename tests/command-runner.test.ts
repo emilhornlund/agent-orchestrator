@@ -18,6 +18,11 @@ import {
   type RunCommand,
 } from "../src/process/command-runner.js";
 import { PROCESS_EVIDENCE_MAX_BYTES } from "../src/process/process-runtime.js";
+import {
+  withProcessGroupAmbiguityHandler,
+  ProcessGroupTerminationError,
+} from "../src/process/process-runtime.js";
+import { attachContainedChildStatus } from "./support/contained-child-status.js";
 
 interface FakeChild extends EventEmitter {
   pid?: number;
@@ -33,7 +38,7 @@ function createFakeChild(): FakeChild {
   child.stderr = new EventEmitter();
   child.kill = vi.fn(() => true);
 
-  return child;
+  return attachContainedChildStatus(child);
 }
 
 describe("CommandRunner", () => {
@@ -44,9 +49,39 @@ describe("CommandRunner", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     for (const directory of temporaryDirectories.splice(0)) {
       fs.rmSync(directory, { recursive: true, force: true });
     }
+  });
+
+  it("retains an ambiguity fence if the hard-killed supervisor never closes, even when cancellation originates outside its async context", async () => {
+    vi.useFakeTimers();
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "command-close-proof-"));
+    temporaryDirectories.push(directory);
+    const child = createFakeChild();
+    spawnMock.mockReturnValue(child);
+    const controller = new AbortController();
+    const fence = vi.fn();
+    const operation = withProcessGroupAmbiguityHandler(fence, () =>
+      new CommandRunner().run({
+        cwd: directory,
+        command: "fixture",
+        artifactDirectory: directory,
+        signal: controller.signal,
+      }),
+    );
+    const rejected = expect(operation).rejects.toBeInstanceOf(ProcessGroupTerminationError);
+    controller.abort("signal");
+    await vi.advanceTimersByTimeAsync(7001);
+    await rejected;
+    expect(fence).toHaveBeenCalledTimes(1);
+    const id = fs.readdirSync(directory)[0]!;
+    const metadata = JSON.parse(
+      fs.readFileSync(path.join(directory, id, "execution.json"), "utf8"),
+    );
+    expect(metadata.status).toBe("process-group-ambiguous");
+    expect(metadata.treeStopped).toBe(false);
   });
 
   it("runs a command in the provided working directory", async () => {
@@ -88,16 +123,19 @@ describe("CommandRunner", () => {
       }),
     ).resolves.toMatchObject({ exitCode: 0 });
 
-    expect(spawnMock).toHaveBeenCalledWith("yarn validate", {
-      cwd: "/worktree",
-      shell: true,
-      stdio: ["inherit", "pipe", "pipe"],
-      detached: process.platform !== "win32",
-      env: expect.objectContaining({
-        PATH: process.env.PATH,
-        HOME: process.env.HOME,
-      }),
-    });
+    expect(spawnMock).toHaveBeenCalledWith(
+      expect.stringMatching(/bwrap$/u),
+      expect.arrayContaining(["--unshare-pid", "/bin/sh", "-c", "yarn validate"]),
+      {
+        cwd: "/worktree",
+        stdio: ["inherit", "pipe", "pipe", "pipe", "pipe"],
+        detached: process.platform !== "win32",
+        env: expect.objectContaining({
+          PATH: process.env.PATH,
+          HOME: process.env.HOME,
+        }),
+      },
+    );
   });
 
   it("captures validation stdout and stderr in the card session log", async () => {
@@ -313,13 +351,21 @@ describe("CommandRunner", () => {
       secretValues: ["token-a"],
     });
 
-    expect(spawnMock).toHaveBeenCalledWith("gh repo clone owner/repository /repo", {
-      cwd: "/worktree",
-      shell: true,
-      stdio: ["inherit", "pipe", "pipe"],
-      detached: process.platform !== "win32",
-      env: expect.objectContaining({ GH_TOKEN: "token-a" }),
-    });
+    expect(spawnMock).toHaveBeenCalledWith(
+      expect.stringMatching(/bwrap$/u),
+      expect.arrayContaining([
+        "--unshare-pid",
+        "/bin/sh",
+        "-c",
+        "gh repo clone owner/repository /repo",
+      ]),
+      {
+        cwd: "/worktree",
+        stdio: ["inherit", "pipe", "pipe", "pipe", "pipe"],
+        detached: process.platform !== "win32",
+        env: expect.objectContaining({ GH_TOKEN: "token-a" }),
+      },
+    );
     expect(stdoutWrite).not.toHaveBeenCalled();
   });
 
@@ -402,7 +448,7 @@ describe("CommandRunner", () => {
 
     expect(child.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
     expect(child.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
-    child.emit("close", null);
+    child.emit("close", null, "SIGTERM");
     await rejection;
 
     vi.useRealTimers();
@@ -434,7 +480,7 @@ describe("CommandRunner", () => {
 
     await vi.advanceTimersByTimeAsync(6_000);
 
-    child.emit("close", null);
+    child.emit("close", null, "SIGTERM");
     await rejection;
     expect(fs.readFileSync(sessionLogPath, "utf8")).toContain("timeout test output\n");
 
@@ -462,7 +508,7 @@ describe("CommandRunner", () => {
     fs.writeFileSync(logDirectory, "not a directory");
     child.stdout.emit("data", Buffer.from("output\n"));
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
-    child.emit("close", null);
+    child.emit("close", null, "SIGTERM");
     await rejection;
   });
 
@@ -479,9 +525,23 @@ describe("CommandRunner", () => {
     });
 
     controller.abort();
-    child.emit("close", null);
+    child.emit("close", null, "SIGTERM");
 
     await expect(request).rejects.toBeInstanceOf(CommandRunAbortedError);
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  it("retains a genuine nonzero payload result when shutdown races with its close", async () => {
+    const child = createFakeChild();
+    spawnMock.mockReturnValueOnce(child);
+    const controller = new AbortController();
+    const request = new CommandRunner().run({
+      cwd: "/worktree",
+      command: "check",
+      signal: controller.signal,
+    });
+    controller.abort();
+    child.emit("close", 7);
+    await expect(request).resolves.toMatchObject({ exitCode: 7 });
   });
 });

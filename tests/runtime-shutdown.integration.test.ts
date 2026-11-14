@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { acquireProjectOwnership } from "../src/coordination/project-ownership.js";
+import { hostPidForFixture } from "./support/namespace-process.js";
 
 const execFile = promisify(nodeExecFile);
 
@@ -217,6 +218,10 @@ describe("coordinated shutdown integration", () => {
         descendantPid: number;
         processGroupId: number;
       };
+      const hostPid = hostPidForFixture(processInfo.descendantPid, source);
+      expect(hostPid).toBeDefined();
+      processInfo.descendantPid = hostPid!;
+      processInfo.processGroupId = readProcessStat(hostPid!)!.processGroupId;
       const descendantStat = readProcessStat(processInfo.descendantPid);
       expect(descendantStat).not.toBeNull();
       expect(descendantStat?.state).not.toBe("Z");
