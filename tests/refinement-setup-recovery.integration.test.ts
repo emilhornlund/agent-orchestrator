@@ -469,7 +469,14 @@ fs.writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({title:'Grounded 
   });
   it.each([
     ["nonzero", "printf preserved > setup-effect; exit 9", undefined],
-    ["timeout", "printf preserved > setup-effect; sleep 5", 40],
+    // The deadline includes contained-process startup. Allow it to reach the
+    // blocking sleep, and publish atomically so a later retry cannot truncate
+    // an already completed setup effect when the deadline interrupts it.
+    [
+      "timeout",
+      "printf preserved > setup-effect.tmp && mv setup-effect.tmp setup-effect; sleep 5",
+      1_000,
+    ],
   ] as const)(
     "blocks refinement on %s setup and preserves bounded effects",
     async (_label, command, timeout) => {

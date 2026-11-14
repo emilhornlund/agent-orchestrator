@@ -16,6 +16,8 @@ import {
 } from "./startup/validate-toolchain.js";
 
 const probeTimeoutMilliseconds = 10_000;
+const doctorUsage =
+  "Usage: yarn doctor [--json] [--config PATH | --config=PATH]\n       yarn doctor --help";
 
 /** Local probes deliberately bypass CommandRunner's durable process evidence and logging. */
 export function runDoctorProbe(options: CommandRunOptions): Promise<CommandRunResult> {
@@ -72,20 +74,53 @@ export interface DoctorReport {
   checks: DoctorCheck[];
 }
 
+export type DoctorArguments = { help: true } | { json: boolean; configPath: string };
+
+export function parseDoctorArguments(args: readonly string[]): DoctorArguments | undefined {
+  if (args.length === 1 && args[0] === "--help") return { help: true };
+  let json = false;
+  let configPath: string | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === "--json" && !json) {
+      json = true;
+    } else if (argument === "--config" && configPath === undefined) {
+      const value = args[index + 1];
+      if (value === undefined || value.trim() === "" || value.startsWith("--")) return undefined;
+      configPath = value;
+      index += 1;
+    } else if (argument?.startsWith("--config=") && configPath === undefined) {
+      const value = argument.slice("--config=".length);
+      if (value.trim() === "" || value.startsWith("--")) return undefined;
+      configPath = value;
+    } else {
+      return undefined;
+    }
+  }
+  return { json, configPath: configPath ?? "config.yaml" };
+}
+
 export async function runDoctor(
   dependencies: DoctorDependencies = {
-    loadConfig: () => loadConfig("config.yaml", { suppressWarnings: true }),
+    loadConfig,
     runProbe: runDoctorProbe,
     write: (line) => console.log(line),
   },
   args: readonly string[] = [],
 ): Promise<number> {
   const { write } = dependencies;
-  if (args.length !== 0 && (args.length !== 1 || args[0] !== "--json")) {
-    write("Usage: yarn doctor [--json]");
+  const options = parseDoctorArguments(args);
+  if (!options) {
+    write(doctorUsage);
     return 1;
   }
-  const json = args[0] === "--json";
+  if ("help" in options) {
+    write(doctorUsage);
+    return 0;
+  }
+  const { json, configPath } = options;
+  // Quote custom paths so control characters cannot inject diagnostic lines.
+  const configLabel = configPath === "config.yaml" ? configPath : JSON.stringify(configPath);
   const results: DoctorCheck[] = [];
   const record = (
     id: DoctorCheck["id"],
@@ -99,19 +134,19 @@ export async function runDoctor(
   let failed = false;
   if (!json) write("Agent Orchestrator local environment diagnostics");
   try {
-    dependencies.loadConfig();
-    record("configuration", "Configuration", "passed", "config.yaml exists and is valid.");
+    dependencies.loadConfig(configPath, { suppressWarnings: true });
+    record("configuration", "Configuration", "passed", `${configLabel} exists and is valid.`);
   } catch (error) {
     failed = true;
     // Parser errors may contain source excerpts; schema errors may contain input values.
     const message = error instanceof Error ? error.message : "";
     const detail = message.startsWith("Config file not found:")
-      ? "config.yaml is missing; copy config.example.yaml to config.yaml and configure it."
+      ? `${configLabel} is missing; copy config.example.yaml to ${configLabel} and configure it.`
       : message.startsWith("Invalid YAML:")
-        ? "config.yaml contains invalid YAML; correct its syntax."
+        ? `${configLabel} contains invalid YAML; correct its syntax.`
         : message.startsWith("Invalid configuration:")
-          ? "config.yaml has invalid settings; check required fields and supported values against config.example.yaml and docs/configuration.md."
-          : "cannot read config.yaml; check file access and permissions.";
+          ? `${configLabel} has invalid settings; check required fields and supported values against config.example.yaml and docs/configuration.md.`
+          : `cannot read ${configLabel}; check file access and permissions.`;
     record("configuration", "Configuration", "failed", detail);
   }
 

@@ -124,16 +124,45 @@ Check your local configuration and executable compatibility before starting:
 yarn doctor
 ```
 
-This read-only command reports passed, failed, or skipped checks for `config.yaml`, Git, GitHub CLI,
-and OpenCode. Required failures include remediation guidance and produce a nonzero exit status. It
-does not start workers or write repository/runtime state. Successful local checks do not establish
-external integration operation or complete runtime readiness: authentication, remote resources,
-isolation namespaces, coordination provisioning, and runtime permissions remain unverified and are
-reported as skipped.
+Syntax: `yarn doctor [--json] [--config PATH | --config=PATH]`. Omit `--config` to check
+`config.yaml`, or select a named file without copying it or changing directories. Relative paths
+resolve against the invocation working directory; absolute paths are also supported. Quote paths
+containing spaces. `--config PATH` and `--config=PATH` are equivalent and may appear before or after
+`--json`.
+
+```bash
+yarn doctor --config configs/local.yaml
+yarn doctor --config "/opt/agent/config files/production.yaml"
+yarn doctor --json --config configs/local.yaml
+yarn doctor --config "configs/local settings.yaml" --json
+yarn doctor --config=configs/local.yaml
+yarn doctor --json --config="configs/local settings.yaml"
+yarn doctor --config="configs/local settings.yaml" --json
+```
+
+Use `yarn doctor --help` to print concise usage and exit successfully without loading configuration
+or probing executables, even when `config.yaml` is absent. `--help` must be used alone; combining it
+with `--json`, either configuration option spelling, or any other argument is a usage error.
+
+This read-only command reports passed, failed, or skipped checks for the selected configuration
+file, Git, GitHub CLI, and OpenCode. Required failures include remediation guidance and produce a
+nonzero exit status. It does not start workers or write repository/runtime state. Successful local
+checks do not establish external integration operation or complete runtime readiness:
+authentication, remote resources, isolation namespaces, coordination provisioning, and runtime
+permissions remain unverified and are reported as skipped.
 
 For machine-readable results, use `yarn doctor --json`. The doctor program emits exactly one JSON
 document to stdout, with no text headings. Yarn itself may add wrapper output; use
-`yarn --silent doctor --json` when capturing stdout for a JSON parser.
+`yarn --silent doctor --json` when capturing stdout for a JSON parser. For a selected file, use
+`yarn --silent doctor --json --config "configs/local settings.yaml"`.
+
+For example, text output for a valid selected file starts its configuration result with
+`PASSED Configuration: "configs/local.yaml" exists and is valid.` The corresponding JSON check is
+`{"id":"configuration","status":"passed","summary":"\"configs/local.yaml\" exists and is valid."}`
+within the same version-1 report described below. A missing selected file reports that path and
+suggests copying `config.example.yaml` there and configuring it. Malformed YAML, invalid settings
+and unreadable files instead receive syntax, settings or file-access guidance, respectively, and a
+nonzero exit status. Doctor does not fall back to `config.yaml` when a selected file fails.
 
 The version-1 contract is:
 
@@ -189,9 +218,12 @@ Example successful report:
 }
 ```
 
-Unsupported arguments produce `Usage: yarn doctor [--json]` and a nonzero exit status before
-configuration loading or executable probes. Usage errors are text rather than diagnostic JSON
-reports. Both formats omit configuration values, parser excerpts, and raw executable output.
+Unsupported arguments, duplicate options (including mixed `--config PATH` and `--config=PATH`
+spellings), and missing, empty or whitespace-only `--config` values produce
+`Usage: yarn doctor [--json] [--config PATH | --config=PATH]` and a nonzero exit status before
+configuration loading or executable probes. Usage also lists the standalone `yarn doctor --help`
+invocation. Usage errors are text rather than diagnostic JSON reports. Both formats omit
+configuration values, parser excerpts, and raw executable output.
 
 First provision the required shared coordination namespace using the
 [configuration instructions](docs/configuration.md#provisioning-a-shared-host-coordination-namespace).
