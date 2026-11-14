@@ -7,6 +7,13 @@ import { readPreparedConflict } from "../orchestrator/prepared-conflict-state.js
 import type { GitClient } from "./git-client.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { assertTaskResourceProvenance } from "../task-session/task-resources.js";
+import { preserveIgnoredOutput } from "./preserve-ignored-output.js";
+import {
+  readTerminalPrFence,
+  terminalStopProofValid,
+  otherTaskWriterIsActive,
+} from "../task-session/terminal-pr-fence.js";
+import { readTerminalCleanup } from "../task-session/terminal-cleanup-state.js";
 
 export interface CleanupWorktreeOptions {
   git: GitClient;
@@ -146,7 +153,18 @@ export async function cleanupWorktree({
       }
     }
 
-    const status = preservedHeadSha
+    if (authority && (readTerminalCleanup(authority)?.archive.length ?? 0) > 0) {
+      const fence = readTerminalPrFence(authority);
+      if (
+        !fence ||
+        fence.preserveArtifacts ||
+        !terminalStopProofValid(authority) ||
+        otherTaskWriterIsActive(authority)
+      )
+        throw new Error("Cleanup archive recovery requires stopped task writers");
+      await preserveIgnoredOutput(git, worktreePath, authority, signal);
+    }
+    let status = preservedHeadSha
       ? await git.getCleanupStatus(worktreePath)
       : await git.getStatus(worktreePath);
 
@@ -159,10 +177,24 @@ export async function cleanupWorktree({
         .split(/\r?\n/u)
         .filter((line) => line.length > 0)
         .every((line) => line.startsWith("!! "));
-      throw new CleanupWorktreeSafetyError(
-        ignoredOnly ? "ignored-output" : "dirty-worktree",
-        Buffer.byteLength(status),
-      );
+      const fence = authority && readTerminalPrFence(authority);
+      if (
+        ignoredOnly &&
+        authority &&
+        fence &&
+        !fence.preserveArtifacts &&
+        terminalStopProofValid(authority) &&
+        !otherTaskWriterIsActive(authority)
+      ) {
+        await preserveIgnoredOutput(git, worktreePath, authority, signal);
+        status = await git.getCleanupStatus(worktreePath);
+        if (status.length > 0)
+          throw new CleanupWorktreeSafetyError("dirty-worktree", Buffer.byteLength(status));
+      } else
+        throw new CleanupWorktreeSafetyError(
+          ignoredOnly ? "ignored-output" : "dirty-worktree",
+          Buffer.byteLength(status),
+        );
     }
 
     if (signal?.aborted) {

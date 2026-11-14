@@ -54,8 +54,6 @@ export async function withJournaledDispatch<T>(
   if (ProjectRunAuthority.current(authority.projectId) !== authority)
     throw new Error("Journal dispatch requires its current authority");
   const run = authority.store.assertCurrentLease(authority.ownerGeneration);
-  if (["done", "refined", "failed", "cancelled"].includes(run.lifecycle))
-    throw new Error("Terminal attempt cannot activate a dispatch capability");
   const entry = run.pendingOperations.find((entry) => entry.id === operationId);
   const dispatch = entry?.mutation?.dispatches.at(-1);
   if (
@@ -68,6 +66,8 @@ export async function withJournaledDispatch<T>(
     entry.mutation.executionFence.generation !== run.operation.generation
   )
     throw new Error("Journal dispatch has no current unresponded durable dispatch");
+  if (["done", "refined", "failed", "cancelled"].includes(run.lifecycle))
+    authority.store.assertTerminalCleanupIntent(run, entry.mutation.intent);
   const reference = run.artifacts.find((item) => item.id === entry.mutation!.intent.payloadId)!;
   const payload: unknown = JSON.parse(fs.readFileSync(reference.path, "utf8"));
   // T3 payloads already enumerate concrete client routes. T2's original payloads
@@ -275,8 +275,6 @@ export function consumeJournaledDispatch(
   )
     throw new Error("Invalid or consumed journal dispatch capability");
   const run = authority.store.assertCurrentLease(authority.ownerGeneration);
-  if (["done", "refined", "failed", "cancelled"].includes(run.lifecycle))
-    throw new Error("Terminal attempt cannot consume a dispatch capability");
   const entry = run.pendingOperations.find((entry) => entry.id === capability.operationId);
   const dispatch = entry?.mutation?.dispatches.at(-1);
   if (
@@ -288,6 +286,8 @@ export function consumeJournaledDispatch(
     entry.mutation.executionFence.generation !== run.operation.generation
   )
     throw new Error("Stale journal dispatch capability");
+  if (["done", "refined", "failed", "cancelled"].includes(run.lifecycle))
+    authority.store.assertTerminalCleanupIntent(run, entry.mutation!.intent);
   let expected = capability.expected;
   if (capability.operationId.startsWith("workflow:") && expected.route === "git-commit")
     expected = {
@@ -348,7 +348,6 @@ export function assertJournaledTransport(): void {
   const entry = run.pendingOperations.find((entry) => entry.id === capability.operationId);
   const dispatch = entry?.mutation?.dispatches.at(-1);
   if (
-    ["done", "refined", "failed", "cancelled"].includes(run.lifecycle) ||
     entry?.status !== "ambiguous" ||
     dispatch?.generation !== capability.dispatchGeneration ||
     dispatch.ownerGeneration !== authority.ownerGeneration ||
@@ -357,6 +356,8 @@ export function assertJournaledTransport(): void {
     entry.mutation.executionFence.generation !== run.operation.generation
   )
     throw new Error("Stale journal transport capability");
+  if (["done", "refined", "failed", "cancelled"].includes(run.lifecycle))
+    authority.store.assertTerminalCleanupIntent(run, entry.mutation!.intent);
   const fence = terminalPrFenceFromRun(run);
   if (fence && !terminalMutationAllowed(run, capability.expected))
     throw new ObservedPrTerminalError(fence, true, {

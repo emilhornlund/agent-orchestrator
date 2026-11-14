@@ -199,16 +199,36 @@ metadata, or a Trello move is uncertain, the queue and recovery information rema
 The expected remote branch is deleted only for a verified merged PR and only after it is known to
 belong to the owned task. The local worktree cleanup is restricted to the expected path and branch
 and refuses symlinks, dirty trees, active rebases, conflicts, or unknown paths. It also preserves
-ignored setup output and clean local-only commits. Closed-PR cleanup requires accessible PR commit
-history. Known owned isolated resources may remain preserved without blocking terminal release;
-unknown identity, execution or pending effects cannot. Required terminal moves and comments must be
-verified before the next task. An unknown comment outcome remains pending even when the card already
-appears in its destination list.
+ignored setup output and clean local-only commits. Ignored output is archived intact before safe
+worktree removal, rather than discarded or permanently blocking routine cleanup. Closed-PR cleanup
+requires accessible PR commit history. Known owned isolated resources may remain preserved without
+blocking terminal release; unknown identity, execution or pending effects cannot. Required terminal
+moves and comments must be verified before the next task. An unknown comment outcome remains pending
+even when the card already appears in its destination list.
 
-A verified terminal Trello outcome is separate from removing local artifacts. Known owned worktrees
-containing ignored setup/build output remain preserved with an `ignored-output` cleanup diagnostic;
-this does not mean the merge was unobserved or that tracked task changes are dirty. Safe
-preservation must not prevent verified Done reconciliation or project release.
+A verified terminal Trello outcome is separate from removing local artifacts. Inspect the validated
+`terminal-resource-cleanup` compatibility record in the canonical attempt JSON for `pending`,
+`removed`, `preserved`, or `retryable-failure`, its reason, attempt count, retry time and archive
+plan. `removed` means the worktree and local branch were removed; archived ignored output may still
+exist. Older terminal attempts without this record are eligible for the same idle reconciliation
+when their original resource ownership and stopped-writer proof remain verifiable.
+
+Ignored files and directories move by same-filesystem atomic rename to
+`<contextRoot>/cleanup-archives/<attemptId>/<original-relative-path>`. The durable plan records
+device and inode identities before moving anything. Restart reconciles a move completed before its
+caller returned. Missing identities, collisions, symlinked ancestors, changed source identity or a
+cross-filesystem rename failure preserve the remaining resources and report a cleanup problem.
+Unknown ignored files are preserved too: `.gitignore` is not authority to delete data. Archives are
+private retained data, outside automatic log/context retention; inspect them before any manual
+disposal. This releases Git resources, not necessarily disk space.
+
+Between task writers, the service revisits at most one due terminal attempt per idle project poll,
+with a minimum 60-second interval and at most three cleanup attempts total across restarts. It does
+not republish an old attempt as active, dispatch engineering work, repeat terminal Trello effects or
+touch an active task. Closed-PR retries recheck accessible implementation history. After exhaustion,
+the outcome is `preserved` with `retry-limit`; inspect and resolve the recorded blocker manually. An
+explicit interrupted/unshipped-work preservation fence is never automatically overridden. Terminal
+synchronization and safe project release remain independent of retained artifacts.
 
 ## Additive maintenance and legacy rewrite fences
 

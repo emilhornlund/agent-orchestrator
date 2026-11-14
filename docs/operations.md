@@ -322,6 +322,22 @@ until recovery is complete. An already-absent worktree or local branch is idempo
 check or Git removal fails, the remaining artifacts are left for diagnosis where possible; shutdown
 cancellation does not start or continue destructive cleanup.
 
+For verified terminal task PRs with stopped writers, ignored setup/build output no longer blocks
+routine Git-resource cleanup. It is moved intact into private attempt-owned
+`<contextRoot>/cleanup-archives/<attemptId>/` storage using a durable device/inode plan, then the
+worktree and local branch are removed through the normal mutation journal. Unknown ignored content
+is archived rather than assumed disposable. Archive data is retained for manual inspection, outside
+log/context retention; resource removal does not imply disk reclamation.
+
+The canonical attempt's `terminal-resource-cleanup` compatibility record explicitly distinguishes
+removed resources, pending work, preserved resources and retryable failures. Idle project polling
+reconciles one due terminal attempt at a time, including older attempts with sufficient ownership
+and stop proof: three attempts maximum, at least 60 seconds apart, persisted across restarts. It
+never runs beside an active attempt or overrides preservation of interrupted/unshipped work.
+Closed-PR cleanup rechecks accessible PR history. See
+[terminal recovery](recovery.md#terminal-pull-requests) for archive recovery and exhausted cleanup
+diagnosis.
+
 ## Publication and GitHub boundaries
 
 ### GitHub CLI compatibility

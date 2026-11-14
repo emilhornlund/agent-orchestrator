@@ -5,7 +5,10 @@ import { throwIfWorkflowMutationPending } from "../task-session/workflow-mutatio
 import { closedPrComment } from "../task-session/terminal-pr-fence.js";
 
 import type { ProjectConfig } from "../config/config.js";
-import { cleanupWorktree } from "../git/cleanup-worktree.js";
+import {
+  cleanupTerminalResources,
+  preserveTerminalResources,
+} from "./cleanup-terminal-resources.js";
 import type { GitClient } from "../git/git-client.js";
 import type { PullRequestState } from "../github/github-client.js";
 import { MalformedManagedPullRequestStatusError } from "../github/pull-request-status.js";
@@ -71,21 +74,25 @@ async function cleanupTerminalWorktree(
   cardLog: Logger,
   signal: AbortSignal,
   preservedHeadSha: string,
+  verifyHistory?: () => Promise<void>,
 ): Promise<void> {
   if (signal.aborted) return;
   const { path: worktreePath, branch } = taskResources(project, card.id);
   try {
-    await cleanupWorktree({
+    const removed = await cleanupTerminalResources({
       git,
       project,
-      worktreePath,
-      branch,
-      preserveRecoveryState: true,
-      preservedHeadSha,
+      cardId: card.id,
+      headSha: preservedHeadSha,
       signal,
+      ...(verifyHistory ? { verifyHistory } : {}),
     });
-    if (!signal.aborted)
+    if (!signal.aborted && removed)
       cardLog.info(`Terminal task worktree cleanup completed for ${worktreePath}`);
+    else if (!signal.aborted)
+      cardLog.warn(
+        "Terminal resource cleanup is deferred or preserved; inspect terminal-resource-cleanup in the attempt record",
+      );
   } catch (error) {
     cardLog.warn(
       `Terminal task cleanup was not completed for ${worktreePath} and ${branch}: ${message(error)}`,
@@ -201,6 +208,7 @@ export async function completeMergedTaskSessionPullRequest(options: {
     }
   }
   if (options.preserveWorktree) {
+    preserveTerminalResources(project.id);
     cardLog.warn(
       "Task artifacts preserved after human merge; interrupted or unshipped work remains available for recovery",
     );
@@ -250,6 +258,7 @@ export async function returnClosedTaskSessionPullRequestToBacklog(options: {
   // than resending a comment whose acceptance is uncertain.
   await trello.addComment(card.id, closedPrComment(pullRequest.url));
   if (options.preserveWorktree) {
+    preserveTerminalResources(project.id);
     cardLog.warn(
       "Task artifacts preserved after human PR closure; interrupted or unshipped work remains available for recovery",
     );
@@ -258,24 +267,24 @@ export async function returnClosedTaskSessionPullRequestToBacklog(options: {
     // equals the terminal head. An unavailable API is not preservation proof.
     if (!options.github || !pullRequest.headRefOid)
       throw new Error("Closed PR history is unavailable; preserving artifacts");
-    let commits: string[];
-    try {
-      commits = await options.github.getPullRequestCommitShas({
-        cwd: project.repository.path,
-        repository: project.repository.github,
-        pullRequestNumber: Number(new URL(pullRequest.url).pathname.split("/").at(-1)),
-        project,
-      });
-      if (commits.at(-1) !== pullRequest.headRefOid)
-        throw new Error("Closed PR history does not preserve the implementation");
-    } catch {
-      await assertTerminalArtifactIsolation(project, git);
-      cardLog.warn(
-        "Closed PR history is unavailable; isolated local implementation remains preserved",
-      );
-      return;
-    }
-    await cleanupTerminalWorktree(git, project, card, cardLog, signal, pullRequest.headRefOid);
+    await cleanupTerminalWorktree(
+      git,
+      project,
+      card,
+      cardLog,
+      signal,
+      pullRequest.headRefOid,
+      async () => {
+        const commits = await options.github!.getPullRequestCommitShas({
+          cwd: project.repository.path,
+          repository: project.repository.github,
+          pullRequestNumber: Number(new URL(pullRequest.url).pathname.split("/").at(-1)),
+          project,
+        });
+        if (commits.at(-1) !== pullRequest.headRefOid)
+          throw new Error("Closed PR history does not preserve the implementation");
+      },
+    );
   }
 }
 

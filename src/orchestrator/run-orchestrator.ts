@@ -7,6 +7,7 @@ import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
 import { withGitHubOperationProject } from "../github/github-operation-context.js";
 import { cleanupLogRetention, logRetentionIntervalMilliseconds } from "../logging/log-retention.js";
+import { reconcileTerminalCleanup } from "./reconcile-terminal-cleanup.js";
 import { logger, shouldWriteConsole } from "../logging/logger.js";
 import { notifyAttentionRequired, type EmailNotifier } from "../notifications/email-notifier.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
@@ -744,6 +745,16 @@ async function runProjectWorkerLoop(
           await pendingTrelloValidation(trello, project);
           pendingTrelloValidation = undefined;
         }
+        await reconcileTerminalCleanup({
+          project,
+          pinned: runContext.pinned,
+          projectLease: runContext.projectLease,
+          git,
+          github,
+          trello,
+          signal,
+        });
+        if (signal.aborted) return;
         const readyCards = await getCardsForDiscovery(
           trello,
           project.id,

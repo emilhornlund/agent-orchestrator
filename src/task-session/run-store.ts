@@ -12,7 +12,8 @@ import {
   terminalEvidenceSchema,
 } from "./run-record.js";
 import { taskExecutionEventTypes } from "./task-execution-record.js";
-import { terminalPrFenceFromRun } from "./terminal-pr-fence.js";
+import { terminalPrFenceFromRun, terminalMutationAllowed } from "./terminal-pr-fence.js";
+import { gitMutationRequestSchema } from "../git/git-mutation-request.js";
 import {
   applyMutationEvent,
   mutationEventSchema,
@@ -294,9 +295,9 @@ export class RunStore {
     const current = this.assertCurrentLease(ownerGeneration);
     if (current.revision !== expectedRevision)
       throw new RunStoreConflictError("Stale mutation intent revision");
-    if (["done", "refined", "failed", "cancelled"].includes(current.lifecycle))
-      throw new RunStoreConflictError("Cannot add workflow mutations to terminal attempt");
     const intent = mutationIntentSchema.parse(rawIntent);
+    if (["done", "refined", "failed", "cancelled"].includes(current.lifecycle))
+      this.assertTerminalCleanupIntent(current, intent);
     const existing = current.pendingOperations.find((entry) => entry.id === operationId);
     if (existing) {
       if (
@@ -400,8 +401,13 @@ export class RunStore {
     if (
       event.type === "dispatch" &&
       ["done", "refined", "failed", "cancelled"].includes(current.lifecycle)
-    )
-      throw new RunStoreConflictError("Terminal attempt cannot dispatch workflow effects");
+    ) {
+      try {
+        this.assertTerminalCleanupIntent(current, entry.mutation.intent);
+      } catch {
+        throw new RunStoreConflictError("Terminal attempt cannot dispatch workflow effects");
+      }
+    }
     if (
       event.type !== "dispatch" &&
       !current.artifacts.some((artifact) => artifact.id === event.evidence.artifactId)
@@ -1417,6 +1423,45 @@ export class RunStore {
         throw new Error("Missing or modified artifact; reference preserved");
     }
   }
+  assertTerminalCleanupIntent(current: RunRecord, intent: MutationIntent): void {
+    const fence = terminalPrFenceFromRun(current);
+    const payload =
+      intent.kind === "git-cleanup"
+        ? gitMutationRequestSchema.parse(
+            JSON.parse(this.readArtifact(intent.payloadId).toString("utf8")),
+          )
+        : null;
+    if (
+      !payload ||
+      payload.route !== "git-cleanup" ||
+      !["done", "cancelled"].includes(current.lifecycle) ||
+      current.terminalSync !== "verified" ||
+      !fence?.proofArtifact ||
+      !terminalMutationAllowed(current, payload)
+    )
+      throw new RunStoreConflictError("Cannot add workflow mutations to terminal attempt");
+    const proof = JSON.parse(this.readArtifact(fence.proofArtifact).toString("utf8")) as {
+      kind?: unknown;
+      cardId?: unknown;
+    };
+    if (
+      proof.kind !== "task-processes-stopped" ||
+      proof.cardId !== current.cardId ||
+      payload.args.cwd !== current.pinned.repositoryPath ||
+      !current.resources.some(
+        (resource) =>
+          resource.kind === (payload.args.kind === "worktree" ? "worktree" : "branch") &&
+          resource.path ===
+            (payload.args.kind === "worktree"
+              ? payload.args.resource
+              : `refs/heads/${payload.args.resource}`),
+      )
+    )
+      throw new RunStoreConflictError(
+        "Terminal cleanup lacks stopped-writer or resource ownership proof",
+      );
+  }
+
   private assertLease(run: RunRecord): void {
     this.lease.assertHeld();
     if (
