@@ -4,6 +4,8 @@ import type {
   PrimaryReviewDispositionReport,
 } from "./implementation-review-result.js";
 import type { TaskExecutionRecord } from "./task-execution-record.js";
+import { getProcessRuntime } from "../process/process-runtime.js";
+import { isShutdownCancellation } from "../runtime/shutdown-cancellation.js";
 import type { TaskSessionValidationStatus } from "./run-task-session-validation.js";
 import { transitionTaskExecutionRecord } from "./task-execution-transition.js";
 import { logger } from "../logging/logger.js";
@@ -238,8 +240,11 @@ function logReviewStageFailure(
   record: TaskExecutionRecord,
   stage: "execution" | "source-identity-check" | "result-validation",
   contentIdentity?: string,
+  error?: unknown,
 ): void {
-  logReviewDiagnostic(options, "cycle-failed", {
+  const signal = getProcessRuntime().signal;
+  const cancelled = signal !== undefined && isShutdownCancellation(error, signal);
+  logReviewDiagnostic(options, cancelled ? "cycle-cancelled" : "cycle-failed", {
     category: "review",
     stage,
     reviewPass: record.retryCounters.review + 1,
@@ -573,14 +578,14 @@ export async function runTaskSessionReviewWithRepairs(
     try {
       round = await options.runReview(record.reviewRepair?.findings ?? []);
     } catch (error) {
-      logReviewStageFailure(options, record, "execution");
+      logReviewStageFailure(options, record, "execution", undefined, error);
       throw error;
     }
     let currentIdentity: string;
     try {
       currentIdentity = await options.getCurrentContentIdentity();
     } catch (error) {
-      logReviewStageFailure(options, record, "source-identity-check", round.contentIdentity);
+      logReviewStageFailure(options, record, "source-identity-check", round.contentIdentity, error);
       throw error;
     }
     if (
@@ -694,14 +699,14 @@ export async function runTaskSessionReviewWithRepairs(
     try {
       round = await options.runReview(record.reviewRepair?.findings ?? []);
     } catch (error) {
-      logReviewStageFailure(options, record, "execution");
+      logReviewStageFailure(options, record, "execution", undefined, error);
       throw error;
     }
     let currentIdentity: string;
     try {
       currentIdentity = await options.getCurrentContentIdentity();
     } catch (error) {
-      logReviewStageFailure(options, record, "source-identity-check", round.contentIdentity);
+      logReviewStageFailure(options, record, "source-identity-check", round.contentIdentity, error);
       throw error;
     }
     if (
@@ -723,7 +728,7 @@ export async function runTaskSessionReviewWithRepairs(
         cycleId,
       );
     } catch (error) {
-      logReviewStageFailure(options, record, "result-validation", round.contentIdentity);
+      logReviewStageFailure(options, record, "result-validation", round.contentIdentity, error);
       throw error;
     }
     const trackedRound = { ...round, review: ledger.review };

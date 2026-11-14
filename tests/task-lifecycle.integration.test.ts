@@ -59,7 +59,8 @@ interface LifecycleScenario {
   ciQuality?: "validation" | "unavailable";
   ciBudget?: number;
   targetMerge?: boolean;
-  feedbackReviewRecovery?: "reserved" | "completed" | "validation" | "reviewed" | "unknown";
+  feedbackReviewRecovery?:
+    "before-review" | "reserved" | "completed" | "validation" | "reviewed" | "unknown";
   ciReviewRecovery?: "reserved" | "completed" | "validation" | "reviewed" | "unknown";
 }
 afterEach(async () => {
@@ -222,16 +223,16 @@ describe("task lifecycle through pollProject", () => {
       ciReviewHandoffs: true,
       ciQuality,
     })),
-    ...(["reserved", "completed", "validation", "reviewed", "unknown"] as const).map(
-      (feedbackReviewRecovery) => ({
-        draft: false,
-        terminal: "merged" as const,
-        destination: "done" as const,
-        ackLoss: false,
-        quality: "both" as const,
-        feedbackReviewRecovery,
-      }),
-    ),
+    ...(
+      ["before-review", "reserved", "completed", "validation", "reviewed", "unknown"] as const
+    ).map((feedbackReviewRecovery) => ({
+      draft: false,
+      terminal: "merged" as const,
+      destination: "done" as const,
+      ackLoss: false,
+      quality: "both" as const,
+      feedbackReviewRecovery,
+    })),
     ...(["reserved", "completed", "validation", "reviewed", "unknown"] as const).map(
       (ciReviewRecovery) => ({
         draft: false,
@@ -2228,6 +2229,16 @@ describe("task lifecycle through pollProject", () => {
             const persisted = compare.call(this, cardId, revision, next);
             const repair = persisted.reviewRepair;
             if (
+              feedbackReviewRecovery === "before-review" &&
+              persisted.feedbackRemediation?.status === "changed" &&
+              persisted.phase === "validation" &&
+              repair === undefined
+            ) {
+              interrupted = persisted;
+              writesStopped = true;
+              throw fault;
+            }
+            if (
               persisted.feedbackRemediation?.status !== "changed" ||
               !repair?.cycleId.includes(":feedback:")
             )
@@ -2270,7 +2281,8 @@ describe("task lifecycle through pollProject", () => {
         });
         expect(feedbackPrimaryCorrections).toBe(1);
         const reservation = interrupted?.reviewRepair?.activePrimaryOperation;
-        if (feedbackReviewRecovery !== "reviewed") expect(reservation).toBeDefined();
+        if (feedbackReviewRecovery !== "reviewed" && feedbackReviewRecovery !== "before-review")
+          expect(reservation).toBeDefined();
         const originalPrompt =
           reservation?.promptArtifact === undefined
             ? undefined

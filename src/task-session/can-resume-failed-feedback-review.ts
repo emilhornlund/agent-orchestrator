@@ -20,11 +20,28 @@ export function canResumeFeedbackReviewRepair(
     record.pullRequest?.headSha === undefined ||
     record.feedbackRemediation.headSha !== record.pullRequest.headSha ||
     record.primarySessionId === undefined ||
-    record.sessionCreationStatus !== "bound" ||
-    record.reviewRepair === undefined ||
-    !["active", "passed", "exhausted"].includes(record.reviewRepair.status)
+    record.sessionCreationStatus !== "bound"
   )
     return false;
+
+  // The feedback writer can finish and enter validation before any feedback
+  // review cycle exists. Resume that exact completed writer's quality stage,
+  // rather than falling through to initial implementation/publication recovery.
+  if (record.reviewRepair === undefined) {
+    const primary = record.primaryOperations?.[active.eventId];
+    return (
+      ["validation", "review"].includes(record.phase) &&
+      primary?.id === active.eventId &&
+      primary.status === "completed" &&
+      primary.activity === "feedback-remediation" &&
+      (primary.role === undefined || primary.role === "primary") &&
+      (primary.lastSessionId === undefined ||
+        primary.lastSessionId === record.primarySessionId ||
+        (record.sessionRecovery?.status === "reconstruction-verified" &&
+          primary.lastSessionId === record.sessionRecovery.originalSessionId))
+    );
+  }
+  if (!["active", "passed", "exhausted"].includes(record.reviewRepair.status)) return false;
 
   const repair = record.reviewRepair;
   const reservation = repair.activePrimaryOperation;

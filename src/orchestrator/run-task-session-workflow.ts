@@ -3385,7 +3385,13 @@ export async function runTaskSessionWorkflow(
       }
       logger
         .child({ projectId: project.id, cardId: observation.cardId })
-        .event(ciResult.status === "passed" ? "CI repair succeeded" : "CI repair failed");
+        .event(
+          ciResult.status === "passed"
+            ? "CI repair succeeded"
+            : ciResult.status === "waiting"
+              ? "CI repair published; awaiting current-head checks"
+              : "CI repair failed",
+        );
       if (ciResult.status === "passed") {
         const latest = taskStore.read(card.id);
         if (latest !== null && latest.phase === "ci")
@@ -3748,8 +3754,7 @@ export async function runTaskSessionWorkflow(
       : null;
   if (
     pendingFeedbackTask?.feedbackRemediation?.status === "changed" &&
-    pendingFeedbackTask.reviewRepair !== undefined &&
-    ["implementation", "validation", "review"].includes(pendingFeedbackTask.phase)
+    ["implementation", "validation", "review", "publication"].includes(pendingFeedbackTask.phase)
   ) {
     // A feedback-owned review must never fall through to initial implementation
     // recovery if its reservation, identity or owning queue cannot be resumed.

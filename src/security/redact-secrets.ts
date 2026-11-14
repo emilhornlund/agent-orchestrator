@@ -48,18 +48,36 @@ export function redactSecrets(
     redacted = redacted.replaceAll(secret, marker);
   }
 
+  // A credential inside serialized tool output may end at an escaped quote.
+  // Preserve the escape syntax even when JSON is nested inside a text event.
+  const replaceValue = (
+    match: string,
+    prefix: string,
+    value: string,
+    offset: number,
+    input: string,
+  ) => `${prefix}${marker}${quoteEscape(value, input[offset + match.length])}`;
+
   redacted = redacted.replace(
-    /(\b["']?(?:api[_-]?key|token|password|secret|authorization|credential|username)["']?\s*[:=]\s*["']?)(?:Bearer\s+)?[^\s,"'};]+/gi,
-    `$1${marker}`,
+    /(\b["']?(?:api[_-]?key|token|password|secret|authorization|credential|username)["']?\s*[:=]\s*["']?)((?:Bearer\s+)?[^\s,"'};]+)/gi,
+    replaceValue,
   );
   redacted = redacted.replace(
-    /([?&](?:key|token|api[_-]?key|access[_-]?token|password|secret)=)[^&#\s]+/gi,
-    `$1${marker}`,
+    /([?&](?:key|token|api[_-]?key|access[_-]?token|password|secret)=)([^&#\s"']+)/gi,
+    replaceValue,
   );
-  redacted = redacted.replace(/(\bBearer\s+)[^\s,;]+/gi, `$1${marker}`);
+  redacted = redacted.replace(/(\bBearer\s+)([^\s,;"']+)/gi, replaceValue);
 
   const duplicatedMarkers = new RegExp(`(?:${marker}){2,}`, "gu");
   return redacted.replace(duplicatedMarkers, marker).replaceAll(marker, "[REDACTED]");
+}
+
+function trailingEscapes(value: string): number {
+  return value.match(/\\+$/u)?.[0].length ?? 0;
+}
+
+function quoteEscape(value: string, delimiter: string | undefined): string {
+  return delimiter === '"' || delimiter === "'" ? "\\".repeat(trailingEscapes(value)) : "";
 }
 
 export interface SecretRedactor {
@@ -95,10 +113,11 @@ export function createSecretRedactor(
       "authorization",
       "credential",
       "username",
-    ].flatMap((key) => [`${key}:`, `${key}=`, `"${key}":`, `"${key}"=`]),
+    ].flatMap((key) => [`${key}:`, `${key}=`, `"${key}":`, `"${key}"=`, `?${key}=`, `&${key}=`]),
   ];
   let pending = "";
   let skippedValueDelimiter: RegExp | undefined;
+  let skippedEscapes = 0;
 
   function boundaryOverlap(text: string): number {
     const maximum = Math.min(text.length, Math.max(maxSecretLength - 1, 20));
@@ -148,10 +167,10 @@ export function createSecretRedactor(
     if (safeLength === 0) return "";
 
     const credentialPrefixes = [
-      { expression: /\bBearer\s+/gi, delimiter: /[\s,;]/u },
+      { expression: /\bBearer\s+/gi, delimiter: /[\s,;"']/u },
       {
         expression: /[?&](?:key|token|api[_-]?key|access[_-]?token|password|secret)=/gi,
-        delimiter: /[&#\s]/u,
+        delimiter: /[&#\s"']/u,
       },
       {
         expression:
@@ -164,17 +183,24 @@ export function createSecretRedactor(
         const valueStart = (match.index ?? 0) + match[0].length;
         const delimiterIndex = pending.slice(valueStart).search(delimiter);
         const valueEnd = delimiterIndex === -1 ? pending.length : valueStart + delimiterIndex;
-        if (valueStart < safeLength && valueEnd >= safeLength) {
+        if ((match.index ?? 0) < safeLength && valueEnd >= safeLength) {
           const output = `${pending.slice(0, match.index ?? 0)}${match[0]}[REDACTED]`;
           const valueAndRemainder = pending.slice(valueStart);
           const nextDelimiter = valueAndRemainder.search(delimiter);
           if (nextDelimiter === -1) {
             pending = "";
             skippedValueDelimiter = delimiter;
+            skippedEscapes = trailingEscapes(valueAndRemainder);
+            return redactSecrets(output, secrets);
           } else {
-            pending = valueAndRemainder.slice(nextDelimiter);
+            const delimiterCharacter = valueAndRemainder[nextDelimiter]!;
+            const escape = quoteEscape(
+              valueAndRemainder.slice(0, nextDelimiter),
+              delimiterCharacter,
+            );
+            pending = valueAndRemainder.slice(nextDelimiter + 1);
+            return redactSecrets(`${output}${escape}${delimiterCharacter}`, secrets);
           }
-          return redactSecrets(output, secrets);
         }
       }
     }
@@ -189,9 +215,17 @@ export function createSecretRedactor(
     push(text) {
       if (skippedValueDelimiter !== undefined) {
         const delimiterIndex = text.search(skippedValueDelimiter);
-        if (delimiterIndex === -1) return "";
-        text = text.slice(delimiterIndex);
+        const prefix = delimiterIndex === -1 ? text : text.slice(0, delimiterIndex);
+        const escapes = /^\\*$/u.test(prefix)
+          ? skippedEscapes + prefix.length
+          : trailingEscapes(prefix);
+        if (delimiterIndex === -1) {
+          skippedEscapes = escapes;
+          return "";
+        }
+        text = `${['"', "'"].includes(text[delimiterIndex]!) ? "\\".repeat(escapes) : ""}${text.slice(delimiterIndex)}`;
         skippedValueDelimiter = undefined;
+        skippedEscapes = 0;
       }
       pending += text;
       return redactSecrets(takeStablePrefix(false), secrets);
