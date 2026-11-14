@@ -11,6 +11,8 @@ import { GITHUB_CLI_COMMAND_CAPABILITIES } from "../src/github/github-cli-compat
 import type { CommandRunOptions, CommandRunResult } from "../src/process/command-runner.js";
 
 const example = fs.readFileSync(new URL("../config.example.yaml", import.meta.url), "utf8");
+const usage =
+  "Usage: yarn doctor [--json] [--config PATH | --config=PATH]\n       yarn doctor --help";
 const responses: Record<string, string> = {
   "git --version": "git version 2.30.0",
   "git --list-cmds=main":
@@ -50,6 +52,17 @@ async function diagnose(
 }
 
 describe("local environment diagnostics", () => {
+  it("prints standalone help without loading configuration or probing", async () => {
+    const loadConfig = vi.fn();
+    const runProbe = vi.fn();
+    const write = vi.fn();
+    expect(parseDoctorArguments(["--help"])).toEqual({ help: true });
+    expect(await runDoctor({ loadConfig, runProbe, write }, ["--help"])).toBe(0);
+    expect(write).toHaveBeenCalledExactlyOnceWith(usage);
+    expect(loadConfig).not.toHaveBeenCalled();
+    expect(runProbe).not.toHaveBeenCalled();
+  });
+
   it.each([
     { args: [], json: false, configPath: "config.yaml" },
     { args: ["--json"], json: true, configPath: "config.yaml" },
@@ -160,6 +173,14 @@ describe("local environment diagnostics", () => {
     ["--config", "one.yaml", "--config=two.yaml"],
     ["--config=one.yaml", "--config", "two.yaml"],
     ["--config=one.yaml", "--unknown"],
+    ["--help", "--json"],
+    ["--json", "--help"],
+    ["--help", "--config", "one.yaml"],
+    ["--config", "one.yaml", "--help"],
+    ["--help", "--config=one.yaml"],
+    ["--config=one.yaml", "--help"],
+    ["--help", "--help"],
+    ["--help", "--unknown"],
   ])(
     "rejects unsupported arguments before loading configuration or probing: %j",
     async (...args) => {
@@ -168,9 +189,7 @@ describe("local environment diagnostics", () => {
       const write = vi.fn();
       expect(await runDoctor({ loadConfig, runProbe, write }, args)).toBe(1);
       expect(parseDoctorArguments(args)).toBeUndefined();
-      expect(write).toHaveBeenCalledExactlyOnceWith(
-        "Usage: yarn doctor [--json] [--config PATH | --config=PATH]",
-      );
+      expect(write).toHaveBeenCalledExactlyOnceWith(usage);
       expect(loadConfig).not.toHaveBeenCalled();
       expect(runProbe).not.toHaveBeenCalled();
     },
@@ -320,6 +339,37 @@ describe("standalone doctor entrypoint", () => {
     if (root) fs.rmSync(root, { recursive: true, force: true });
   });
 
+  it("prints help without configuration, probes or state writes", async () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-help-"));
+    for (const executable of ["git", "gh", "opencode"]) {
+      fs.writeFileSync(
+        path.join(root, executable),
+        `#!${process.execPath}\nrequire('node:fs').writeFileSync('probe-started', 'unexpected');\nprocess.exit(9);\n`,
+        { mode: 0o755 },
+      );
+    }
+    const snapshot = () =>
+      fs
+        .readdirSync(root!, { recursive: true })
+        .map(String)
+        .sort()
+        .map((entry) => [entry, fs.readFileSync(path.join(root!, entry), "utf8")]);
+    const before = snapshot();
+    expect(fs.existsSync(path.join(root, "config.yaml"))).toBe(false);
+    const result = await promisify(execFile)(
+      process.execPath,
+      ["--import", import.meta.resolve("tsx"), path.resolve("src/doctor.ts"), "--help"],
+      {
+        cwd: root,
+        env: { ...process.env, PATH: root, HOME: root, XDG_DATA_HOME: root, XDG_CACHE_HOME: root },
+        timeout: 10_000,
+      },
+    );
+    expect(result.stdout).toBe(`${usage}\n`);
+    expect(result.stderr).toBe("");
+    expect(snapshot()).toEqual(before);
+  });
+
   it.each([
     ["--json", "--unknown"],
     ["--config"],
@@ -332,6 +382,13 @@ describe("standalone doctor entrypoint", () => {
     ["--config=one.yaml", "--config=two.yaml"],
     ["--config", "one.yaml", "--config=two.yaml"],
     ["--config=one.yaml", "--config", "two.yaml"],
+    ["--help", "--json"],
+    ["--json", "--help"],
+    ["--help", "--config", "one.yaml"],
+    ["--config", "one.yaml", "--help"],
+    ["--help", "--config=one.yaml"],
+    ["--config=one.yaml", "--help"],
+    ["--help", "--help"],
   ])("rejects invalid arguments at the entrypoint without probing: %j", async (...args) => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-arguments-"));
     for (const executable of ["git", "gh", "opencode"]) {
@@ -353,7 +410,7 @@ describe("standalone doctor entrypoint", () => {
       ),
     ).rejects.toMatchObject({
       code: 1,
-      stdout: "Usage: yarn doctor [--json] [--config PATH | --config=PATH]\n",
+      stdout: `${usage}\n`,
       stderr: "",
     });
     expect(fs.existsSync(path.join(root, "probe-started"))).toBe(false);

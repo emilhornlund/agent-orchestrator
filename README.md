@@ -140,6 +140,10 @@ yarn doctor --json --config="configs/local settings.yaml"
 yarn doctor --config="configs/local settings.yaml" --json
 ```
 
+Use `yarn doctor --help` to print concise usage and exit successfully without loading configuration
+or probing executables, even when `config.yaml` is absent. `--help` must be used alone; combining it
+with `--json`, either configuration option spelling, or any other argument is a usage error.
+
 This read-only command reports passed, failed, or skipped checks for the selected configuration
 file, Git, GitHub CLI, and OpenCode. Required failures include remediation guidance and produce a
 nonzero exit status. It does not start workers or write repository/runtime state. Successful local
@@ -217,8 +221,9 @@ Example successful report:
 Unsupported arguments, duplicate options (including mixed `--config PATH` and `--config=PATH`
 spellings), and missing, empty or whitespace-only `--config` values produce
 `Usage: yarn doctor [--json] [--config PATH | --config=PATH]` and a nonzero exit status before
-configuration loading or executable probes. Usage errors are text rather than diagnostic JSON
-reports. Both formats omit configuration values, parser excerpts, and raw executable output.
+configuration loading or executable probes. Usage also lists the standalone `yarn doctor --help`
+invocation. Usage errors are text rather than diagnostic JSON reports. Both formats omit
+configuration values, parser excerpts, and raw executable output.
 
 First provision the required shared coordination namespace using the
 [configuration instructions](docs/configuration.md#provisioning-a-shared-host-coordination-namespace).

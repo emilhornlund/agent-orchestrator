@@ -16,6 +16,8 @@ import {
 } from "./startup/validate-toolchain.js";
 
 const probeTimeoutMilliseconds = 10_000;
+const doctorUsage =
+  "Usage: yarn doctor [--json] [--config PATH | --config=PATH]\n       yarn doctor --help";
 
 /** Local probes deliberately bypass CommandRunner's durable process evidence and logging. */
 export function runDoctorProbe(options: CommandRunOptions): Promise<CommandRunResult> {
@@ -72,12 +74,10 @@ export interface DoctorReport {
   checks: DoctorCheck[];
 }
 
-export interface DoctorArguments {
-  json: boolean;
-  configPath: string;
-}
+export type DoctorArguments = { help: true } | { json: boolean; configPath: string };
 
 export function parseDoctorArguments(args: readonly string[]): DoctorArguments | undefined {
+  if (args.length === 1 && args[0] === "--help") return { help: true };
   let json = false;
   let configPath: string | undefined;
   for (let index = 0; index < args.length; index += 1) {
@@ -111,8 +111,12 @@ export async function runDoctor(
   const { write } = dependencies;
   const options = parseDoctorArguments(args);
   if (!options) {
-    write("Usage: yarn doctor [--json] [--config PATH | --config=PATH]");
+    write(doctorUsage);
     return 1;
+  }
+  if ("help" in options) {
+    write(doctorUsage);
+    return 0;
   }
   const { json, configPath } = options;
   // Quote custom paths so control characters cannot inject diagnostic lines.
