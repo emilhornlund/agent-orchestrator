@@ -154,25 +154,20 @@ export async function runRefinementCardWorkflow(options: {
       reportCleanupFailure(cardLog, project, card, getRefinementResultPath(worktree.path), error);
     }
 
+    // Canonical cleanup belongs to idle housekeeping, after the final Backlog
+    // readback and terminal release. Refinement never has a terminal PR fence.
+    if (authority) {
+      cardLog.info("Refinement resource cleanup deferred until verified terminal synchronization");
+      return;
+    }
     cardLog.info("Cleaning up refinement worktree...");
     try {
-      const preservedHeadSha = authority
-        ? await git.getRefSha(
-            project.repository.path,
-            `refs/remotes/origin/${project.repository.defaultBranch}`,
-          )
-        : null;
-      if (authority && !preservedHeadSha)
-        throw new Error("Accepted default history is unavailable; preserving refinement artifacts");
       await cleanupWorktree({
         git,
         project,
         worktreePath: worktree.path,
         branch: worktree.branch,
         preserveRecoveryState: true,
-        // Refinement has no published task commit. Only history retained on
-        // the accepted default is disposable; setup-created local commits stay.
-        ...(preservedHeadSha ? { preservedHeadSha } : {}),
         signal,
       });
     } catch (error) {

@@ -456,3 +456,26 @@ blockage required operator assistance. Interrupted-creation failure injection an
 reconciliation cases above are qualified with local durable-state fixtures and simulated external
 boundaries; arbitrary supervisor loss and real service outages are not claimed universally
 qualified.
+
+### Completed refinement housekeeping
+
+A verified `refined` attempt has no pull request. Its owned worktree and branch are cleaned up by
+idle project housekeeping, after the final Backlog readback and terminal release, rather than by the
+still-active refinement workflow. This also discovers already-completed attempts that previous
+versions left behind with an `ignored-output` cleanup warning; no card movement or state reset is
+required. Setup and OpenCode refinement are not run again for housekeeping.
+
+Cleanup requires retained proof that setup and analysis stopped, verified task ownership, no active
+competing task writer, and branch history preserved on the accepted default-branch ref. Ignored
+output is **archived, not deleted**, using the existing durable rename plan under
+`<worktreeRoot>/.cleanup-archives/<attemptId>/`. This directory stays on the worktree filesystem. Do
+not delete the archive to silence a warning: it can contain valuable output as well as dependencies.
+Tracked/untracked edits, local-only commits, unknown resources, conflicting archive destinations,
+and missing or ambiguous execution evidence remain preserved.
+
+Housekeeping retains its three-attempt limit and restart-safe recheck deadlines. Cleanup failure
+does not undo successful refinement, move the card out of Backlog, rerun analysis, send another
+completion notification, or prevent an independently eligible task from starting after terminal
+release. Inspect `terminal-resource-cleanup` in the original attempt record for the cleanup status,
+retry deadline, and archive plan. Preserve the same runtime, coordination, repository, and worktree
+mounts when rebuilding and redeploying.

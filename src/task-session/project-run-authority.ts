@@ -9,6 +9,7 @@ import {
   otherTaskWriterIsActive,
   terminalStopProofValid,
 } from "./terminal-pr-fence.js";
+import { isCompletedRefinement } from "./refinement-cleanup-proof.js";
 import { isConclusiveOperationResolution } from "./run-record.js";
 import type { TaskExecutionRecord } from "./task-execution-record.js";
 import type { TaskExecutionEvent } from "./task-execution-transition.js";
@@ -272,11 +273,12 @@ export class ProjectRunAuthority {
     if (
       !record ||
       record.projectId !== options.projectId ||
-      !["done", "cancelled"].includes(record.lifecycle) ||
-      record.terminalSync !== "verified" ||
-      !["merged", "closed-unmerged"].includes(record.terminalEvidence?.prOutcome ?? "")
+      (!isCompletedRefinement(record) &&
+        (!["done", "cancelled"].includes(record.lifecycle) ||
+          record.terminalSync !== "verified" ||
+          !["merged", "closed-unmerged"].includes(record.terminalEvidence?.prOutcome ?? "")))
     )
-      throw new RunStoreConflictError("Cleanup requires a verified terminal PR attempt");
+      throw new RunStoreConflictError("Cleanup requires a verified terminal attempt");
     const pointer = new RunRegistry(options.pinned.storageRoot, integrationId, lease).read();
     if (pointer && pointer.attemptId !== record.attemptId) {
       const active = RunStore.openWithPersistedIdentity(
