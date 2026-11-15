@@ -17,7 +17,7 @@ import {
 
 const probeTimeoutMilliseconds = 10_000;
 const doctorUsage =
-  "Usage: yarn doctor [--json] [--config PATH | --config=PATH]\n       yarn doctor --help";
+  "Usage: yarn doctor [--json] [--config PATH | --config=PATH]\n       yarn doctor --help\n       yarn doctor -h";
 
 /** Local probes deliberately bypass CommandRunner's durable process evidence and logging. */
 export function runDoctorProbe(options: CommandRunOptions): Promise<CommandRunResult> {
@@ -77,7 +77,8 @@ export interface DoctorReport {
 export type DoctorArguments = { help: true } | { json: boolean; configPath: string };
 
 export function parseDoctorArguments(args: readonly string[]): DoctorArguments | undefined {
-  if (args.length === 1 && args[0] === "--help") return { help: true };
+  if (args.length === 1 && (args[0] === "--help" || args[0] === "-h")) return { help: true };
+  if (args.includes("-h")) return undefined;
   let json = false;
   let configPath: string | undefined;
   for (let index = 0; index < args.length; index += 1) {
