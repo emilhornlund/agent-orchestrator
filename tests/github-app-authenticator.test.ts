@@ -117,10 +117,7 @@ describe("GitHubAppAuthenticator", () => {
       await expect(
         new GitHubAppAuthenticator({
           request: vi.fn().mockResolvedValue(tokenResponse("mount-token", "2099-01-01T00:00:00Z")),
-        }).getInstallationToken(
-          { ...githubApp, privateKeyPath: keyPath },
-          repository,
-        ),
+        }).getInstallationToken({ ...githubApp, privateKeyPath: keyPath }, repository),
       ).resolves.toBe("mount-token");
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
