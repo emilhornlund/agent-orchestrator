@@ -3,7 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { notificationAuthorityFixture } from "./support/notification-authority-fixture.js";
-import type { ProjectOwnershipLease } from "../src/coordination/project-ownership.js";
+import {
+  acquireProjectOwnership,
+  type ProjectOwnershipLease,
+} from "../src/coordination/project-ownership.js";
 import { ProjectRunAuthority } from "../src/task-session/project-run-authority.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import { runTaskResources } from "../src/task-session/task-resources.js";
@@ -38,6 +41,7 @@ async function fixture() {
   leases.push(f.lease);
   vi.stubGlobal("fetch", f.fetch);
   let authority = f.authority;
+  let lease = f.lease;
   let now = Date.now();
   vi.spyOn(Date, "now").mockImplementation(() => now);
   const state = () => authority.read(refinementRecoveryKey, refinementRecoverySchema.parse);
@@ -45,13 +49,25 @@ async function fixture() {
     now = Date.parse(state()!.nextCheckAt) + 1;
   };
   const reopen = async () => {
+    const priorGeneration = authority.ownerGeneration;
+    await lease.release();
+    lease = await acquireProjectOwnership(
+      f.context.coordinationRoot,
+      {
+        trelloBoardId: f.project.trello.boardId,
+        githubRepository: f.project.repository.github,
+      },
+      "notification-authority-test",
+    );
+    leases.push(lease);
     authority = await ProjectRunAuthority.resumeAttempt({
       projectId: f.project.id,
       attemptId: authority.store.attemptId,
       pinned: f.pinned,
-      projectLease: f.lease,
+      projectLease: lease,
       coordinationRoot: f.context.coordinationRoot,
     });
+    expect(authority.ownerGeneration).toBe(priorGeneration + 1);
   };
   const poll = (commands = f.commands) =>
     pollProject(
