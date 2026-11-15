@@ -159,16 +159,34 @@ describe("notification authority through production polling and workers", () => 
       return move(card, list, options);
     });
     await a.poll();
+    const completion = a
+      .outbox()
+      .records()
+      .find((record) => record.event === "refinementComplete");
     const completedMove = a.authority.store
       .read()!
-      .pendingOperations.find(
-        (op) => op.id === a.outbox().records()[0]?.trigger?.binding?.operationId,
-      );
+      .pendingOperations.find((op) => op.id === completion?.trigger?.binding?.operationId);
     expect(completedMove?.status).toBe("completed");
     await a.outbox().drain(a.notifier, () => {});
-    expect(a.sink).toHaveLength(0);
-    expect(a.outbox().records()[0]?.trigger?.binding?.refinementHash).toBeDefined();
-    expect(a.outbox().records()[0]?.dispatches).toHaveLength(0);
+    // An uncertain field outcome now raises a deduplicated attention alert,
+    // never an unverified refinement-complete notification.
+    expect(a.sink).toHaveLength(1);
+    expect(a.sink[0]).toContain("Event: Attention Required");
+    expect(a.sink.join("\n")).not.toContain("Event: Refinement Complete");
+    expect(completion?.trigger?.binding?.refinementHash).toBeDefined();
+    expect(completion?.dispatches).toHaveLength(0);
+    expect(a.authority.store.read()?.lifecycle).toBe("refinement");
+    const before = a.engineer.mock.calls.length;
+    for (let i = 0; i < 5; i++) await a.poll();
+    await a.outbox().drain(a.notifier, () => {});
+    expect(a.engineer).toHaveBeenCalledTimes(before);
+    expect(a.sink).toHaveLength(1);
+    expect(
+      a
+        .outbox()
+        .records()
+        .find((record) => record.event === "refinementComplete")?.dispatches,
+    ).toHaveLength(0);
   }, 30_000);
   it.each([false, true])(
     "finishes/refines/releases A with broken delivery storage while B progresses, then recovers the original event after later movement (shared root: %s)",
