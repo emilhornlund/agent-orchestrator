@@ -1,0 +1,32 @@
+name: Recovery image qualification
+
+on:
+  push:
+    branches:
+      - fix/refinement-recovery-loop
+    paths:
+      - .github/workflows/refinement-recovery-image-check.yml
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Build production container
+        run: docker build --progress=plain -f Containerfile -t agent-orchestrator-recovery-check .
+      - name: Verify packaged runtime without connecting to live services
+        run: |
+          docker run --rm --entrypoint sh agent-orchestrator-recovery-check -ec '
+            test "$(id -u)" != 0
+            test -r scripts/contained-process-supervisor.mjs
+            node --check scripts/contained-process-supervisor.mjs
+            node --input-type=module -e "await import(\"./dist/refinement/refinement-recovery.js\"); await import(\"./dist/orchestrator/run-task-session-workflow.js\"); console.log(\"Recovery runtime imports OK\")"
+            bwrap --version
+            gh --version
+            opencode --version
+          '
