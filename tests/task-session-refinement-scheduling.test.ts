@@ -166,7 +166,8 @@ describe("task-session refinement scheduling", () => {
             color: null,
           })),
         );
-      if (parts[4] === "actions") return Response.json(history);
+      if (parts[4] === "actions")
+        return Response.json(history.filter((action) => action.type === "updateCard"));
       const card = readyCards.find((candidate) => candidate.id === parts[3])!;
       const record = (
         type: RefinementHistoryAction["type"],
