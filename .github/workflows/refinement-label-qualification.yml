@@ -1,0 +1,100 @@
+name: Refinement label correction qualification
+on:
+  push:
+    branches: [fix/refinement-label-reconciliation]
+    paths: [.github/workflows/refinement-label-qualification.yml]
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.prepare.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - id: prepare
+        name: Prepare reviewed correction without updating any branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PYCODE'
+          import base64, gzip, json, os, pathlib, subprocess, urllib.request
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          expected = {
+              'src/refinement/refinement-card-guard.ts': 'c37e947710a9eec049941d9ce0419af2ae2f20a0',
+              'src/trello/trello-client.ts': '2afd6aec6328bee37b8fcb7ce4c3f8defed58357',
+              'tests/support/notification-authority-fixture.ts': '410085a60f015df79753b7b13101ea94d6bb67d6',
+              'tests/task-session-refinement-scheduling.test.ts': '4ea107f9a68d8c6b63097089557ca8b3d34fae22',
+              'tests/preparing-attempt-resume.integration.test.ts': '111078238c94f558fbd73bc5a83657ff4103771e',
+          }
+          for name, sha in expected.items():
+              assert git('hash-object', name) == sha, name
+          data = json.loads(gzip.decompress(base64.b64decode('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')))
+          subprocess.run(['git', 'apply', '--index', '-'], input=data['patch'], text=True, check=True)
+          new_paths = {'tests/refinement-label-reconciliation.integration.test.ts', 'docs/refinement-label-reconciliation.md'}
+          assert set(data['files']) == new_paths
+          for name, content in data['files'].items():
+              path = pathlib.Path(name)
+              assert not path.exists(), name
+              path.write_text(content)
+              git('add', name)
+          temporary = '.github/workflows/refinement-label-qualification.yml'
+          git('rm', temporary)
+          paths = git('diff', '--cached', '--name-only').splitlines()
+          assert set(paths) == set(expected) | new_paths | {temporary}
+          def api(endpoint, payload):
+              request = urllib.request.Request(
+                  'https://api.github.com/repos/' + os.environ['GITHUB_REPOSITORY'] + '/git/' + endpoint,
+                  data=json.dumps(payload).encode(),
+                  headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json'},
+                  method='POST',
+              )
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  return json.load(response)
+          entries = []
+          for name in paths:
+              sha = None if name == temporary else api('blobs', {'content': pathlib.Path(name).read_text(), 'encoding': 'utf-8'})['sha']
+              entries.append({'path': name, 'mode': '100644', 'type': 'blob', 'sha': sha})
+          tree = api('trees', {'base_tree': git('rev-parse', 'HEAD^{tree}'), 'tree': entries})['sha']
+          identity = {'name': git('show', '-s', '--format=%an', 'HEAD'), 'email': git('show', '-s', '--format=%ae', 'HEAD')}
+          commit = api('commits', {
+              'message': 'fix(refinement): reconcile labels using journaled card readback\n\n- Verify the exact dispatched label delta without unavailable REST action history.\n- Preserve full-field conflict checks and resume existing checkpoints without replay.\n- Cover real provider responses, lease takeover, lost acknowledgements and image packaging.\n\nAllow partially refined cards to finish safely after redeployment.',
+              'tree': tree, 'parents': [git('rev-parse', 'HEAD')], 'author': identity, 'committer': identity,
+          })['sha']
+          print('PREPARED_COMMIT=' + commit)
+          print('PREPARED_TREE=' + tree)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('sha=' + commit + '\n')
+          PYCODE
+  image:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - name: Build the corrected production image
+        run: docker build -f Containerfile -t refinement-label-check .
+      - name: Verify packaged correction without live service credentials
+        run: |
+          docker run --rm --entrypoint node refinement-label-check --input-type=module -e '
+          import assert from "node:assert/strict";
+          import fs from "node:fs";
+          import { guardRefinementFields } from "./dist/refinement/refinement-card-guard.js";
+          import { TrelloClient } from "./dist/trello/trello-client.js";
+          assert.notEqual(process.getuid(), 0);
+          assert.ok(fs.existsSync("scripts/contained-process-supervisor.mjs"));
+          assert.equal(typeof TrelloClient, "function");
+          const value = { cardId: "card", reconciliation: { actorId: "actor", cursor: null, verified: { title: "Task", description: "Refined", labels: ["refinement"] }, pending: { title: "Task", description: "Refined", labels: ["refinement", "improvement"] } } };
+          const authority = { read: () => value, mutate: (_key, _initial, update) => update() };
+          const trello = { getRefinementHistory: async () => ({ actorId: "actor", actions: [] }), getCard: async () => ({ id: "card", name: "Task", desc: "Refined", idLabels: ["refinement", "improvement"] }) };
+          assert.equal(await guardRefinementFields(trello, authority, "after", { labelId: "improvement", present: true }), true);
+          assert.equal(value.reconciliation.pending, undefined);
+          console.log("Non-root packaged label recovery: passed");
+          '
