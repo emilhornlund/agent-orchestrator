@@ -15,15 +15,24 @@ export async function preserveIgnoredOutput(
   authority: ProjectRunAuthority,
   signal?: AbortSignal,
 ): Promise<string> {
-  const root = path.join(
+  let state = readTerminalCleanup(authority);
+  if (!state) throw new Error("Cleanup preservation requires durable intent");
+  const localRoot = path.join(
+    path.dirname(worktree),
+    ".cleanup-archives",
+    authority.store.attemptId,
+  );
+  const legacyRoot = path.join(
     authority.store.storageRoot,
     "cleanup-archives",
     authority.store.attemptId,
   );
+  // Older populated plans keep their original destination. No data relocation.
+  const root = state.archiveRoot ?? (state.archive.length ? legacyRoot : localRoot);
+  if (root !== localRoot && root !== legacyRoot)
+    throw new Error("Cleanup archive root differs from owned attempt storage");
   if (root === worktree || root.startsWith(`${worktree}${path.sep}`))
     throw new Error("Cleanup archive must be outside the worktree");
-  let state = readTerminalCleanup(authority);
-  if (!state) throw new Error("Cleanup preservation requires durable intent");
   const paths = await git.getIgnoredCleanupPaths(worktree);
   const known = new Set(state.archive.map((entry) => entry.relativePath));
   const additions = paths
@@ -33,7 +42,7 @@ export async function preserveIgnoredOutput(
       const stat = fs.lstatSync(path.join(worktree, relativePath), { bigint: true });
       return { relativePath, device: String(stat.dev), inode: String(stat.ino) };
     });
-  state = { ...state, archive: [...state.archive, ...additions] };
+  state = { ...state, archiveRoot: root, archive: [...state.archive, ...additions] };
   if (state.archive.length > 4096)
     throw new Error("Cleanup archive inventory exceeds bounded limit");
   writeTerminalCleanup(authority, state);

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { notificationAuthorityFixture } from "./support/notification-authority-fixture.js";
 import { createIsolatedGitFixture } from "./support/isolated-git-fixture.js";
@@ -127,6 +128,64 @@ async function fixture() {
 }
 
 describe("terminal resource cleanup", () => {
+  it("archives on the worktree mount when context is a separate filesystem", () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "archive-mounts-"));
+    const worktree = path.join(root, "worktrees", "card");
+    const context = path.join(root, "context");
+    const moduleURL = new URL("../src/git/preserve-ignored-output.ts", import.meta.url).href;
+    fs.mkdirSync(worktree, { recursive: true });
+    fs.mkdirSync(context);
+    const script = `
+import fs from "node:fs";
+import path from "node:path";
+import assert from "node:assert/strict";
+import { preserveIgnoredOutput } from ${JSON.stringify(moduleURL)};
+const worktree = ${JSON.stringify(worktree)}, context = ${JSON.stringify(context)};
+fs.mkdirSync(path.join(worktree, "dist"));
+const sentinel = path.join(worktree, "dist", "sentinel");
+fs.writeFileSync(sentinel, "preserve ignored output");
+assert.throws(() => fs.renameSync(sentinel, path.join(context, "old-destination")), {code: "EXDEV"});
+let state = {version: 1, status: "pending", attempts: 1, updatedAt: new Date().toISOString(), retryAt: null, reason: "inspection", archive: []};
+const authority = {
+  store: {storageRoot: context, attemptId: "mount-test"},
+  read(_key, validate) { return validate(state); },
+  mutate(_key, _initial, operation, validate) { const next = operation(state); state = validate(next.value); return next.result; },
+  assertHeld() {},
+};
+const archive = await preserveIgnoredOutput({getIgnoredCleanupPaths: async () => ["dist"]}, worktree, authority);
+assert.equal(archive, path.join(path.dirname(worktree), ".cleanup-archives", "mount-test"));
+assert.equal(state.archiveRoot, archive);
+assert.equal(fs.readFileSync(path.join(archive, "dist", "sentinel"), "utf8"), "preserve ignored output");
+assert.equal(fs.existsSync(sentinel), false);
+assert.deepEqual(fs.readdirSync(context), []);
+`;
+    execFileSync(
+      "bwrap",
+      [
+        "--die-with-parent",
+        "--new-session",
+        "--unshare-pid",
+        "--bind",
+        "/",
+        "/",
+        "--tmpfs",
+        context,
+        "--proc",
+        "/proc",
+        "--dev",
+        "/dev",
+        "--",
+        process.execPath,
+        "--import",
+        import.meta.resolve("tsx"),
+        "--input-type=module",
+        "-e",
+        script,
+      ],
+      { timeout: 12_000, stdio: "pipe" },
+    );
+  });
+
   it("archives setup/build and unknown ignored output, removes actual Git resources, and repeats safely", async () => {
     const f = await fixture();
     const beforeSource = f.local.git(f.project.repository.path, "status", "--porcelain");
@@ -155,8 +214,8 @@ describe("terminal resource cleanup", () => {
       expect(
         fs.readFileSync(
           path.join(
-            f.pinned.storageRoot,
-            "cleanup-archives",
+            path.dirname(f.resource.path),
+            ".cleanup-archives",
             f.authority.store.attemptId,
             relative,
           ),
@@ -218,6 +277,36 @@ describe("terminal resource cleanup", () => {
     expect(resumed.run(() => readTerminalCleanup(resumed))?.status).toBe("removed");
   });
 
+  it("resumes an existing archive plan at its original context location", async () => {
+    const f = await fixture();
+    const original = path.join(f.resource.path, "dist");
+    const stat = fs.lstatSync(original, { bigint: true });
+    const legacy = path.join(
+      f.pinned.storageRoot,
+      "cleanup-archives",
+      f.authority.store.attemptId,
+    );
+    f.authority.run(() =>
+      writeTerminalCleanup(f.authority, {
+        version: 1,
+        status: "pending",
+        attempts: 0,
+        updatedAt: new Date().toISOString(),
+        retryAt: null,
+        reason: "inspection",
+        archive: [{ relativePath: "dist", device: String(stat.dev), inode: String(stat.ino) }],
+      }),
+    );
+    fs.mkdirSync(legacy, { recursive: true });
+    fs.renameSync(original, path.join(legacy, "dist"));
+    const destination = await f.authority.run(() =>
+      preserveIgnoredOutput(f.git, f.resource.path, f.authority),
+    );
+    expect(destination).toBe(legacy);
+    expect(f.authority.run(() => readTerminalCleanup(f.authority))?.archiveRoot).toBe(legacy);
+    expect(fs.readFileSync(path.join(legacy, "dist/app.js"), "utf8")).toBe("dist/app.js");
+  });
+
   it("paces preserved dirty resources across restarts and stops after three attempts", async () => {
     const f = await fixture();
     fs.writeFileSync(path.join(f.resource.path, "feature.txt"), "unpublished edits");
@@ -248,14 +337,14 @@ describe("terminal resource cleanup", () => {
     expect(fs.readFileSync(path.join(f.resource.path, "feature.txt"), "utf8")).toBe(
       "unpublished edits",
     );
-    expect(fs.existsSync(path.join(f.pinned.storageRoot, "cleanup-archives"))).toBe(false);
+    expect(fs.existsSync(path.join(path.dirname(f.resource.path), ".cleanup-archives"))).toBe(false);
   });
 
   it("preserves an archive collision rather than overwrite or remove either copy", async () => {
     const f = await fixture();
     const destination = path.join(
-      f.pinned.storageRoot,
-      "cleanup-archives",
+      path.dirname(f.resource.path),
+      ".cleanup-archives",
       f.authority.store.attemptId,
       "dist",
     );
@@ -280,7 +369,7 @@ describe("terminal resource cleanup", () => {
     const f = await fixture();
     const target = path.join(root, "unowned");
     fs.mkdirSync(target);
-    fs.symlinkSync(target, path.join(f.pinned.storageRoot, "cleanup-archives"), "dir");
+    fs.symlinkSync(target, path.join(path.dirname(f.resource.path), ".cleanup-archives"), "dir");
     await expect(
       f.authority.run(() =>
         cleanupTerminalResources({

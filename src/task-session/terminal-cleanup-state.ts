@@ -10,6 +10,7 @@ export const terminalCleanupSchema = z.strictObject({
   attempts: z.number().int().min(0).max(cleanupRetryLimit),
   updatedAt: z.string().datetime(),
   retryAt: z.string().datetime().nullable(),
+  archiveRoot: z.string().min(1).optional(),
   reason: z.enum([
     "inspection",
     "safety",

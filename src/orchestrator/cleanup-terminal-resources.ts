@@ -52,6 +52,7 @@ export async function cleanupTerminalResources(options: {
       retryAt: new Date(now.getTime() + cleanupRetryDelayMs).toISOString(),
       reason: "inspection",
       archive: prior?.archive ?? [],
+      ...(prior?.archiveRoot === undefined ? {} : { archiveRoot: prior.archiveRoot }),
     });
   }
   try {
@@ -106,5 +107,6 @@ export function preserveTerminalResources(projectId: string): void {
     retryAt: null,
     updatedAt: new Date().toISOString(),
     archive: prior?.archive ?? [],
+    ...(prior?.archiveRoot === undefined ? {} : { archiveRoot: prior.archiveRoot }),
   });
 }
