@@ -38,6 +38,36 @@ Also inspect the attempt's recorded worktree/branch, Git status and head, truste
 authoritative Trello list/history, GitHub PR identity/head, and the per-card session log when
 present. Never delete an unknown worktree or discard changes as a first response.
 
+## Refinement recovery after repository setup
+
+A successful setup checkpoint is reused when an interrupted refinement resumes. Setup inventories
+include ignored dependency files; the artifact reader and writer share a 256 MiB size ceiling.
+Previously, the writer could save inventories exceeding the reader's 16 MiB ceiling, leaving a
+completed setup unreadable on every subsequent poll. Existing content-addressed artifacts within the
+new ceiling are read directly, with the original digest and worktree identity checks intact. They do
+not require a new attempt, another dependency installation, or replacement of the baseline.
+
+To recover this condition after upgrading, keep the same configuration, runtime/coordination
+volumes, repository, and worktree mounts. Do not move the card out of `Working`, clear its records,
+or delete its worktree. The next poll resumes its existing attempt and verifies the saved setup
+before refinement. Successful refinement returns the card to `Backlog`; it does not implement the
+card or move it to `Done`. A missing, modified, oversized, or identity-mismatched artifact is still
+preserved and requires its reported cause to be resolved; the upgrade does not bypass safety checks.
+
+Other refinement recovery failures retain a sanitized causal diagnostic and a durable recheck
+schedule (one minute initially, increasing to at most five minutes). Ordinary polls and restarts do
+not reset that schedule or the attempt count. Local internal failures are limited to three attempts;
+exhaustion only enters the existing verified `Failed` transition when setup/analysis processes are
+proven stopped, external operations are conclusively resolved, and no refinement field update is
+pending. Original card fields and worktree evidence are preserved. An exhausted attempt is never
+redispatched while stopped-process or external-effect proof is missing.
+
+Explicit safety ambiguity and retryable Trello outages use controlled reconciliation waits rather
+than consuming the internal-failure allowance. Ownership is retained until recovery is verified;
+unchanged causes do not generate an attention email on every poll. Resolving the dependency permits
+the next scheduled recheck to resume the same attempt. Human edits and uncertain partial card writes
+continue to require their existing conservative field/history reconciliation.
+
 ## Restart and task ownership
 
 If startup reports that project ownership is already held, inspect the recorded owner PID in the

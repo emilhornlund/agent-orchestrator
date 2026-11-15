@@ -8,4 +8,5 @@
 !src/**
 !scripts
 !scripts/github-git-askpass.mjs
+!scripts/contained-process-supervisor.mjs
 !Containerfile

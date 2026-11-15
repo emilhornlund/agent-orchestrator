@@ -189,6 +189,11 @@ import {
 } from "../refinement/refinement-completion.js";
 import { runRefinementOperation } from "../refinement/refinement-operation.js";
 import {
+  refinementRecoveryDue,
+  withRefinementRecovery,
+  RefinementRecoveryDeferredError,
+} from "../refinement/refinement-recovery.js";
+import {
   readRejectedCommitState,
   readTrustedCommitState,
   readPendingCommitState,
@@ -1228,6 +1233,21 @@ export async function runTaskSessionWorkflow(
   options: RunTaskSessionWorkflowOptions,
 ): Promise<void> {
   const { project, trello, git, github, openCode, commands, signal, emailNotifier } = options;
+  const authority = ProjectRunAuthority.current(project.id);
+  // Polling is not permission to redispatch a blocked refinement. The absolute
+  // deadline and internal failure allowance survive worker/service restarts.
+  if (!refinementRecoveryDue(authority)) return;
+  const processRefinement = options.processRefinement
+    ? (card: TrelloCard, worktree: { path: string; branch: string }) =>
+        withRefinementRecovery({
+          project,
+          card,
+          worktreePath: worktree.path,
+          signal,
+          ...(emailNotifier ? { emailNotifier } : {}),
+          execute: () => options.processRefinement!(card, worktree),
+        })
+    : undefined;
   // Publication resumes before general session recovery/list discovery. A lost
   // move acknowledgment can leave the card in Review while its task checkpoint
   // is still publication; neither absence from Working nor an outage may claim
@@ -4204,10 +4224,10 @@ export async function runTaskSessionWorkflow(
       throw new Error(`Refinement restart ownership is ambiguous for Working card ${card.id}`);
     }
     const recovered = queue.claimForRecovery(activeMutation.eventId);
-    if (recovered === null || options.processRefinement === undefined)
+    if (recovered === null || processRefinement === undefined)
       throw new Error(`Could not safely resume refinement mutation for ${card.id}`);
     try {
-      await options.processRefinement(card, {
+      await processRefinement(card, {
         path: worktreePath,
         branch: taskResources(project, card.id).branch,
       });
@@ -4252,6 +4272,7 @@ export async function runTaskSessionWorkflow(
       )
         queue.releaseForRecovery(recovered.eventId);
       else queue.fail(recovered.eventId);
+      if (error instanceof RefinementRecoveryDeferredError) return;
       throw error;
     }
   }
@@ -4858,7 +4879,7 @@ export async function runTaskSessionWorkflow(
       if (recoveryRecord !== null) {
         throw new Error("Refinement recovery cannot reuse an implementation task record");
       }
-      if (options.processRefinement === undefined) {
+      if (processRefinement === undefined) {
         throw new Error("Unified scheduler has no refinement operation");
       }
       const worktree = await prepareWorktree(git, project, card.id);
@@ -4878,7 +4899,7 @@ export async function runTaskSessionWorkflow(
       const claimedCard = await trello.moveCard(card.id, project.trello.workingListId);
       cardLog.event("Card claimed; transition to Working succeeded");
       try {
-        await options.processRefinement(claimedCard ?? card, worktree);
+        await processRefinement(claimedCard ?? card, worktree);
       } catch (error) {
         if (error instanceof RefinementSetupFailedError) {
           try {

@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import {
   RunRegistry,
+  MAX_RUN_ARTIFACT_BYTES,
   RunStore,
   RunStoreConflictError,
   RunStoreUnsupportedVersionError,
@@ -719,6 +720,33 @@ describe("RunStore authoritative foundation", () => {
       }),
     );
     expect(() => store.read()).toThrow("identity/pins");
+  });
+  it("reopens a legacy artifact larger than 16 MiB without losing digest validation", () => {
+    const { store, identity, lease } = setup();
+    store.create(fixture(identity));
+    const contents = Buffer.alloc(17 * 1024 * 1024, "x");
+    const ref = store.writeArtifact(contents, "application/json");
+    const reopened = new RunStore(identity.storageRoot, store.attemptId, identity, lease);
+    expect(reopened.readArtifact(ref.id).equals(contents)).toBe(true);
+    const descriptor = fs.openSync(ref.path, "r+");
+    try {
+      fs.writeSync(descriptor, Buffer.from("y"), 0, 1, 0);
+    } finally {
+      fs.closeSync(descriptor);
+    }
+    expect(() => reopened.readArtifact(ref.id)).toThrow("Artifact digest mismatch");
+  });
+  it("enforces the same artifact size ceiling before writing and allocating a read", () => {
+    const { store, identity } = setup();
+    store.create(fixture(identity));
+    // Allocation is lazy; the writer must reject before hashing or touching it.
+    expect(() => store.writeArtifact(new Uint8Array(MAX_RUN_ARTIFACT_BYTES + 1))).toThrow(
+      "exceeds the",
+    );
+    const ref = store.writeArtifact(Buffer.from("preserved"));
+    fs.truncateSync(ref.path, MAX_RUN_ARTIFACT_BYTES + 1);
+    expect(() => store.readArtifact(ref.id)).toThrow("exceeds the");
+    expect(fs.statSync(ref.path).size).toBe(MAX_RUN_ARTIFACT_BYTES + 1);
   });
   it("uses content addressed immutable artifacts and rejects missing or changed references", () => {
     const { store, identity } = setup();

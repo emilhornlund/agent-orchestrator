@@ -42,6 +42,9 @@ export interface RunStoreLease {
   assertHeld(): void;
 }
 const MAX_RECORD_BYTES = 8 * 1024 * 1024;
+// Setup inventories include dependency trees and routinely exceed the record limit.
+// Readers and writers must agree, including when reopening pre-upgrade artifacts.
+export const MAX_RUN_ARTIFACT_BYTES = 256 * 1024 * 1024;
 function assertNoSymlinkPath(directory: string): void {
   const absolute = path.resolve(directory);
   let current = path.parse(absolute).root;
@@ -1352,7 +1355,11 @@ export class RunStore {
     const fd = fs.openSync(expected, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
     try {
       const stat = fs.fstatSync(fd);
-      if (!stat.isFile() || stat.size > 16 * 1024 * 1024) throw new Error("Unsafe artifact file");
+      if (!stat.isFile()) throw new Error("Unsafe artifact file: expected a regular file");
+      if (stat.size > MAX_RUN_ARTIFACT_BYTES)
+        throw new Error(
+          `Artifact size ${stat.size} exceeds the ${MAX_RUN_ARTIFACT_BYTES}-byte limit`,
+        );
       const content = Buffer.alloc(stat.size);
       let offset = 0;
       while (offset < content.length) {
@@ -1368,6 +1375,10 @@ export class RunStore {
     }
   }
   private persistArtifact(content: Uint8Array, mediaType?: string): RunRecord["artifacts"][number] {
+    if (content.byteLength > MAX_RUN_ARTIFACT_BYTES)
+      throw new Error(
+        `Artifact size ${content.byteLength} exceeds the ${MAX_RUN_ARTIFACT_BYTES}-byte limit`,
+      );
     provisionDirectory(this.artifactDirectory);
     const digest = createHash("sha256").update(content).digest("hex");
     const name = `sha256-${digest}`;
