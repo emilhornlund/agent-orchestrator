@@ -1,0 +1,32 @@
+name: Refinement recovery diagnostics
+
+on:
+  push:
+    branches:
+      - fix/refinement-recovery-loop
+    paths:
+      - .github/workflows/refinement-recovery-debug.yml
+
+permissions:
+  contents: read
+
+jobs:
+  workspace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24
+      - run: yarn install --frozen-lockfile
+      - name: Package reproducible workspace without credentials or Git metadata
+        run: |
+          git ls-files -z | tar --null -T - -czf /tmp/recovery-source.tgz
+          tar -czf /tmp/recovery-dependencies.tgz node_modules
+      - uses: actions/upload-artifact@v4
+        with:
+          name: refinement-recovery-workspace
+          path: /tmp/recovery-*.tgz
+          retention-days: 1
