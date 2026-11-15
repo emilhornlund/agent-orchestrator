@@ -1,0 +1,26 @@
+name: Refinement cleanup qualification
+
+on:
+  push:
+    branches:
+      - fix/refinement-terminal-cleanup
+    paths:
+      - .github/workflows/refinement-cleanup-qualification.yml
+
+permissions:
+  contents: read
+
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Export tracked source without credentials or runtime state
+        run: git archive --format=tar.gz --output=/tmp/refinement-cleanup-source.tgz HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: refinement-cleanup-source
+          path: /tmp/refinement-cleanup-source.tgz
+          retention-days: 1
