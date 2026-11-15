@@ -221,6 +221,24 @@ export async function guardRefinementFields(
       card,
     });
   }
+  if (change && "labelId" in change) {
+    // Trello excludes addLabelToCard/removeLabelFromCard from nested REST
+    // action history. The concrete journal observer supplies its immutable
+    // single-label request only after a durable dispatch. Verify that exact
+    // delta and the entire card readback, not an event polling cannot return.
+    const labels = change.present
+      ? [...new Set([...state.verified.labels, change.labelId])]
+      : state.verified.labels.filter((id) => id !== change.labelId);
+    if (
+      state.verified.labels.includes(change.labelId) === change.present ||
+      !sameRefinementFields({ ...state.verified, labels }, target)
+    )
+      return fail("Refinement label readback differs from the journaled single-label change", {
+        history,
+        card,
+      });
+    expected.labels = [...target.labels];
+  }
   if (!sameRefinementFields(expected, target)) return false;
   state.verified = target;
   state.cursor = history.actions[0]?.id ?? state.cursor;

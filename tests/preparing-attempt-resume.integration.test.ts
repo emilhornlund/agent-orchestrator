@@ -280,7 +280,7 @@ describe("resuming canonical preparing attempts", () => {
                   type: "commentCard",
                   data: { text: comment.text },
                 }))
-              : history,
+              : history.filter((action) => action.type === "updateCard"),
           );
         }
         return Response.json(current());

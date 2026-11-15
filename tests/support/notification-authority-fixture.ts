@@ -175,6 +175,8 @@ export async function notificationAuthorityFixture(
       );
     if (method === "GET" && parts[2] === "cards" && parts[4] === "attachments")
       return Response.json([]);
+    // Match Trello's nested REST action contract: label events exist but are
+    // excluded from this endpoint, regardless of the requested filter.
     if (method === "GET" && parts[2] === "cards" && parts[4] === "actions")
       return Response.json(
         url.searchParams.get("filter") === "commentCard"
@@ -184,7 +186,7 @@ export async function notificationAuthorityFixture(
               data: { text: comment.text },
             }))
           : url.searchParams.get("filter")?.includes("updateCard:name")
-            ? history
+            ? history.filter((action) => action.type === "updateCard")
             : [],
       );
     if (method === "GET" && parts[2] === "cards") return Response.json(card);

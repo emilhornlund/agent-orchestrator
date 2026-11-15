@@ -12,7 +12,11 @@ import {
   refinementMutationSnapshotSchema,
 } from "../refinement/refinement-mutation-snapshot.js";
 import { refinementHistoryActionSchema } from "../refinement/refinement-mutation-snapshot.js";
-import { guardRefinementFields } from "../refinement/refinement-card-guard.js";
+import {
+  guardRefinementFields,
+  refinementCardFields,
+  sameRefinementFields,
+} from "../refinement/refinement-card-guard.js";
 
 export interface TrelloClientOptions {
   apiKey: string;
@@ -838,9 +842,16 @@ export class TrelloClient {
       },
       send: () => (present ? this.addLabel(cardId, labelId) : this.removeLabel(cardId, labelId)),
       observe: async () => {
-        if (!(await guardRefinementFields(this, authority, "after"))) return null;
+        if (!(await guardRefinementFields(this, authority, "after", { labelId, present })))
+          return null;
         const card = await this.observeMutationCard(authority);
-        return card.idLabels.includes(labelId) === present
+        const verified = authority.read(
+          refinementMutationSnapshotKey,
+          refinementMutationSnapshotSchema.parse,
+        )?.reconciliation?.verified;
+        return verified &&
+          card.idLabels.includes(labelId) === present &&
+          sameRefinementFields(refinementCardFields(card), verified)
           ? { id: card.id, fields: card, result: true }
           : null;
       },
@@ -854,7 +865,9 @@ export class TrelloClient {
       `/cards/${cardId}/actions`,
       z.array(refinementHistoryActionSchema),
       {
-        filter: "updateCard:name,updateCard:desc,addLabelToCard,removeLabelFromCard",
+        // Label events are excluded from nested REST resources, even when
+        // explicitly requested. Label reconciliation uses journaled readback.
+        filter: "updateCard:name,updateCard:desc",
         limit: "1000",
       },
       "card action lookup",
