@@ -106,7 +106,7 @@ export async function withRefinementRecovery(options: {
         { cause: new Error(previous.reason) },
       );
     await options.execute();
-    if (previous) authority.remove(refinementRecoveryKey);
+    if (previous && !signal.aborted) authority.remove(refinementRecoveryKey);
   } catch (error) {
     if (signal.aborted || !(error instanceof RefinementSetupAmbiguousError)) throw error;
     const internal =
