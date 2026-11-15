@@ -23,6 +23,7 @@ import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import type { CommandRunner } from "../process/command-runner.js";
 import {
   RefinementSetupAmbiguousError,
+  RefinementInternalRecoveryError,
   RefinementSetupFailedError,
   assertRefinementSetupBaselineUnchanged,
   runRefinementSetup,
@@ -221,7 +222,7 @@ export async function runRefinementCardWorkflow(options: {
       return;
     }
     if (authority)
-      throw new RefinementSetupAmbiguousError(
+      throw new RefinementInternalRecoveryError(
         "Refinement has no verified terminal outcome; preserve current card/worktree state and reconcile before further work",
         { cause: error },
       );

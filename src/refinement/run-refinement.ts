@@ -38,6 +38,31 @@ const analysisKey = "refinement-analysis-v1";
 export class RefinementAnalysisFailedError extends Error {}
 class RefinementDependencyUnavailableError extends Error {}
 
+export function refinementAnalysisIsStopped(
+  authority: ProjectRunAuthority,
+  project: ProjectConfig,
+  worktreePath: string,
+): boolean {
+  const state = authority.read(analysisKey, analysisSchema.parse);
+  if (!state || (state.attempts === 0 && state.status === "pending")) return true;
+  if (!state.executionId || !state.command) return false;
+  const run = authority.store.read()!;
+  const evidence = new TaskExecutionStore(
+    run.pinned.storageRoot,
+    project,
+    authority,
+  ).readProcessExecution(run.cardId, state.executionId, "process-executions");
+  const expected = {
+    executionId: state.executionId,
+    command: state.command,
+    cwd: worktreePath,
+  };
+  return (
+    isVerifiedSuccessfulExecution(evidence, expected) ||
+    isVerifiedStoppedExecution(evidence, expected)
+  );
+}
+
 function hasOpenCodePermissionDenial(output: string, errorOutput: string): boolean {
   const combined = `${output}\n${errorOutput}`.toLowerCase();
 

@@ -56,12 +56,39 @@ export function hasExhaustedRefinementSetup(
   );
 }
 
+export function refinementSetupIsStopped(
+  authority: ProjectRunAuthority,
+  project: ProjectConfig,
+): boolean {
+  const run = authority.store.read()!;
+  const state = authority.read(setupKey(run.cardId), setupStateSchema.parse);
+  if (!state || state.status === "not-required") return true;
+  if (state.attempts.length === 0) return state.status === "pending";
+  const store = new TaskExecutionStore(run.pinned.storageRoot, project, authority);
+  return state.attempts.every((attempt) => {
+    if (!attempt.executionId) return false;
+    const evidence = store.readProcessExecution(run.cardId, attempt.executionId);
+    const expected = {
+      executionId: attempt.executionId,
+      command: attempt.command,
+      cwd: attempt.worktreePath,
+    };
+    return (
+      isVerifiedSuccessfulExecution(evidence, expected) ||
+      isVerifiedStoppedExecution(evidence, expected)
+    );
+  });
+}
+
 export class RefinementSetupAmbiguousError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "RefinementSetupAmbiguousError";
   }
 }
+
+/** A local workflow defect, not evidence of an uncertain external effect. */
+export class RefinementInternalRecoveryError extends RefinementSetupAmbiguousError {}
 
 export class RefinementSetupFailedError extends Error {
   constructor(message: string, options?: ErrorOptions) {
