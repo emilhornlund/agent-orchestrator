@@ -213,11 +213,14 @@ plan. `removed` means the worktree and local branch were removed; archived ignor
 exist. Older terminal attempts without this record are eligible for the same idle reconciliation
 when their original resource ownership and stopped-writer proof remain verifiable.
 
-Ignored files and directories move by same-filesystem atomic rename to
-`<contextRoot>/cleanup-archives/<attemptId>/<original-relative-path>`. The durable plan records
-device and inode identities before moving anything. Restart reconciles a move completed before its
-caller returned. Missing identities, collisions, symlinked ancestors, changed source identity or a
-cross-filesystem rename failure preserve the remaining resources and report a cleanup problem.
+New ignored-output archives move by atomic rename to
+`<worktreeRoot>/.cleanup-archives/<attemptId>/<original-relative-path>`, outside the task worktree
+but on its volume. Context/state can remain on a separate volume without changing configured paths.
+The durable plan records its archive root and device/inode identities before moving anything.
+Restart reuses that destination and reconciles completed moves. Older populated plans without an
+archive root retain their original `<contextRoot>/cleanup-archives/<attemptId>/` location; data is
+not relocated. Missing identities, collisions, symlinked ancestors, changed source identity or an
+unsupported custom cross-mount layout preserve the remaining resources and report a cleanup problem.
 Unknown ignored files are preserved too: `.gitignore` is not authority to delete data. Archives are
 private retained data, outside automatic log/context retention; inspect them before any manual
 disposal. This releases Git resources, not necessarily disk space.
