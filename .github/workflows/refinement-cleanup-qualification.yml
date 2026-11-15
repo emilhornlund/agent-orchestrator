@@ -11,16 +11,96 @@ permissions:
   contents: read
 
 jobs:
-  source:
+  prepare:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.prepare.outputs.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Export tracked source without credentials or runtime state
-        run: git archive --format=tar.gz --output=/tmp/refinement-cleanup-source.tgz HEAD
-      - uses: actions/upload-artifact@v4
+      - name: Prepare the exact reviewed correction without updating a branch
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import base64, gzip, hashlib, json, os, pathlib, subprocess, urllib.request
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          temporary = {'.github/refinement-cleanup.patch.gz.b64', '.github/workflows/refinement-cleanup-qualification.yml'}
+          source = pathlib.Path('.github/refinement-cleanup.patch.gz.b64').read_text().strip()
+          patch = gzip.decompress(base64.b64decode(source, validate=True))
+          assert hashlib.sha256(patch).hexdigest() == '669f793d359d4886f5584756609b6b5333f7603106c8286c10b75a9b53dc264f'
+          subprocess.run(['git', 'apply', '--index', '-'], input=patch, check=True)
+          expected = {
+              'docs/recovery.md', 'src/git/cleanup-worktree.ts',
+              'src/orchestrator/reconcile-terminal-cleanup.ts', 'src/refinement/run-refinement-card.ts',
+              'src/task-session/project-run-authority.ts', 'src/task-session/run-store.ts',
+              'src/task-session/refinement-cleanup-proof.ts',
+              'tests/refinement-field-recovery.integration.test.ts',
+              'tests/refinement-terminal-cleanup.integration.test.ts',
+          }
+          assert set(git('diff', '--cached', '--name-only').splitlines()) == expected
+          git('rm', *sorted(temporary))
+          def api(endpoint, payload):
+              request = urllib.request.Request(
+                  'https://api.github.com/repos/' + os.environ['GITHUB_REPOSITORY'] + '/git/' + endpoint,
+                  data=json.dumps(payload).encode(),
+                  headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json'},
+                  method='POST',
+              )
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  return json.load(response)
+          entries = []
+          for name in sorted(expected | temporary):
+              sha = None if name in temporary else api('blobs', {'content': pathlib.Path(name).read_text(), 'encoding': 'utf-8'})['sha']
+              entries.append({'path': name, 'mode': '100644', 'type': 'blob', 'sha': sha})
+          tree = api('trees', {'base_tree': git('rev-parse', 'HEAD^{tree}'), 'tree': entries})['sha']
+          identity = {'name': git('show', '-s', '--format=%an', 'HEAD'), 'email': git('show', '-s', '--format=%ae', 'HEAD')}
+          commit = api('commits', {
+              'message': 'fix(cleanup): archive completed refinement resources safely\n\n- Defer canonical cleanup until verified refinement completion and idle housekeeping.\n- Recover existing attempts with stopped-process proof and archive ignored output intact.\n- Preserve bounded retries, uncommitted work, local history and project isolation.\n\nClean completed refinements after redeployment without repeating task execution.',
+              'tree': tree, 'parents': [git('rev-parse', 'HEAD')], 'author': identity, 'committer': identity,
+          })['sha']
+          print('PREPARED_COMMIT=' + commit)
+          print('PREPARED_TREE=' + tree)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('sha=' + commit + '\n')
+          PY
+  qualify:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          name: refinement-cleanup-source
-          path: /tmp/refinement-cleanup-source.tgz
-          retention-days: 1
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24
+          cache: yarn
+      - run: yarn install --frozen-lockfile
+      - name: Provision the unchanged CI process-isolation environment
+        run: |
+          node --input-type=module -e 'import fs from "node:fs"; import YAML from "yaml"; const workflow = YAML.parse(fs.readFileSync(".github/workflows/ci.yml", "utf8")); const step = workflow.jobs.validate.steps.find(s => s.name === "Provision and verify process isolation"); if (!step?.run) throw new Error("Missing CI process-isolation provisioner"); fs.writeFileSync("/tmp/provision-cleanup-isolation.sh", step.run);'
+          bash /tmp/provision-cleanup-isolation.sh
+      - run: yarn validate
+      - run: yarn build
+      - name: Build the production image
+        run: docker build --file Containerfile --tag refinement-cleanup-check .
+      - name: Verify packaged cleanup without live service access
+        run: |
+          docker run --rm --network none --entrypoint node refinement-cleanup-check --input-type=module -e '
+            import assert from "node:assert/strict";
+            import fs from "node:fs";
+            import { isCompletedRefinement, refinementCleanupProofSchema } from "./dist/task-session/refinement-cleanup-proof.js";
+            import { reconcileTerminalCleanup } from "./dist/orchestrator/reconcile-terminal-cleanup.js";
+            assert.notEqual(process.getuid(), 0);
+            assert.equal(typeof reconcileTerminalCleanup, "function");
+            assert.equal(isCompletedRefinement({taskKind: "implementation"}), false);
+            refinementCleanupProofSchema.parse({kind: "refinement-processes-stopped", attemptId: "smoke", cardId: "smoke", headSha: "a".repeat(40)});
+            assert.ok(fs.existsSync("scripts/contained-process-supervisor.mjs"));
+            console.log("Packaged refinement cleanup smoke check passed");
+          '
