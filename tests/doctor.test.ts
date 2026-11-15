@@ -12,7 +12,24 @@ import type { CommandRunOptions, CommandRunResult } from "../src/process/command
 
 const example = fs.readFileSync(new URL("../config.example.yaml", import.meta.url), "utf8");
 const usage =
-  "Usage: yarn doctor [--json] [--config PATH | --config=PATH]\n       yarn doctor --help";
+  "Usage: yarn doctor [--json] [--config PATH | --config=PATH]\n       yarn doctor --help\n       yarn doctor -h";
+const invalidShortHelpArguments = [
+  ["-h", "--json"],
+  ["--json", "-h"],
+  ["-h", "--config", "one.yaml"],
+  ["--config", "one.yaml", "-h"],
+  ["-h", "--config=one.yaml"],
+  ["--config=one.yaml", "-h"],
+  ["--config", "-h"],
+  ["-h", "--config"],
+  ["-h", "--help"],
+  ["--help", "-h"],
+  ["-h", "-h"],
+  ["-h", "--unknown"],
+  ["--unknown", "-h"],
+  ["-h", "file"],
+  ["file", "-h"],
+];
 const responses: Record<string, string> = {
   "git --version": "git version 2.30.0",
   "git --list-cmds=main":
@@ -52,16 +69,19 @@ async function diagnose(
 }
 
 describe("local environment diagnostics", () => {
-  it("prints standalone help without loading configuration or probing", async () => {
-    const loadConfig = vi.fn();
-    const runProbe = vi.fn();
-    const write = vi.fn();
-    expect(parseDoctorArguments(["--help"])).toEqual({ help: true });
-    expect(await runDoctor({ loadConfig, runProbe, write }, ["--help"])).toBe(0);
-    expect(write).toHaveBeenCalledExactlyOnceWith(usage);
-    expect(loadConfig).not.toHaveBeenCalled();
-    expect(runProbe).not.toHaveBeenCalled();
-  });
+  it.each(["--help", "-h"])(
+    "prints standalone %s without loading configuration or probing",
+    async (help) => {
+      const loadConfig = vi.fn();
+      const runProbe = vi.fn();
+      const write = vi.fn();
+      expect(parseDoctorArguments([help])).toEqual({ help: true });
+      expect(await runDoctor({ loadConfig, runProbe, write }, [help])).toBe(0);
+      expect(write).toHaveBeenCalledExactlyOnceWith(usage);
+      expect(loadConfig).not.toHaveBeenCalled();
+      expect(runProbe).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     { args: [], json: false, configPath: "config.yaml" },
@@ -75,6 +95,9 @@ describe("local environment diagnostics", () => {
       configPath: "local config.yaml",
     },
     { args: ["--config=local=settings.yaml"], json: false, configPath: "local=settings.yaml" },
+    { args: ["--config=-h"], json: false, configPath: "-h" },
+    { args: ["--config", "-other"], json: false, configPath: "-other" },
+    { args: ["--config", "local-h.yaml"], json: false, configPath: "local-h.yaml" },
     { args: ["--json", "--config", "/tmp/local.yaml"], json: true, configPath: "/tmp/local.yaml" },
     {
       args: ["--config", "local config.yaml", "--json"],
@@ -181,6 +204,7 @@ describe("local environment diagnostics", () => {
     ["--config=one.yaml", "--help"],
     ["--help", "--help"],
     ["--help", "--unknown"],
+    ...invalidShortHelpArguments,
   ])(
     "rejects unsupported arguments before loading configuration or probing: %j",
     async (...args) => {
@@ -339,36 +363,45 @@ describe("standalone doctor entrypoint", () => {
     if (root) fs.rmSync(root, { recursive: true, force: true });
   });
 
-  it("prints help without configuration, probes or state writes", async () => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-help-"));
-    for (const executable of ["git", "gh", "opencode"]) {
-      fs.writeFileSync(
-        path.join(root, executable),
-        `#!${process.execPath}\nrequire('node:fs').writeFileSync('probe-started', 'unexpected');\nprocess.exit(9);\n`,
-        { mode: 0o755 },
+  it.each(["--help", "-h"])(
+    "prints %s without configuration, probes or state writes",
+    async (help) => {
+      root = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-help-"));
+      for (const executable of ["git", "gh", "opencode"]) {
+        fs.writeFileSync(
+          path.join(root, executable),
+          `#!${process.execPath}\nrequire('node:fs').writeFileSync('probe-started', 'unexpected');\nprocess.exit(9);\n`,
+          { mode: 0o755 },
+        );
+      }
+      const snapshot = () =>
+        fs
+          .readdirSync(root!, { recursive: true })
+          .map(String)
+          .sort()
+          .map((entry) => [entry, fs.readFileSync(path.join(root!, entry), "utf8")]);
+      const before = snapshot();
+      expect(fs.existsSync(path.join(root, "config.yaml"))).toBe(false);
+      const result = await promisify(execFile)(
+        process.execPath,
+        ["--import", import.meta.resolve("tsx"), path.resolve("src/doctor.ts"), help],
+        {
+          cwd: root,
+          env: {
+            ...process.env,
+            PATH: root,
+            HOME: root,
+            XDG_DATA_HOME: root,
+            XDG_CACHE_HOME: root,
+          },
+          timeout: 10_000,
+        },
       );
-    }
-    const snapshot = () =>
-      fs
-        .readdirSync(root!, { recursive: true })
-        .map(String)
-        .sort()
-        .map((entry) => [entry, fs.readFileSync(path.join(root!, entry), "utf8")]);
-    const before = snapshot();
-    expect(fs.existsSync(path.join(root, "config.yaml"))).toBe(false);
-    const result = await promisify(execFile)(
-      process.execPath,
-      ["--import", import.meta.resolve("tsx"), path.resolve("src/doctor.ts"), "--help"],
-      {
-        cwd: root,
-        env: { ...process.env, PATH: root, HOME: root, XDG_DATA_HOME: root, XDG_CACHE_HOME: root },
-        timeout: 10_000,
-      },
-    );
-    expect(result.stdout).toBe(`${usage}\n`);
-    expect(result.stderr).toBe("");
-    expect(snapshot()).toEqual(before);
-  });
+      expect(result.stdout).toBe(`${usage}\n`);
+      expect(result.stderr).toBe("");
+      expect(snapshot()).toEqual(before);
+    },
+  );
 
   it.each([
     ["--json", "--unknown"],
@@ -389,6 +422,7 @@ describe("standalone doctor entrypoint", () => {
     ["--help", "--config=one.yaml"],
     ["--config=one.yaml", "--help"],
     ["--help", "--help"],
+    ...invalidShortHelpArguments,
   ])("rejects invalid arguments at the entrypoint without probing: %j", async (...args) => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-arguments-"));
     for (const executable of ["git", "gh", "opencode"]) {
@@ -398,13 +432,27 @@ describe("standalone doctor entrypoint", () => {
         { mode: 0o755 },
       );
     }
+    const snapshot = () =>
+      fs
+        .readdirSync(root!, { recursive: true })
+        .map(String)
+        .sort()
+        .map((entry) => [entry, fs.readFileSync(path.join(root!, entry), "utf8")]);
+    const before = snapshot();
+    expect(fs.existsSync(path.join(root, "config.yaml"))).toBe(false);
     await expect(
       promisify(execFile)(
         process.execPath,
         ["--import", import.meta.resolve("tsx"), path.resolve("src/doctor.ts"), ...args],
         {
           cwd: root,
-          env: { ...process.env, PATH: root },
+          env: {
+            ...process.env,
+            PATH: root,
+            HOME: root,
+            XDG_DATA_HOME: root,
+            XDG_CACHE_HOME: root,
+          },
           timeout: 10_000,
         },
       ),
@@ -414,6 +462,7 @@ describe("standalone doctor entrypoint", () => {
       stderr: "",
     });
     expect(fs.existsSync(path.join(root, "probe-started"))).toBe(false);
+    expect(snapshot()).toEqual(before);
   });
 
   it.each(
