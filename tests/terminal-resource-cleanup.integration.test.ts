@@ -281,11 +281,7 @@ assert.deepEqual(fs.readdirSync(context), []);
     const f = await fixture();
     const original = path.join(f.resource.path, "dist");
     const stat = fs.lstatSync(original, { bigint: true });
-    const legacy = path.join(
-      f.pinned.storageRoot,
-      "cleanup-archives",
-      f.authority.store.attemptId,
-    );
+    const legacy = path.join(f.pinned.storageRoot, "cleanup-archives", f.authority.store.attemptId);
     f.authority.run(() =>
       writeTerminalCleanup(f.authority, {
         version: 1,
@@ -337,7 +333,8 @@ assert.deepEqual(fs.readdirSync(context), []);
     expect(fs.readFileSync(path.join(f.resource.path, "feature.txt"), "utf8")).toBe(
       "unpublished edits",
     );
-    expect(fs.existsSync(path.join(path.dirname(f.resource.path), ".cleanup-archives"))).toBe(false);
+    const archiveDirectory = path.join(path.dirname(f.resource.path), ".cleanup-archives");
+    expect(fs.existsSync(archiveDirectory)).toBe(false);
   });
 
   it("preserves an archive collision rather than overwrite or remove either copy", async () => {
