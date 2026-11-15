@@ -108,22 +108,17 @@ describe("GitHubAppAuthenticator", () => {
     }
   });
 
-  it("rejects an unprotected private-key file with a safe source error", async () => {
+  it("accepts readable mounted private keys without requiring container-specific modes", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "github-app-key-"));
     const keyPath = path.join(directory, "app.pem");
     fs.writeFileSync(keyPath, privateKeyPem, { mode: 0o644 });
     fs.chmodSync(keyPath, 0o644);
     try {
       await expect(
-        new GitHubAppAuthenticator().getInstallationToken(
-          { ...githubApp, privateKeyPath: keyPath },
-          repository,
-        ),
-      ).rejects.toMatchObject({
-        name: "GitHubAppCredentialError",
-        operation: "private key read",
-        message: "GitHub App private key read failed",
-      });
+        new GitHubAppAuthenticator({
+          request: vi.fn().mockResolvedValue(tokenResponse("mount-token", "2099-01-01T00:00:00Z")),
+        }).getInstallationToken({ ...githubApp, privateKeyPath: keyPath }, repository),
+      ).resolves.toBe("mount-token");
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }

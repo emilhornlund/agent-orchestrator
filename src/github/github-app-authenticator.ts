@@ -179,12 +179,10 @@ async function readProtectedPrivateKey(privateKeyPath: string): Promise<string> 
   const handle = await open(privateKeyPath, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const info = await handle.stat();
-    if (!info.isFile() || (info.mode & 0o077) !== 0) {
-      throw new Error("Private key file must be a regular owner-only file");
-    }
-    if (typeof process.getuid === "function" && info.uid !== process.getuid()) {
-      throw new Error("Private key file is not owned by the orchestrator user");
-    }
+    // Read-only bind mounts and Docker secrets retain host ownership/modes.
+    // A configured readable regular file is sufficient; do not reject it just
+    // because the container's runtime UID differs from its host owner.
+    if (!info.isFile()) throw new Error("Private key must be a regular file");
     return await handle.readFile("utf8");
   } finally {
     await handle.close();

@@ -84,7 +84,7 @@ export async function ensureRepository(
     // Do not retain the caught error: an external command may have included a credential.
     throw new ProjectResourceError(
       disposition,
-      `Failed to clone repository "${project.repository.github}" into "${repositoryPath}": ${disposition === "unavailable" ? "GitHub/network resource is temporarily unavailable; retrying" : "GitHub rejected the repository or credentials; verify project configuration and access"}`,
+      `Failed to clone repository "${project.repository.github}" into "${repositoryPath}": ${disposition === "unavailable" ? "GitHub/network resource is temporarily unavailable; retrying" : "GitHub rejected the repository or credentials; verify project configuration and access"}; ${safeMessage}`,
       safeError,
     );
   }
@@ -94,7 +94,7 @@ export async function ensureRepository(
     const disposition = isKnownTransientGitHubFailure(detail) ? "unavailable" : "invalid";
     throw new ProjectResourceError(
       disposition,
-      `Failed to clone repository "${project.repository.github}" into "${repositoryPath}": ${disposition === "unavailable" ? "GitHub/network resource is temporarily unavailable; retrying" : "GitHub rejected the repository or credentials; verify project configuration and access"}`,
+      `Failed to clone repository "${project.repository.github}" into "${repositoryPath}": ${disposition === "unavailable" ? "GitHub/network resource is temporarily unavailable; retrying" : "GitHub rejected the repository or credentials; verify project configuration and access"}${cloneResult.executionId ? `; diagnostics: process-executions/${cloneResult.executionId}/stderr.txt` : ""}`,
     );
   }
 
