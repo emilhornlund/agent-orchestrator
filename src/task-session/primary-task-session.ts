@@ -133,6 +133,7 @@ async function runWithPrimaryTaskSessionOwned(
 ): Promise<OpenCodeRunResult> {
   runOptions = {
     ...runOptions,
+    structuredOutput: true,
     sessionLogPath: runOptions.sessionLogPath ?? getSessionLogPath(projectId, cardId),
   };
   const record = store.read(cardId);

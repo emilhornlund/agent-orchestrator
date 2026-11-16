@@ -26,11 +26,12 @@ if (fs.readFileSync(path.join(cwd, "primary-mode"), "utf8") === "crash") {
 }
 const mode = fs.readFileSync(path.join(cwd, "primary-mode"), "utf8");
 if (
-  (mode === "outage-once" && count === 1) ||
-  (mode !== "outage-once" && count <= Number(process.env.PRIMARY_OUTAGE_WINDOWS ?? "5"))
+  (["outage-once", "auth-once"].includes(mode) && count === 1) ||
+  (!["outage-once", "auth-once"].includes(mode) &&
+    count <= Number(process.env.PRIMARY_OUTAGE_WINDOWS ?? "5"))
 ) {
   process.stdout.write(
-    `${JSON.stringify({ type: "error", error: { name: "APIError", data: { statusCode: 503 } } })}\n`,
+    `${JSON.stringify({ type: "error", error: mode === "auth-once" ? { name: "UnknownError", data: { message: "Token refresh failed: 401" } } : { name: "APIError", data: { statusCode: 503 } } })}\n`,
   );
   process.exit(1);
 }
