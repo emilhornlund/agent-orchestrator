@@ -20,6 +20,10 @@ import { prepareWorktree } from "../src/git/prepare-worktree.js";
 import { createIsolatedGitFixture } from "./support/isolated-git-fixture.js";
 import { reconcilePinnedProjectAttempt } from "../src/startup/run-startup.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
+import {
+  preparationRecoveryKey,
+  preparationRecoverySchema,
+} from "../src/task-session/implementation-preparation-recovery.js";
 import { RunRegistry, RunStore } from "../src/task-session/run-store.js";
 import { runTaskSessionWorkflow } from "../src/orchestrator/run-task-session-workflow.js";
 import type { TrelloClient } from "../src/trello/trello-client.js";
@@ -199,8 +203,23 @@ it("preserves a failed attempt and starts a distinct clean attempt from current 
         prepareAttachmentContext: attachments,
       }),
     ),
-  ).rejects.toBe(boundary);
+  ).resolves.toBeUndefined();
   expect(attachments).toHaveBeenCalledOnce();
+  const recovery = next.read(preparationRecoveryKey, preparationRecoverySchema.parse);
+  expect(recovery).toMatchObject({
+    internalFailures: 1,
+    rechecks: 1,
+    kind: "internal",
+    reason: boundary.message,
+  });
+  expect(Date.parse(recovery!.nextCheckAt)).toBeGreaterThan(Date.now());
+  expect(list).toBe("working");
+  expect(next.store.read()).toMatchObject({
+    lifecycle: "planning",
+    terminalSync: "not-applicable",
+    sessions: {},
+  });
+  expect(fs.readFileSync(path.join(old.path, "unfinished"), "utf8")).toBe("preserved");
   expect(
     next.run(() => new TaskExecutionStore(next.store.storageRoot, f.project).read("card"))
       ?.expectedBranch,
