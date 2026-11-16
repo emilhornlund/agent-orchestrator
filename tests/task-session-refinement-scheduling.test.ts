@@ -26,6 +26,10 @@ import { CommandRunner, type RunCommand } from "../src/process/command-runner.js
 import { pollProject } from "../src/orchestrator/poll-project.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
+import {
+  preparationRecoveryKey,
+  preparationRecoverySchema,
+} from "../src/task-session/implementation-preparation-recovery.js";
 import { runRefinementSetup } from "../src/refinement/run-refinement-setup.js";
 import { TrelloClient, type TrelloCard } from "../src/trello/trello-client.js";
 import type { RefinementHistoryAction } from "../src/refinement/refinement-mutation-snapshot.js";
@@ -504,7 +508,11 @@ describe("task-session refinement scheduling", () => {
           ),
         ),
       ),
-    ).rejects.toThrow("repository setup exited with code 1");
+    ).resolves.toBeUndefined();
+    const recovery = nextAuthority.read(preparationRecoveryKey, preparationRecoverySchema.parse);
+    expect(recovery).toMatchObject({ internalFailures: 1, rechecks: 1, kind: "internal" });
+    expect(recovery!.reason).toContain("repository setup exited with code 1");
+    expect(Date.parse(recovery!.nextCheckAt)).toBeGreaterThan(Date.now());
     expect(cardLists.get(implementationCard.id)).toBe(project.trello.workingListId);
     expect(nextAuthority.store.read()).toMatchObject({
       cardId: implementationCard.id,
@@ -519,7 +527,19 @@ describe("task-session refinement scheduling", () => {
       new TaskMutationQueue(contextRoot, project, nextAuthority)
         .list()
         .find((event) => event.cardId === implementationCard.id)?.status,
-    ).toBe("failed");
+    ).toBe("active");
+    expect(new TaskMutationQueue(contextRoot, project, nextAuthority).getActive()).toMatchObject({
+      cardId: implementationCard.id,
+      kind: "implementation",
+      status: "active",
+    });
+    expect(
+      new TaskExecutionStore(contextRoot, project, nextAuthority).read(implementationCard.id)
+        ?.setup,
+    ).toMatchObject({
+      status: "ambiguous",
+      attempts: 1,
+    });
     expect(openCodeRun.mock.calls.map(([options]) => options.model)).toEqual(["refine"]);
     expect(
       fs.existsSync(

@@ -46,6 +46,11 @@ import {
   reopenPublicationFixture,
 } from "./support/initial-publication-fixture.js";
 
+const largeIgnoredInventory = () =>
+  Array.from(
+    { length: 110_000 },
+    (_, i) => `node_modules/dependency-${i}/${"nested-package/".repeat(10)}index.js`,
+  );
 const roots: string[] = [];
 afterEach(() => {
   vi.useRealTimers();
@@ -120,13 +125,13 @@ async function createSetupDisposition(
     })),
   };
   const scope = resolveSetupCommitScope(before, after, after, verdict);
-  const beforeArtifact = taskStore.writePrimaryResultArtifact("setup-before-integration", before);
-  const afterArtifact = taskStore.writePrimaryResultArtifact("setup-after-integration", after);
-  const failedAttemptAfterArtifact = taskStore.writePrimaryResultArtifact(
+  const beforeArtifact = taskStore.writeSetupArtifact("setup-before-integration", before);
+  const afterArtifact = taskStore.writeSetupArtifact("setup-after-integration", after);
+  const failedAttemptAfterArtifact = taskStore.writeSetupArtifact(
     "setup-failed-attempt-after-integration",
     failedAttemptAfter,
   );
-  const scopeArtifact = taskStore.writePrimaryResultArtifact("setup-scope-integration", {
+  const scopeArtifact = taskStore.writeSetupArtifact("setup-scope-integration", {
     version: 1,
     before: beforeArtifact.reference,
     after: afterArtifact.reference,
@@ -469,30 +474,39 @@ describe("setup-aware initial publication commit scope", () => {
     expect(restarted.services.read().list).toBe("review");
   });
 
-  it("judges failed-attempt output across a successful no-op retry and preserves excluded bytes", async () => {
-    const f = fixture();
-    const disposition = await createSetupDisposition(f, "unrelated.setup");
-    await begin(f, "feat: setup aware task", disposition);
-    await through(f, "pr");
-    expect(f.isolated.git(f.worktreePath, "show", "HEAD:yarn.lock")).toBe("task dependency");
-    expect(() => f.isolated.git(f.worktreePath, "show", "HEAD:unrelated.setup")).toThrow();
-    expect(fs.readFileSync(path.join(f.worktreePath, "unrelated.setup"), "utf8")).toBe(
-      "preserve me\n",
-    );
-    expect(f.isolated.git(f.worktreePath, "status", "--porcelain")).toContain("?? unrelated.setup");
-    expect(
-      f.isolated.git(path.join(f.root, "remote.git"), "show", "refs/heads/agent/card:yarn.lock"),
-    ).toBe("task dependency");
-    expect(f.services.read().requests.length).toBeGreaterThan(0);
-  });
+  it.each([false, true])(
+    "judges failed-attempt output across a successful no-op retry and preserves excluded bytes (large inventory: %s)",
+    async (large) => {
+      const f = fixture();
+      if (large) vi.spyOn(f.git, "getIgnoredFiles").mockResolvedValue(largeIgnoredInventory());
+      const disposition = await createSetupDisposition(f, "unrelated.setup");
+      await begin(f, "feat: setup aware task", disposition);
+      await through(f, "pr");
+      expect(f.isolated.git(f.worktreePath, "show", "HEAD:yarn.lock")).toBe("task dependency");
+      expect(() => f.isolated.git(f.worktreePath, "show", "HEAD:unrelated.setup")).toThrow();
+      expect(fs.readFileSync(path.join(f.worktreePath, "unrelated.setup"), "utf8")).toBe(
+        "preserve me\n",
+      );
+      expect(f.isolated.git(f.worktreePath, "status", "--porcelain")).toContain(
+        "?? unrelated.setup",
+      );
+      expect(
+        f.isolated.git(path.join(f.root, "remote.git"), "show", "refs/heads/agent/card:yarn.lock"),
+      ).toBe("task dependency");
+      expect(f.services.read().requests.length).toBeGreaterThan(0);
+    },
+    60_000,
+  );
 
   it.each([
-    ["empty setup delta", false],
-    ["previously included setup path edited", true],
+    ["empty setup delta", false, false],
+    ["previously included setup path edited", true, false],
+    ["large setup evidence", true, true],
   ] as const)(
     "publishes additive feedback and CI corrections on the same PR with %s while preserving excluded staged output",
-    async (_scenario, includeRelevantSetupChange) => {
+    async (_scenario, includeRelevantSetupChange, large) => {
       const f = fixture();
+      if (large) vi.spyOn(f.git, "getIgnoredFiles").mockResolvedValue(largeIgnoredInventory());
       f.project.repository.setupCommand = "true";
       const disposition = await createSetupDisposition(
         f,
@@ -646,7 +660,7 @@ describe("setup-aware initial publication commit scope", () => {
       );
       expect(f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD")).toBe("3");
     },
-    30_000,
+    60_000,
   );
 
   it.each([

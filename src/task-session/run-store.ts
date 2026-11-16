@@ -1343,7 +1343,9 @@ export class RunStore {
     if (!run) throw new Error("Attempt must exist before artifact publication");
     return this.persistArtifact(content, mediaType);
   }
-  readArtifact(reference: string): Buffer {
+  readArtifact(reference: string, maxBytes = MAX_RUN_ARTIFACT_BYTES): Buffer {
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_RUN_ARTIFACT_BYTES)
+      throw new Error("Invalid artifact read bound");
     if (!/^sha256:[a-f0-9]{64}$/.test(reference)) throw new Error("Invalid artifact reference");
     const digest = reference.slice(7);
     const expected = path.join(this.artifactDirectory, `sha256-${digest}`);
@@ -1357,10 +1359,8 @@ export class RunStore {
     try {
       const stat = fs.fstatSync(fd);
       if (!stat.isFile()) throw new Error("Unsafe artifact file: expected a regular file");
-      if (stat.size > MAX_RUN_ARTIFACT_BYTES)
-        throw new Error(
-          `Artifact size ${stat.size} exceeds the ${MAX_RUN_ARTIFACT_BYTES}-byte limit`,
-        );
+      if (stat.size > maxBytes)
+        throw new Error(`Artifact size ${stat.size} exceeds the ${maxBytes}-byte limit`);
       const content = Buffer.alloc(stat.size);
       let offset = 0;
       while (offset < content.length) {

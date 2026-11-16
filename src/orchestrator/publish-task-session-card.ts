@@ -141,7 +141,7 @@ export async function resolveExistingPrSetupDisposition(
       "Historical setup scope proof is missing or unverifiable; correction publication blocked",
     );
   const store = new TaskExecutionStore(run.pinned.storageRoot, options.project, authority);
-  const artifact = store.readPrimaryResultArtifact(task.setup.relevance) as Record<string, unknown>;
+  const artifact = store.readSetupArtifact(task.setup.relevance) as Record<string, unknown>;
   if (
     artifact.version !== 1 ||
     artifact.before !== task.setup.before ||
@@ -152,11 +152,9 @@ export async function resolveExistingPrSetupDisposition(
     artifact.current === null
   )
     throw new Error("Historical setup scope artifact is malformed; correction publication blocked");
-  const before = store.readPrimaryResultArtifact(task.setup.before);
-  const attemptBefore = store.readPrimaryResultArtifact(
-    task.setup.attemptBefore ?? task.setup.before,
-  );
-  const after = store.readPrimaryResultArtifact(task.setup.after);
+  const before = store.readSetupArtifact(task.setup.before);
+  const attemptBefore = store.readSetupArtifact(task.setup.attemptBefore ?? task.setup.before);
+  const after = store.readSetupArtifact(task.setup.after);
   assertSetupInventoryIdentity(before, options.worktreePath, options.branch);
   assertSetupInventoryIdentity(attemptBefore, options.worktreePath, options.branch);
   assertSetupInventoryIdentity(after, options.worktreePath, options.branch);

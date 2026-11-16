@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import type { ProjectConfig } from "../config/config.js";
 import { parseTaskExecutionRecord, type TaskExecutionRecord } from "./task-execution-record.js";
 import { ProjectRunAuthority } from "./project-run-authority.js";
+import { MAX_RUN_ARTIFACT_BYTES } from "./run-store.js";
 import { PROCESS_CAPTURE_MAX_BYTES, getProcessRuntime } from "../process/process-runtime.js";
 import { redactSecrets } from "../security/redact-secrets.js";
 
@@ -418,13 +419,26 @@ export class TaskExecutionStore {
   }
 
   writePrimaryResultArtifact(id: string, result: unknown): PrimaryResultArtifactReference {
+    return this.writeJsonArtifact(id, result, PROCESS_CAPTURE_MAX_BYTES, "Primary result");
+  }
+
+  /** Setup inventories and attribution proofs are not captured AI/process output. */
+  writeSetupArtifact(id: string, inventory: unknown): PrimaryResultArtifactReference {
+    return this.writeJsonArtifact(id, inventory, MAX_RUN_ARTIFACT_BYTES, "Setup inventory");
+  }
+
+  private writeJsonArtifact(
+    id: string,
+    result: unknown,
+    maxBytes: number,
+    label: string,
+  ): PrimaryResultArtifactReference {
     validatePrimaryResultId(id);
     const bytes = Buffer.from(
       JSON.stringify(redactStructured(result, getProcessRuntime().secretValues)),
       "utf8",
     );
-    if (bytes.byteLength > PROCESS_CAPTURE_MAX_BYTES)
-      throw new Error(`Primary result exceeds ${PROCESS_CAPTURE_MAX_BYTES}-byte limit`);
+    if (bytes.byteLength > maxBytes) throw new Error(`${label} exceeds ${maxBytes}-byte limit`);
     const digest = createHash("sha256").update(bytes).digest("hex");
     if (this.authority) {
       const artifact = this.authority.store.writeArtifact(bytes, "application/json");
@@ -476,6 +490,18 @@ export class TaskExecutionStore {
   }
 
   readPrimaryResultArtifact(ref: PrimaryResultArtifactReference | string): unknown {
+    return this.readJsonArtifact(ref, PROCESS_CAPTURE_MAX_BYTES);
+  }
+
+  /** Uses the same addresses/layout as pre-upgrade setup evidence. */
+  readSetupArtifact(ref: PrimaryResultArtifactReference | string): unknown {
+    return this.readJsonArtifact(ref, MAX_RUN_ARTIFACT_BYTES);
+  }
+
+  private readJsonArtifact(
+    ref: PrimaryResultArtifactReference | string,
+    maxBytes: number,
+  ): unknown {
     const reference = typeof ref === "string" ? ref : ref.reference;
     if (!/^sha256:[a-f0-9]{64}$/.test(reference))
       throw new Error("Invalid primary result artifact reference");
@@ -483,7 +509,9 @@ export class TaskExecutionStore {
     let filePath: string;
     if (this.authority)
       return redactStructured(
-        JSON.parse(this.authority.store.readArtifact(reference).toString("utf8")) as unknown,
+        JSON.parse(
+          this.authority.store.readArtifact(reference, maxBytes).toString("utf8"),
+        ) as unknown,
         getProcessRuntime().secretValues,
       );
     else {
@@ -493,8 +521,10 @@ export class TaskExecutionStore {
     }
     const fd = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
     try {
-      const size = fs.fstatSync(fd).size;
-      if (size > PROCESS_CAPTURE_MAX_BYTES) throw new Error("Unsafe primary result artifact");
+      const stat = fs.fstatSync(fd);
+      const size = stat.size;
+      if (!stat.isFile() || size > maxBytes || (stat.mode & 0o077) !== 0)
+        throw new Error("Unsafe JSON artifact");
       const bytes = Buffer.alloc(size);
       let offset = 0;
       while (offset < size) {

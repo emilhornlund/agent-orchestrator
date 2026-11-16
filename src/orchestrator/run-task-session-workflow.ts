@@ -1,3 +1,7 @@
+import {
+  isImplementationPreparation,
+  withImplementationPreparationRecovery,
+} from "../task-session/implementation-preparation-recovery.js";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { taskResources, runTaskResources } from "../task-session/task-resources.js";
@@ -1230,6 +1234,18 @@ async function collectCiFailureDiagnostics(
 
 /** Executes one new Ready for Agent implementation through the task-session gates. */
 export async function runTaskSessionWorkflow(
+  options: RunTaskSessionWorkflowOptions,
+): Promise<void> {
+  return withImplementationPreparationRecovery({
+    project: options.project,
+    github: options.github,
+    signal: options.signal,
+    ...(options.emailNotifier ? { emailNotifier: options.emailNotifier } : {}),
+    execute: () => runTaskSessionWorkflowAttempt(options),
+  });
+}
+
+async function runTaskSessionWorkflowAttempt(
   options: RunTaskSessionWorkflowOptions,
 ): Promise<void> {
   const { project, trello, git, github, openCode, commands, signal, emailNotifier } = options;
@@ -4999,7 +5015,7 @@ export async function runTaskSessionWorkflow(
         retry += 1
       ) {
         const attemptRecord = recordBeforeSetup;
-        const before = taskStore.writePrimaryResultArtifact(
+        const before = taskStore.writeSetupArtifact(
           `setup-before-${activeCard.id}-${recordBeforeSetup.revision}`,
           JSON.parse(
             (await captureSetupEffects(git, worktreePath, signal)).toString("utf8"),
@@ -5052,7 +5068,7 @@ export async function runTaskSessionWorkflow(
         } catch (error) {
           setupError = error;
         }
-        const after = taskStore.writePrimaryResultArtifact(
+        const after = taskStore.writeSetupArtifact(
           `setup-after-${activeCard.id}-${attemptRecord.revision}`,
           JSON.parse(
             (await captureSetupEffects(git, worktreePath, signal, true)).toString("utf8"),
@@ -6641,8 +6657,8 @@ export async function runTaskSessionWorkflow(
           throw new Error(
             "Setup attribution is unavailable or uncertain; initial publication blocked",
           );
-        const beforeInventory = taskStore.readPrimaryResultArtifact(setupCheckpoint.before);
-        const afterInventory = taskStore.readPrimaryResultArtifact(setupCheckpoint.after);
+        const beforeInventory = taskStore.readSetupArtifact(setupCheckpoint.before);
+        const afterInventory = taskStore.readSetupArtifact(setupCheckpoint.after);
         assertSetupInventoryIdentity(beforeInventory, worktreePath, worktree.branch);
         assertSetupInventoryIdentity(afterInventory, worktreePath, worktree.branch);
         const currentInventory = JSON.parse(
@@ -6689,7 +6705,7 @@ export async function runTaskSessionWorkflow(
           throw new Error(
             "Setup relevance judgment modified repository content; initial publication blocked",
           );
-        const persistedJudgment = taskStore.writePrimaryResultArtifact(
+        const persistedJudgment = taskStore.writeSetupArtifact(
           `setup-relevance-${activeCard.id}-${taskStore.read(activeCard.id)?.revision ?? 0}`,
           {
             version: 1,
@@ -7112,6 +7128,15 @@ export async function runTaskSessionWorkflow(
     taskStore.compareAndSwap(activeCard.id, current.revision, ci);
     if (mutation !== null) queue.complete(mutation.eventId);
   } catch (error) {
+    // Preparation bookkeeping also fails outside primary AI operations. Leave
+    // its checkpoint intact for the shared bounded guard (including recovery).
+    const preparingId = mutation?.cardId ?? recoveryRecord?.cardId;
+    const preparing = preparingId ? taskStore.read(preparingId) : null;
+    if (ProjectRunAuthority.current(project.id) && isImplementationPreparation(preparing)) {
+      if (mutation && queue.ownsActive(mutation.eventId))
+        queue.releaseForRecovery(mutation.eventId);
+      throw error;
+    }
     if (error instanceof NotificationPreparationError) {
       if (mutation && queue.ownsActive(mutation.eventId))
         queue.releaseForRecovery(mutation.eventId);

@@ -68,6 +68,37 @@ unchanged causes do not generate an attention email on every poll. Resolving the
 the next scheduled recheck to resume the same attempt. Human edits and uncertain partial card writes
 continue to require their existing conservative field/history reconciliation.
 
+## Implementation setup inventory and preparation recovery
+
+Implementation setup inventories and setup-attribution evidence use the same bounded 256 MiB
+artifact storage as refinement inventories. Captured AI/process results retain their separate 16 MiB
+limit. Before/after inventories, recovered setup output, and the later publication scope all use the
+setup-specific reader and writer; digests, permissions and worktree identity checks remain enforced.
+Existing content addresses and storage layout are unchanged.
+
+An attempt stopped by `Primary result exceeds 16777216-byte limit` while persisting setup evidence
+can resume after upgrading with the same configuration and persistent mounts. Leave the card in
+`Working` and preserve its worktree, coordination records and runtime state. Recovery adopts a
+verified successful setup execution rather than reinstalling dependencies, then continues the
+implementation workflow. A successful implementation proceeds toward a PR and `Human Review`, not
+the refinement workflow's `Backlog` destination.
+
+Internal preparation failures before the first AI dispatch are counted separately from setup command
+executions. Capture, artifact-storage and setup-checkpoint failures share a durable three-attempt
+allowance, including reconciliation after restarts. Rechecks start after one minute and increase to
+at most five minutes; restarting does not reset them. A transient failure can recover without
+replaying successful setup. When recovery is exhausted, the service stops repeating the failed
+preparation and uses the existing verified `Failed` transition, failure comment and notification
+protocol. Worktrees and diagnostics are preserved; project ownership is released only after terminal
+synchronization is confirmed.
+
+Terminalization requires stopped-process evidence (or an authoritative pre-dispatch checkpoint),
+resolved external mutations, no AI session/operation and no publication. A GitHub lookup must also
+exclude an existing PR for the owned branch. Missing process evidence, existing PRs and external
+outages remain explicit paced waits, not permission to overwrite work or declare failure. Shutdown
+is not charged as an internal failure. This preparation boundary does not replace post-dispatch AI
+recovery or draft-PR delivery when quality gates cannot pass.
+
 ## Restart and task ownership
 
 If startup reports that project ownership is already held, inspect the recorded owner PID in the
