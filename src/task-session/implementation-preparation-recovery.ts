@@ -7,6 +7,7 @@ import { getSessionLogPath } from "../logging/session-log.js";
 import { notifyAttentionRequired, type EmailNotifier } from "../notifications/email-notifier.js";
 import { NotificationPreparationError } from "../notifications/notification-outbox.js";
 import {
+  ProcessExecutionError,
   isVerifiedStoppedExecution,
   isVerifiedSuccessfulExecution,
 } from "../process/process-runtime.js";
@@ -263,7 +264,36 @@ export async function withImplementationPreparationRecovery(options: {
     const terminalPending =
       previous?.internalFailures === OPERATION_RECOVERY_MAX_EXECUTIONS &&
       current?.terminalFailure?.outcome === "pending";
-    if (!isImplementationPreparation(current) && !terminalPending) throw error;
-    await defer(error, terminalPending ? "terminal" : recoveryKind(error));
+    const preparing = authority.store.read();
+    const beforeClaim =
+      current === null &&
+      preparing !== null &&
+      ["preparing", "planning"].includes(preparing.lifecycle) &&
+      preparing.publicationState === "none" &&
+      Object.keys(preparing.sessions).length === 0;
+    if (!isImplementationPreparation(current) && !terminalPending && !beforeClaim) throw error;
+    // A source fetch happens before the task checkpoint exists. Its verified
+    // failure is an unavailable Git prerequisite, not an implementation crash.
+    // Keep the same attempt and use the persisted paced wait across restarts.
+    const process =
+      beforeClaim && error instanceof ProcessExecutionError
+        ? store.readProcessExecution(cardId, error.executionId)
+        : null;
+    const fetchUnavailable =
+      process !== null &&
+      typeof process === "object" &&
+      "command" in process &&
+      typeof process.command === "string" &&
+      /^git (?:-c credential\.helper= )?fetch origin /u.test(process.command) &&
+      error instanceof ProcessExecutionError &&
+      isVerifiedStoppedExecution(process, {
+        executionId: error.executionId,
+        command: process.command,
+        cwd: project.repository.path,
+      });
+    await defer(
+      error,
+      terminalPending ? "terminal" : fetchUnavailable ? "dependency" : recoveryKind(error),
+    );
   }
 }

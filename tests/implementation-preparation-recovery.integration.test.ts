@@ -13,7 +13,7 @@ import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import { runTaskResources } from "../src/task-session/task-resources.js";
 import { pollProject } from "../src/orchestrator/poll-project.js";
 import { CommandRunner, type CommandRunOptions } from "../src/process/command-runner.js";
-import { beginProcessEvidence } from "../src/process/process-runtime.js";
+import { beginProcessEvidence, ProcessExecutionError } from "../src/process/process-runtime.js";
 import {
   preparationRecoveryKey,
   preparationRecoverySchema,
@@ -137,6 +137,39 @@ const largeIgnoredInventory = () =>
     { length: 110_000 },
     (_, i) => `node_modules/dependency-${i}/${"nested-package/".repeat(10)}index.js`,
   );
+
+it("paces pre-claim Git fetch failures across restarts and resumes without spending internal recovery attempts", async () => {
+  const f = await fixture();
+  const fetch = vi.spyOn(f.git, "fetch").mockImplementation(async () => {
+    const command = `git -c credential.helper= fetch origin ${f.project.repository.defaultBranch}`;
+    const evidence = beginProcessEvidence(
+      command,
+      f.project.repository.path,
+      [],
+      f.store().processExecutionDirectory(f.card.id)!,
+    );
+    evidence.finish("nonzero", { exitCode: 128, treeStopped: true });
+    throw new ProcessExecutionError("Git", evidence.executionId, "nonzero", 128);
+  });
+  await f.poll();
+  expect(f.task()).toBeNull();
+  expect(f.card.idList).toBe(f.project.trello.readyListId);
+  expect(f.state()).toMatchObject({ kind: "dependency", internalFailures: 0, rechecks: 1 });
+  expect(fetch).toHaveBeenCalledOnce();
+  const attempt = f.current().store.attemptId;
+  await f.reopen();
+  await f.poll();
+  expect(fetch).toHaveBeenCalledOnce();
+  f.due();
+  await f.poll();
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(f.state()).toMatchObject({ kind: "dependency", internalFailures: 0, rechecks: 2 });
+  fetch.mockRestore();
+  f.due();
+  await f.reachAgent();
+  expect(f.current().store.attemptId).toBe(attempt);
+  expect(f.card.idList).toBe(f.project.trello.workingListId);
+});
 
 it.each(["fresh", "legacy-before", "legacy-after"] as const)(
   "resumes large implementation setup evidence without replay (%s)",
