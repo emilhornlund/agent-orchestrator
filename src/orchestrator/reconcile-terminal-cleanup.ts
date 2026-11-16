@@ -7,11 +7,16 @@ import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
 import type { TrelloClient } from "../trello/trello-client.js";
 import { logger } from "../logging/logger.js";
-import { parseRunRecord, type RunRecord } from "../task-session/run-record.js";
+import {
+  parseRunRecord,
+  isConclusiveOperationResolution,
+  type RunRecord,
+} from "../task-session/run-record.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import {
   terminalPrFenceFromRun,
   terminalStopProofValid,
+  otherTaskWriterIsActive,
 } from "../task-session/terminal-pr-fence.js";
 import {
   cleanupRetryLimit,
@@ -22,6 +27,14 @@ import {
   cleanupTerminalResources,
   preserveTerminalResources,
 } from "./cleanup-terminal-resources.js";
+import { refinementSetupIsStopped } from "../refinement/run-refinement-setup.js";
+import { refinementAnalysisIsStopped } from "../refinement/run-refinement.js";
+import { runTaskResources } from "../task-session/task-resources.js";
+import {
+  isCompletedRefinement,
+  refinementCleanupProofKey,
+  refinementCleanupProofSchema,
+} from "../task-session/refinement-cleanup-proof.js";
 import { reconcileWorkflowMutations } from "./reconcile-workflow-mutations.js";
 
 /** One due attempt per idle poll, three attempts total, durable restart pacing. */
@@ -52,14 +65,19 @@ export async function reconcileTerminalCleanup(options: {
       throw new Error("Cleanup attempt filename identity mismatch");
     if (
       record.projectId !== project.id ||
-      !["done", "cancelled"].includes(record.lifecycle) ||
-      record.terminalSync !== "verified" ||
-      !["merged", "closed-unmerged"].includes(record.publicationState)
+      (!isCompletedRefinement(record) &&
+        (!["done", "cancelled"].includes(record.lifecycle) ||
+          record.terminalSync !== "verified" ||
+          !["merged", "closed-unmerged"].includes(record.publicationState)))
     )
       continue;
     if (!isDeepStrictEqual(record.pinned, pinned)) continue;
     const fence = terminalPrFenceFromRun(record);
-    if (!fence || fence.preserveArtifacts || !fence.stoppedAt || !fence.proofArtifact) continue;
+    if (
+      !isCompletedRefinement(record) &&
+      (!fence || fence.preserveArtifacts || !fence.stoppedAt || !fence.proofArtifact)
+    )
+      continue;
     const raw = record.compatibility[terminalCleanupKey];
     const state = raw === undefined ? null : terminalCleanupSchema.parse(raw);
     if (
@@ -81,6 +99,10 @@ export async function reconcileTerminalCleanup(options: {
     projectLease,
   });
   await authority.run(async () => {
+    if (isCompletedRefinement(record)) {
+      await cleanupRefinement({ ...options, authority, now });
+      return;
+    }
     if (!terminalStopProofValid(authority)) {
       preserveTerminalResources(project.id);
       return;
@@ -118,4 +140,101 @@ export async function reconcileTerminalCleanup(options: {
         );
     }
   });
+}
+
+/** Completed refinements have no PR. Prove stopped execution before granting
+ * their existing archive-first cleanup path; never re-enter refinement itself. */
+async function cleanupRefinement(options: {
+  project: ProjectConfig;
+  authority: ProjectRunAuthority;
+  git: GitClient;
+  github: GitHubClient;
+  trello: TrelloClient;
+  signal: AbortSignal;
+  now: Date;
+}): Promise<void> {
+  const { project, authority, git, signal, now } = options;
+  const run = authority.store.assertCurrentLease(authority.ownerGeneration);
+  // Only accepted default history is disposable. Setup-created commits remain.
+  let headSha: string | null = null;
+  let historyError: unknown;
+  try {
+    headSha = await git.getRefSha(
+      project.repository.path,
+      `refs/remotes/origin/${project.repository.defaultBranch}`,
+    );
+  } catch (error) {
+    historyError = error;
+  }
+  try {
+    await cleanupTerminalResources({
+      project,
+      git,
+      cardId: run.cardId,
+      headSha: headSha ?? "",
+      signal,
+      now,
+      verifyHistory: async () => {
+        if (!headSha)
+          throw new Error("Accepted default history is unavailable", { cause: historyError });
+        const setup = run.compatibility[`refinement-setup-${run.cardId}`];
+        const analysis = run.compatibility["refinement-analysis-v1"];
+        if (
+          !setup ||
+          typeof setup !== "object" ||
+          !("status" in setup) ||
+          !["passed", "not-required"].includes(String(setup.status)) ||
+          !analysis ||
+          typeof analysis !== "object" ||
+          !("status" in analysis) ||
+          analysis.status !== "complete" ||
+          !isCompletedRefinement(run) ||
+          otherTaskWriterIsActive(authority) ||
+          !run.pendingOperations.every(
+            (operation) =>
+              operation.kind === "git-cleanup" || isConclusiveOperationResolution(operation),
+          ) ||
+          !refinementSetupIsStopped(authority, project) ||
+          !refinementAnalysisIsStopped(authority, project, runTaskResources(run).path)
+        )
+          throw new Error("Refinement cleanup requires verified stopped execution");
+        const proof = authority.store.writeArtifact(
+          Buffer.from(
+            JSON.stringify(
+              refinementCleanupProofSchema.parse({
+                kind: "refinement-processes-stopped",
+                cardId: run.cardId,
+                attemptId: run.attemptId,
+                headSha,
+              }),
+            ),
+          ),
+          "application/json",
+        );
+        authority.store.referenceMutationArtifact(
+          authority.store.read()!.revision,
+          authority.ownerGeneration,
+          proof,
+        );
+        authority.mutate(
+          refinementCleanupProofKey,
+          proof.id,
+          () => ({ value: proof.id, result: undefined }),
+          (value) => {
+            if (typeof value !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(value))
+              throw new Error("Invalid refinement cleanup proof reference");
+            return value;
+          },
+        );
+        if (await reconcileWorkflowMutations(options))
+          throw new Error("Refinement cleanup effects await authoritative reconciliation");
+      },
+    });
+  } catch {
+    logger
+      .child({ projectId: project.id, cardId: run.cardId })
+      .warn(
+        "Refinement resource cleanup remains preserved; inspect terminal-resource-cleanup in the attempt record",
+      );
+  }
 }

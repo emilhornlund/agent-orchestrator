@@ -13,6 +13,7 @@ import {
 } from "./run-record.js";
 import { taskExecutionEventTypes } from "./task-execution-record.js";
 import { terminalPrFenceFromRun, terminalMutationAllowed } from "./terminal-pr-fence.js";
+import { readRefinementCleanupProof } from "./refinement-cleanup-proof.js";
 import { gitMutationRequestSchema } from "../git/git-mutation-request.js";
 import {
   applyMutationEvent,
@@ -1442,22 +1443,29 @@ export class RunStore {
             JSON.parse(this.readArtifact(intent.payloadId).toString("utf8")),
           )
         : null;
+    const refinementProof = readRefinementCleanupProof(current, (reference) =>
+      this.readArtifact(reference),
+    );
     if (
       !payload ||
       payload.route !== "git-cleanup" ||
-      !["done", "cancelled"].includes(current.lifecycle) ||
-      current.terminalSync !== "verified" ||
-      !fence?.proofArtifact ||
-      !terminalMutationAllowed(current, payload)
+      (!refinementProof &&
+        (!["done", "cancelled"].includes(current.lifecycle) ||
+          current.terminalSync !== "verified" ||
+          !fence?.proofArtifact ||
+          !terminalMutationAllowed(current, payload)))
     )
       throw new RunStoreConflictError("Cannot add workflow mutations to terminal attempt");
-    const proof = JSON.parse(this.readArtifact(fence.proofArtifact).toString("utf8")) as {
-      kind?: unknown;
-      cardId?: unknown;
-    };
+    const proof =
+      refinementProof ??
+      (JSON.parse(this.readArtifact(fence!.proofArtifact!).toString("utf8")) as {
+        kind?: unknown;
+        cardId?: unknown;
+      });
     if (
-      proof.kind !== "task-processes-stopped" ||
+      (!refinementProof && proof.kind !== "task-processes-stopped") ||
       proof.cardId !== current.cardId ||
+      (refinementProof && payload.args.kind === "remote-branch") ||
       payload.args.cwd !== current.pinned.repositoryPath ||
       !current.resources.some(
         (resource) =>

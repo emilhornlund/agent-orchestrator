@@ -279,7 +279,7 @@ it("recovers a lost completion-comment acknowledgement in Backlog without duplic
   expect(f.requests.filter((r) => r.startsWith("POST:") && r.endsWith("comments"))).toHaveLength(1);
 });
 
-it("resumes only completion after successful cleanup and a final Backlog-read outage", async () => {
+it("retains resources until completion after a final Backlog-read outage", async () => {
   const f = await fixture();
   const readCards = f.trello.getCards.bind(f.trello);
   let failed = false;
@@ -291,7 +291,7 @@ it("resumes only completion after successful cleanup and a final Backlog-read ou
     return readCards(listId);
   });
   await expect(f.poll()).rejects.toThrow("completion read outage");
-  expect(fs.existsSync(path.join(f.project.repository.worktreeRoot, f.card.id))).toBe(false);
+  expect(fs.existsSync(path.join(f.project.repository.worktreeRoot, f.card.id))).toBe(true);
   await f.poll();
   expect(f.authority.store.read()!.lifecycle).toBe("refined");
   expect(f.engineer).toHaveBeenCalledOnce();

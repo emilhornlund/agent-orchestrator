@@ -13,6 +13,7 @@ import {
   terminalStopProofValid,
   otherTaskWriterIsActive,
 } from "../task-session/terminal-pr-fence.js";
+import { readRefinementCleanupProof } from "../task-session/refinement-cleanup-proof.js";
 import { readTerminalCleanup } from "../task-session/terminal-cleanup-state.js";
 
 export interface CleanupWorktreeOptions {
@@ -104,6 +105,17 @@ export async function cleanupWorktree({
     )
       throw new Error("Cleanup would discard local-only commits");
   }
+
+  const mayArchiveIgnoredOutput = (): boolean => {
+    if (!authority || otherTaskWriterIsActive(authority)) return false;
+    const fence = readTerminalPrFence(authority);
+    if (fence) return !fence.preserveArtifacts && terminalStopProofValid(authority);
+    const proof = readRefinementCleanupProof(
+      authority.store.assertCurrentLease(authority.ownerGeneration),
+      (reference) => authority.store.readArtifact(reference),
+    );
+    return proof !== null && proof.headSha === preservedHeadSha;
+  };
   const worktreeStat = fs.lstatSync(worktreePath, { throwIfNoEntry: false });
 
   if (worktreeStat !== undefined) {
@@ -154,13 +166,7 @@ export async function cleanupWorktree({
     }
 
     if (authority && (readTerminalCleanup(authority)?.archive.length ?? 0) > 0) {
-      const fence = readTerminalPrFence(authority);
-      if (
-        !fence ||
-        fence.preserveArtifacts ||
-        !terminalStopProofValid(authority) ||
-        otherTaskWriterIsActive(authority)
-      )
+      if (!mayArchiveIgnoredOutput())
         throw new Error("Cleanup archive recovery requires stopped task writers");
       await preserveIgnoredOutput(git, worktreePath, authority, signal);
     }
@@ -177,15 +183,7 @@ export async function cleanupWorktree({
         .split(/\r?\n/u)
         .filter((line) => line.length > 0)
         .every((line) => line.startsWith("!! "));
-      const fence = authority && readTerminalPrFence(authority);
-      if (
-        ignoredOnly &&
-        authority &&
-        fence &&
-        !fence.preserveArtifacts &&
-        terminalStopProofValid(authority) &&
-        !otherTaskWriterIsActive(authority)
-      ) {
+      if (ignoredOnly && authority && mayArchiveIgnoredOutput()) {
         await preserveIgnoredOutput(git, worktreePath, authority, signal);
         status = await git.getCleanupStatus(worktreePath);
         if (status.length > 0)
