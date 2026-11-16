@@ -182,6 +182,21 @@ it("retains deduplicated arrivals during a blocked writer without changing its c
   expect(errors).not.toHaveBeenCalled();
 });
 
+it("deduplicates a previously retired feedback observation without reviving it or blocking later reads", async () => {
+  const f = fixture();
+  await observeActivePullRequest(f);
+  const queue = new TaskMutationQueue(f.project.contextRoot, f.project, f.authority);
+  const event = queue.list()[0]!;
+  queue.retireSupersededObservation(event.eventId);
+  await expect(observeActivePullRequest(f)).resolves.toBeUndefined();
+  expect(queue.get(event.eventId)?.status).toBe("retired");
+  expect(readActivePrArrivals(f.authority)).toHaveLength(1);
+  f.edit("A genuinely new request");
+  await observeActivePullRequest(f);
+  expect(readActivePrArrivals(f.authority)).toHaveLength(2);
+  expect(queue.list().filter((item) => item.status === "queued")).toHaveLength(1);
+});
+
 it("retains observer failure diagnostics without interrupting the writer and backs off rechecks", async () => {
   vi.useFakeTimers();
   const f = fixture();

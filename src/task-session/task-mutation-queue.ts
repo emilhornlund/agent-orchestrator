@@ -285,6 +285,8 @@ export class TaskMutationQueue {
           status: undefined,
           ownerToken: undefined,
           ownerPid: undefined,
+          retiredAt: undefined,
+          retirementReason: undefined,
         });
         if (JSON.stringify(comparable(existing)) !== JSON.stringify(comparable(event))) {
           throw new TaskMutationQueueConflictError(
