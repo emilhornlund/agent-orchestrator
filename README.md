@@ -226,8 +226,20 @@ configuration loading or executable probes. Usage also lists the standalone `yar
 `yarn doctor -h` invocations. Usage errors are text rather than diagnostic JSON reports. Both
 formats omit configuration values, parser excerpts, and raw executable output.
 
-First provision the required shared coordination namespace using the
-[configuration instructions](docs/configuration.md#provisioning-a-shared-host-coordination-namespace).
+Before processing live tasks, treat `requiredLocalChecksPassed: true` together with
+`runtimeReadiness: "not-verified"` as local configuration/tool compatibility success only. Doctor
+does not verify credentials or external service access, isolation namespace capability, or
+project-ownership coordination provisioning. If startup or integration access fails after doctor
+passes, use the relevant setup guidance:
+
+- Check [credential configuration](docs/configuration.md#environment-variables) and the runtime
+  identity's authentication, permissions, and connectivity to the configured services.
+- Verify the startup isolation probe under the actual service identity and host/container policy;
+  see [local and container installation](docs/operations.md#local-and-container-installation).
+- Provision the shared coordination namespace with the required ownership, permissions, and common
+  host mount using the
+  [configuration instructions](docs/configuration.md#provisioning-a-shared-host-coordination-namespace).
+
 Start the orchestrator with:
 
 ```bash
