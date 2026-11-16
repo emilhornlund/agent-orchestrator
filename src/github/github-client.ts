@@ -3117,20 +3117,30 @@ export class GitHubClient {
     };
     const request = { route: "github-pr-ready", args };
     const verify = async () => {
-      await this.assertMutationOpen(options);
       const state = await this.getPullRequestPublicationFields(options);
-      const pullRequest = await this.findPullRequestState({
+      const pullRequest = await this.getPullRequestStateByNumber({
         cwd: options.cwd,
         repository: options.repository,
-        headBranch: options.headBranch,
+        pullRequestNumber: getPullRequestNumberForRepository(
+          options.pullRequestUrl,
+          options.repository,
+        ),
         ...(options.project === undefined ? {} : { project: options.project }),
       });
       if (
-        pullRequest?.url !== options.pullRequestUrl ||
+        pullRequest.url !== options.pullRequestUrl ||
+        pullRequest.state !== "OPEN" ||
+        pullRequest.headRefName !== options.headBranch ||
         pullRequest.headRefOid !== options.expectedHeadSha ||
         state.body !== options.expectedBody
       )
-        throw new Error("Pull request readiness evidence changed before promotion");
+        throw new WorkflowMutationPreconditionChangedError({
+          reason: "Pull request readiness evidence changed before promotion",
+          headSha: pullRequest.headRefOid,
+          headBranch: pullRequest.headRefName,
+          state: pullRequest.state,
+          bodyChanged: state.body !== options.expectedBody,
+        });
       return state;
     };
     if (!consumeJournaledDispatch(authority, request) && authority) {
