@@ -1,4 +1,6 @@
 import path from "node:path";
+import { ProjectRunAuthority } from "./project-run-authority.js";
+import { isImplementationPreparation } from "./implementation-preparation-recovery.js";
 import type { ProjectConfig } from "../config/config.js";
 import type { CiCheckEvaluation } from "../github/evaluate-ci-checks.js";
 import type { GitClient } from "../git/git-client.js";
@@ -227,7 +229,7 @@ function readSetupInventory(
   branch: string,
 ): void {
   if (reference === undefined) throw new Error("Setup inventory evidence is missing");
-  const inventory = store.readPrimaryResultArtifact(reference);
+  const inventory = store.readSetupArtifact(reference);
   assertSetupInventoryIdentity(inventory, worktreePath, branch);
 }
 
@@ -318,6 +320,10 @@ export async function reconcileTaskSession(
         expectedBranch,
       );
     } catch (error) {
+      // Before any agent dispatch, corrupt/unreadable setup evidence is an
+      // internal preparation failure, not an absorbing attention checkpoint.
+      if (ProjectRunAuthority.current(project.id) && isImplementationPreparation(record))
+        throw error;
       return preserveAttention(
         taskRecordStore,
         record,
@@ -391,7 +397,7 @@ export async function reconcileTaskSession(
           record,
           "Cannot capture recovered setup effects without the bounded Git client",
         );
-      const after = taskRecordStore.writePrimaryResultArtifact(
+      const after = taskRecordStore.writeSetupArtifact(
         `setup-recovered-after-${record.cardId}-${record.revision}`,
         JSON.parse(
           (
@@ -438,7 +444,7 @@ export async function reconcileTaskSession(
         options.signal,
         true,
       );
-      const artifact = taskRecordStore.writePrimaryResultArtifact(
+      const artifact = taskRecordStore.writeSetupArtifact(
         `setup-recovered-failed-${record.cardId}-${record.revision}`,
         JSON.parse(after.toString("utf8")) as unknown,
       );
@@ -541,6 +547,10 @@ export async function reconcileTaskSession(
       )
         throw new Error("Setup process result does not bind the stored effects");
     } catch (error) {
+      // Before any agent dispatch, corrupt/unreadable setup evidence is an
+      // internal preparation failure, not an absorbing attention checkpoint.
+      if (ProjectRunAuthority.current(project.id) && isImplementationPreparation(record))
+        throw error;
       return preserveAttention(
         taskRecordStore,
         record,

@@ -129,7 +129,7 @@ async function validateSetupDisposition(
     task.setup.relevance !== disposition.artifactReference
   )
     throw new PublicationSafetyError("Setup scope proof is missing or unbound to the task record");
-  const rawArtifact = store.readPrimaryResultArtifact(disposition.artifactReference);
+  const rawArtifact = store.readSetupArtifact(disposition.artifactReference);
   if (typeof rawArtifact !== "object" || rawArtifact === null)
     throw new PublicationSafetyError("Setup scope artifact is malformed");
   const artifact = rawArtifact as Record<string, unknown>;
@@ -152,11 +152,9 @@ async function validateSetupDisposition(
     throw new PublicationSafetyError(
       "Setup scope artifact does not match its durable setup evidence",
     );
-  const before = store.readPrimaryResultArtifact(task.setup.before);
-  const attemptBefore = store.readPrimaryResultArtifact(
-    task.setup.attemptBefore ?? task.setup.before,
-  );
-  const after = store.readPrimaryResultArtifact(task.setup.after);
+  const before = store.readSetupArtifact(task.setup.before);
+  const attemptBefore = store.readSetupArtifact(task.setup.attemptBefore ?? task.setup.before);
+  const after = store.readSetupArtifact(task.setup.after);
   assertSetupInventoryIdentity(before, cwd, checkpoint.branch);
   assertSetupInventoryIdentity(attemptBefore, cwd, checkpoint.branch);
   assertSetupInventoryIdentity(after, cwd, checkpoint.branch);

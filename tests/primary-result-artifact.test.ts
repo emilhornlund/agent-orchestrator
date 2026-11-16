@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
-import { RunStore } from "../src/task-session/run-store.js";
+import { RunStore, MAX_RUN_ARTIFACT_BYTES } from "../src/task-session/run-store.js";
 import { ProjectRunAuthority } from "../src/task-session/project-run-authority.js";
 
 const roots: string[] = [];
@@ -28,6 +28,21 @@ function makeStore(): TaskExecutionStore {
 }
 
 describe("primary result artifacts", () => {
+  it("keeps setup evidence separate from the unchanged process-output bound", () => {
+    const store = makeStore();
+    const inventory = { files: [], ignored: ["x".repeat(16 * 1024 * 1024 + 100)] };
+    const ref = store.writeSetupArtifact("setup-before", inventory);
+    expect(store.readSetupArtifact(ref)).toEqual(inventory);
+    expect(() => store.writePrimaryResultArtifact("ai-result", inventory)).toThrow(
+      "16777216-byte limit",
+    );
+    expect(() => store.readPrimaryResultArtifact(ref)).toThrow();
+    const actualPath = path.join(roots.at(-1)!, "state", "task-executions", "p", ref.path!);
+    fs.truncateSync(actualPath, MAX_RUN_ARTIFACT_BYTES + 1);
+    expect(() => store.readSetupArtifact(ref)).toThrow();
+    expect(fs.statSync(actualPath).size).toBe(MAX_RUN_ARTIFACT_BYTES + 1);
+  });
+
   it("round-trips output larger than one MiB and stores separate results", () => {
     const store = makeStore();
     const first = { output: "x".repeat(1024 * 1024 + 100) };
@@ -152,6 +167,22 @@ describe("primary result artifacts", () => {
       createdAt: now,
       updatedAt: now,
     });
+    const inventory = { ignored: ["dependency/".repeat(1_600_000)] };
+    const setupRef = taskStore.writeSetupArtifact("setup-before", inventory);
+    expect(taskStore.readSetupArtifact(setupRef)).toEqual(inventory);
+    expect(() => taskStore.readPrimaryResultArtifact(setupRef)).toThrow("16777216-byte limit");
+    expect(() => taskStore.writePrimaryResultArtifact("ai-result", inventory)).toThrow(
+      "16777216-byte limit",
+    );
+    expect(() => runStore.readArtifact(setupRef.reference, MAX_RUN_ARTIFACT_BYTES + 1)).toThrow(
+      "Invalid artifact read bound",
+    );
+    expect(() => runStore.readArtifact(setupRef.reference, 0)).toThrow(
+      "Invalid artifact read bound",
+    );
+    expect(() => runStore.readArtifact(setupRef.reference, NaN)).toThrow(
+      "Invalid artifact read bound",
+    );
     const result = { output: "canonical bytes" };
     const reference = taskStore.writePrimaryResultArtifact("canonical-result", result);
     expect(taskStore.readPrimaryResultArtifact(reference)).toEqual(result);
@@ -163,14 +194,17 @@ describe("primary result artifacts", () => {
     );
     fs.writeFileSync(artifactPath, Buffer.from("corrupt bytes"));
     expect(() => taskStore.readPrimaryResultArtifact(reference)).toThrow(/digest/i);
+    expect(() => taskStore.readSetupArtifact(reference)).toThrow(/digest/i);
     fs.rmSync(artifactPath);
     fs.symlinkSync(path.join(root, "missing-target"), artifactPath);
     expect(() => taskStore.readPrimaryResultArtifact(reference)).toThrow();
+    expect(() => taskStore.readSetupArtifact(reference)).toThrow();
     fs.rmSync(artifactPath);
     fs.rmSync(path.join(storageRoot, "artifacts", "attempt"), {
       recursive: true,
     });
     fs.symlinkSync(root, path.join(storageRoot, "artifacts", "attempt"));
     expect(() => taskStore.readPrimaryResultArtifact(reference)).toThrow();
+    expect(() => taskStore.readSetupArtifact(reference)).toThrow();
   });
 });
