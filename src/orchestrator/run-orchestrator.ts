@@ -77,6 +77,13 @@ export function hasDueTaskSessionRecoveryWait(
   if (projection === undefined) return false;
   const taskProjection = parseTaskExecutionRecord(projection);
   const recoveryWait = taskProjection.recoveryWait;
+  if (
+    taskProjection.phase === "attention-required" &&
+    taskProjection.terminalFailure?.outcome === "pending" &&
+    taskProjection.pullRequest === undefined &&
+    taskProjection.externalRecovery === undefined
+  )
+    return recoveryWait === undefined || now >= Date.parse(recoveryWait.retryAt);
   if (hasPendingSessionCreation(taskProjection))
     return recoveryWait === undefined || now >= Date.parse(recoveryWait.retryAt);
   return (

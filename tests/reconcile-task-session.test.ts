@@ -1190,6 +1190,56 @@ describe("reconcileTaskSession", () => {
     expect(result).toMatchObject({ status: "resume", phase: "validation" });
   });
 
+  it("lets the worker reconcile an unpublished pending terminal failure instead of abandoning its Working card", () => {
+    const f = fixture("attention-required");
+    const task = {
+      ...f.store.read("card")!,
+      terminalFailure: {
+        kind: "implementation" as const,
+        outcome: "pending" as const,
+        reason: "No meaningful task output",
+      },
+    };
+    const run = {
+      lifecycle: "waiting",
+      cardId: "card",
+      compatibility: { "task-execution-card": task },
+    } as unknown as RunRecord;
+    expect(hasDueTaskSessionRecoveryWait(run)).toBe(true);
+    expect(
+      hasDueTaskSessionRecoveryWait({
+        ...run,
+        compatibility: { "task-execution-card": { ...task, terminalFailure: undefined } },
+      }),
+    ).toBe(false);
+    expect(
+      hasDueTaskSessionRecoveryWait({
+        ...run,
+        compatibility: {
+          "task-execution-card": {
+            ...task,
+            pullRequest: {
+              number: 1,
+              url: "https://github.com/o/r/pull/1",
+              headSha: "a".repeat(40),
+            },
+          },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      hasDueTaskSessionRecoveryWait({
+        ...run,
+        compatibility: {
+          "task-execution-card": {
+            ...task,
+            terminalFailure: { ...task.terminalFailure, outcome: "confirmed" },
+          },
+        },
+      }),
+    ).toBe(false);
+  });
+
   it("keeps the authoritative checkpoint recoverable when a dependency read fails", async () => {
     const f = fixture("validation");
     const result = await reconcileTaskSession({
