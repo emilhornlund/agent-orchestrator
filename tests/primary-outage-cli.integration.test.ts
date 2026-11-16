@@ -11,7 +11,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
-function fixture(mode: "outage" | "outage-once" | "crash", published = false) {
+function fixture(mode: "outage" | "outage-once" | "auth-once" | "crash", published = false) {
   const temp = os.tmpdir();
   const root = fs.mkdtempSync(path.join(temp, "primary-outage-cli-"));
   roots.push(root);
@@ -91,6 +91,24 @@ function launchParent(root: string, env: NodeJS.ProcessEnv, now?: number) {
 }
 
 describe("scripted OpenCode primary outage recovery", () => {
+  it("preserves the primary crash budget during token refresh failure and resumes after authentication recovers", () => {
+    const f = fixture("auth-once");
+    const waiting = launchParent(f.root, f.parentEnvironment);
+    expect(waiting.status).toBe("waiting");
+    expect(readRecord(f.root, f.project).primaryOperations?.primary).toMatchObject({
+      executions: 1,
+      failureExecutions: 0,
+      dependencyOutages: 1,
+      status: "failed",
+    });
+    const resumed = launchParent(f.root, f.parentEnvironment, Date.parse(waiting.retryAt!));
+    expect(resumed.status).toBe("completed");
+    expect(readRecord(f.root, f.project)).toMatchObject({
+      primarySessionId: "ses_primary",
+      primaryOperations: { primary: { executions: 2, failureExecutions: 0, dependencyOutages: 1 } },
+    });
+  });
+
   it("preserves a finalized adapter outage across an actual parent SIGKILL gap", async () => {
     const f = fixture("outage-once");
     const inputPath = path.join(f.root, "parent-input.json");
