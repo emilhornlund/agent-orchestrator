@@ -378,16 +378,14 @@ it.each(["trello-outage", "pending-mutation"] as const)(
   async (condition) => {
     const f = await fixture();
     const original = f.trello.getCardAttachments.bind(f.trello);
-    const outage = vi
-      .spyOn(f.trello, "getCardAttachments")
-      .mockRejectedValue(
-        condition === "pending-mutation"
-          ? new WorkflowMutationWaitingError()
-          : new TrelloRequestError("attachment metadata", "Trello temporarily unavailable", {
-              retryable: true,
-              status: 503,
-            }),
-      );
+    const outage = vi.spyOn(f.trello, "getCardAttachments").mockRejectedValue(
+      condition === "pending-mutation"
+        ? new WorkflowMutationWaitingError()
+        : new TrelloRequestError("attachment metadata", "Trello temporarily unavailable", {
+            retryable: true,
+            status: 503,
+          }),
+    );
     for (let i = 0; i < 4; i++) {
       await f.poll();
       expect(f.state()).toMatchObject({
