@@ -155,7 +155,7 @@ const trelloAttachmentSchema = z.object({
   id: z.string(),
   name: z.string(),
   mimeType: z.string().nullable(),
-  bytes: z.string().nullable(),
+  bytes: z.union([z.string(), z.number().int().nonnegative().safe().transform(String)]).nullable(),
   url: z.string(),
   isUpload: z.boolean(),
 });
