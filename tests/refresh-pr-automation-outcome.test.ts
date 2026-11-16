@@ -8,6 +8,7 @@ function fixture() {
   let body = "Human introduction\n\nOriginal implementation description\n";
   const github = {
     ensurePullRequestDraft: vi.fn(async () => undefined),
+    ensurePullRequestReady: vi.fn(async () => undefined),
     getPullRequestDescription: vi.fn(async () => body),
     editPullRequestDescription: vi.fn(
       async ({ body: next, expectedBody }: { body: string; expectedBody?: string | undefined }) => {
@@ -45,6 +46,48 @@ function fixture() {
 }
 
 describe("current PR automation outcomes", () => {
+  it("promotes only an explicitly eligible current revision after verifying its updated description", async () => {
+    const f = fixture();
+    await refreshPrAutomationOutcome({
+      ...f.options,
+      draft: false,
+      facts: ["CI and applicable local checks passed; no unresolved feedback."],
+      readiness: { headBranch: "agent/card" },
+    });
+    expect(f.options.github.ensurePullRequestReady).toHaveBeenCalledWith({
+      cwd: "/source",
+      repository: "owner/repo",
+      project: f.options.project,
+      pullRequestUrl: f.options.pullRequestUrl,
+      headBranch: "agent/card",
+      expectedHeadSha: f.options.headSha,
+      expectedBody: f.getBody(),
+    });
+    expect(f.options.github.ensurePullRequestDraft).not.toHaveBeenCalled();
+  });
+
+  it("retains a draft when outstanding concerns remain despite a promotion capability", async () => {
+    const f = fixture();
+    await refreshPrAutomationOutcome({ ...f.options, readiness: { headBranch: "agent/card" } });
+    expect(f.options.github.ensurePullRequestDraft).toHaveBeenCalledOnce();
+    expect(f.options.github.ensurePullRequestReady).not.toHaveBeenCalled();
+  });
+
+  it("does not promote after a concurrent edit prevents description verification", async () => {
+    const f = fixture();
+    f.options.github.getPullRequestDescription
+      .mockResolvedValueOnce(f.getBody())
+      .mockResolvedValueOnce("Human edit");
+    await expect(
+      refreshPrAutomationOutcome({
+        ...f.options,
+        draft: false,
+        readiness: { headBranch: "agent/card" },
+      }),
+    ).rejects.toThrow("not verified");
+    expect(f.options.github.ensurePullRequestReady).not.toHaveBeenCalled();
+  });
+
   it("reports an expired never-started check and a no-op repair without fabricating success or another check run", async () => {
     const f = fixture();
     const record: TaskExecutionRecord = {
