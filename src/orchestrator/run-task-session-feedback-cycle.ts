@@ -844,16 +844,43 @@ export async function runTaskSessionFeedbackCycle(
       signal,
       timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
     };
+    const validateWithRepairs = () =>
+      runTaskSessionValidationWithRepairs({
+        validation: validationOptions,
+        openCode,
+        planStore,
+        card,
+        expectedPrimarySessionId: record.primarySessionId!,
+        inspectPrimarySession: (sessionId) =>
+          inspectPrimaryOpenCodeSession({
+            commands,
+            cwd: worktreePath,
+            sessionId,
+            signal,
+            timeoutMilliseconds: 30_000,
+          }),
+        primaryOperationEvidence: {
+          trustedRoot:
+            ProjectRunAuthority.current(project.id)?.store.storageRoot ??
+            getProcessRuntime().artifactRoot,
+          cwd: worktreePath,
+        },
+        ...(attachmentContext === undefined ? {} : { attachmentContext }),
+        repairRunOptions: validationRepairRunOptions(project, signal),
+      });
     if (resumingReviewRepair && record.reviewRepair?.activePrimaryOperation === undefined) {
       await setActivity("validating-review-changes");
       const recoveryValidation = {
         ...validationOptions,
         feedbackReviewRecovery: record.phase === "review",
       };
-      quality = {
-        validation: await runTaskSessionValidation(recoveryValidation),
-        coverage: await runTaskSessionCoverage(recoveryValidation),
-      };
+      quality =
+        record.phase === "validation"
+          ? await validateWithRepairs()
+          : {
+              validation: await runTaskSessionValidation(recoveryValidation),
+              coverage: await runTaskSessionCoverage(recoveryValidation),
+            };
     }
     try {
       if (recoveringReview) {
@@ -949,29 +976,7 @@ export async function runTaskSessionFeedbackCycle(
           });
           current = taskStore.compareAndSwap(card.id, current.revision, implementationCompleted);
           await setActivity("validating-review-changes");
-          quality = await runTaskSessionValidationWithRepairs({
-            validation: validationOptions,
-            openCode,
-            planStore,
-            card,
-            expectedPrimarySessionId: record.primarySessionId!,
-            inspectPrimarySession: (sessionId) =>
-              inspectPrimaryOpenCodeSession({
-                commands,
-                cwd: worktreePath,
-                sessionId,
-                signal,
-                timeoutMilliseconds: 30_000,
-              }),
-            primaryOperationEvidence: {
-              trustedRoot:
-                ProjectRunAuthority.current(project.id)?.store.storageRoot ??
-                getProcessRuntime().artifactRoot,
-              cwd: worktreePath,
-            },
-            ...(attachmentContext === undefined ? {} : { attachmentContext }),
-            repairRunOptions: validationRepairRunOptions(project, signal),
-          });
+          quality = await validateWithRepairs();
           firstReview = await runBoundedFeedbackReview({
             project,
             card,
@@ -1144,29 +1149,7 @@ export async function runTaskSessionFeedbackCycle(
           },
           rerunQuality: async () => {
             await setActivity("validating-review-changes");
-            quality = await runTaskSessionValidationWithRepairs({
-              validation: validationOptions,
-              openCode,
-              planStore,
-              card,
-              expectedPrimarySessionId: record.primarySessionId!,
-              inspectPrimarySession: (sessionId) =>
-                inspectPrimaryOpenCodeSession({
-                  commands,
-                  cwd: worktreePath,
-                  sessionId,
-                  signal,
-                  timeoutMilliseconds: 30_000,
-                }),
-              primaryOperationEvidence: {
-                trustedRoot:
-                  ProjectRunAuthority.current(project.id)?.store.storageRoot ??
-                  getProcessRuntime().artifactRoot,
-                cwd: worktreePath,
-              },
-              ...(attachmentContext === undefined ? {} : { attachmentContext }),
-              repairRunOptions: validationRepairRunOptions(project, signal),
-            });
+            quality = await validateWithRepairs();
           },
           getCurrentContentIdentity: () => getTaskSessionSourceSnapshotIdentity(git, worktreePath),
         });

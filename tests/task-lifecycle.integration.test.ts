@@ -60,7 +60,13 @@ interface LifecycleScenario {
   ciBudget?: number;
   targetMerge?: boolean;
   feedbackReviewRecovery?:
-    "before-review" | "reserved" | "completed" | "validation" | "reviewed" | "unknown";
+    | "before-review"
+    | "active-validation"
+    | "reserved"
+    | "completed"
+    | "validation"
+    | "reviewed"
+    | "unknown";
   ciReviewRecovery?: "reserved" | "completed" | "validation" | "reviewed" | "unknown";
 }
 afterEach(async () => {
@@ -224,7 +230,15 @@ describe("task lifecycle through pollProject", () => {
       ciQuality,
     })),
     ...(
-      ["before-review", "reserved", "completed", "validation", "reviewed", "unknown"] as const
+      [
+        "before-review",
+        "active-validation",
+        "reserved",
+        "completed",
+        "validation",
+        "reviewed",
+        "unknown",
+      ] as const
     ).map((feedbackReviewRecovery) => ({
       draft: false,
       terminal: "merged" as const,
@@ -2229,7 +2243,9 @@ describe("task lifecycle through pollProject", () => {
             const persisted = compare.call(this, cardId, revision, next);
             const repair = persisted.reviewRepair;
             if (
-              feedbackReviewRecovery === "before-review" &&
+              (feedbackReviewRecovery === "before-review" ||
+                (feedbackReviewRecovery === "active-validation" &&
+                  persisted.validationRepair?.status === "active")) &&
               persisted.feedbackRemediation?.status === "changed" &&
               persisted.phase === "validation" &&
               repair === undefined
@@ -2281,7 +2297,11 @@ describe("task lifecycle through pollProject", () => {
         });
         expect(feedbackPrimaryCorrections).toBe(1);
         const reservation = interrupted?.reviewRepair?.activePrimaryOperation;
-        if (feedbackReviewRecovery !== "reviewed" && feedbackReviewRecovery !== "before-review")
+        if (
+          feedbackReviewRecovery !== "reviewed" &&
+          feedbackReviewRecovery !== "before-review" &&
+          feedbackReviewRecovery !== "active-validation"
+        )
           expect(reservation).toBeDefined();
         const originalPrompt =
           reservation?.promptArtifact === undefined
