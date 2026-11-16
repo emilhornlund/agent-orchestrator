@@ -227,10 +227,11 @@ configuration loading or executable probes. Usage also lists the standalone `yar
 formats omit configuration values, parser excerpts, and raw executable output.
 
 Before processing live tasks, treat `requiredLocalChecksPassed: true` together with
-`runtimeReadiness: "not-verified"` as local configuration/tool compatibility success only. Doctor
-does not verify credentials or external service access, isolation namespace capability, or
-project-ownership coordination provisioning. If startup or integration access fails after doctor
-passes, use the relevant setup guidance:
+`runtimeReadiness: "not-verified"` as local configuration/tool compatibility success only. Doctor's
+exit code `0` certifies only these required local checks, not successful authentication or readiness
+to process live tasks. Doctor does not verify credentials or external service access, isolation
+namespace capability, or project-ownership coordination provisioning. If startup or integration
+access fails after doctor passes, use the relevant setup guidance:
 
 - Check [credential configuration](docs/configuration.md#environment-variables) and the runtime
   identity's authentication, permissions, and connectivity to the configured services.
