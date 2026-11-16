@@ -130,11 +130,34 @@ export function isolatedOpenCodeDispatch(
     )
       throw new Error("Refinement result directory differs from owned external artifact");
     args.push("--bind", resultRoot, resultRoot);
+    // OpenCode bootstraps project-local metadata even for a read-only run.
+    // Present a read-only repository view with a private writable configuration
+    // copy so CLI initialization cannot mutate the actual repository contents.
+    const configRoot = path.join(run.pinned.storageRoot, "opencode-project-config", run.attemptId);
+    fs.mkdirSync(configRoot, { recursive: true, mode: 0o700 });
+    if (fs.realpathSync(configRoot) !== configRoot)
+      throw new Error("OpenCode project configuration copy resolves outside owned runtime state");
+    const shadow = fs.mkdtempSync(path.join(configRoot, "dispatch-"));
+    const projectConfig = path.join(cwd, ".opencode");
+    const configStat = fs.lstatSync(projectConfig, { throwIfNoEntry: false });
+    if (configStat) {
+      if (configStat.isSymbolicLink() || !configStat.isDirectory())
+        throw new Error("Refinement project configuration must be a regular directory");
+      fs.cpSync(projectConfig, shadow, { recursive: true, dereference: false });
+    }
+    args.push("--tmpfs", cwd);
+    for (const entry of fs.readdirSync(cwd)) {
+      if (entry === ".opencode") continue;
+      const source = path.join(cwd, entry);
+      if (fs.lstatSync(source).isSymbolicLink())
+        args.push("--symlink", fs.readlinkSync(source), source);
+      else args.push("--ro-bind", source, source);
+    }
+    args.push("--bind", shadow, projectConfig, "--remount-ro", cwd);
+  } else {
+    args.push("--bind", cwd, cwd);
   }
   args.push(
-    refinementResultDirectory === undefined ? "--bind" : "--ro-bind",
-    cwd,
-    cwd,
     "--ro-bind",
     gitFile,
     gitFile,
