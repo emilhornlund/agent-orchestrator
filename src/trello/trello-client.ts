@@ -463,6 +463,8 @@ export class TrelloClient {
 
     if (
       url.protocol !== "https:" ||
+      url.username !== "" ||
+      url.password !== "" ||
       (url.port !== "" && url.port !== "443") ||
       !["trello.com", "www.trello.com", "api.trello.com"].includes(url.hostname)
     ) {
@@ -489,15 +491,50 @@ export class TrelloClient {
 
     this.throwIfAborted(signal);
 
-    url.searchParams.set("key", this.options.apiKey);
-    url.searchParams.set("token", this.options.token);
+    // Trello's private attachment endpoint requires OAuth Authorization;
+    // query-string API credentials are accepted for metadata, not downloads.
+    url.hostname = "api.trello.com";
+    url.searchParams.delete("key");
+    url.searchParams.delete("token");
 
     const requestSignal = this.getRequestSignalFor(signal);
-    const response = await this.request(
-      url,
-      "attachment download",
-      requestSignal === undefined ? undefined : { signal: requestSignal },
-    );
+    const credentialOrigin = url.origin;
+    let response: Response;
+    for (let redirects = 0; ; redirects += 1) {
+      response = await this.request(url, "attachment download", {
+        ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+        redirect: "manual",
+        ...(url.origin === credentialOrigin
+          ? {
+              headers: {
+                Authorization: `OAuth oauth_consumer_key="${encodeURIComponent(this.options.apiKey)}", oauth_token="${encodeURIComponent(this.options.token)}"`,
+              },
+            }
+          : {}),
+      });
+      if (![301, 302, 303, 307, 308].includes(response.status)) break;
+      const location = response.headers.get("location");
+      await response.body?.cancel();
+      if (!location || redirects >= 3)
+        throw new TrelloRequestError(
+          "attachment download",
+          "Trello attachment redirect is missing or exceeded its bounded limit",
+          { retryable: false },
+        );
+      const destination = new URL(location, url);
+      if (
+        destination.protocol !== "https:" ||
+        destination.username ||
+        destination.password ||
+        (destination.port !== "" && destination.port !== "443")
+      )
+        throw new TrelloRequestError(
+          "attachment download",
+          "Trello attachment redirect requires a credential-free HTTPS destination",
+          { retryable: false },
+        );
+      url = destination;
+    }
 
     if (!response.ok) {
       throw new TrelloRequestError(
