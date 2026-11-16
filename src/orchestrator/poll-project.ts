@@ -159,11 +159,11 @@ export async function pollProject(
               authority,
               intervalMs: retryIntervalMs ?? 15_000,
               signal: rootSignal,
-              onError: () =>
+              onError: (_error, diagnosticReference) =>
                 logger
                   .child({ projectId: project.id })
                   .warn(
-                    "Active PR observation deferred after an external read failure; retained arrivals and writer state are unchanged",
+                    `Active PR observation deferred after a read failure; retained arrivals and writer state are unchanged; diagnostics: ${diagnosticReference ?? "unavailable"}`,
                   ),
             },
             () => execute(signal),

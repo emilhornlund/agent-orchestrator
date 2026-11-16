@@ -451,11 +451,11 @@ async function runProjectWorkerInner(
       authority: runContext.authority,
       intervalMs: pollIntervalMilliseconds,
       signal,
-      onError: () =>
+      onError: (_error, diagnosticReference) =>
         logger
           .child({ projectId: project.id })
           .warn(
-            "Active PR observation deferred; project state and retained arrivals are unchanged",
+            `Active PR observation deferred; project state and retained arrivals are unchanged; diagnostics: ${diagnosticReference ?? "unavailable"}`,
           ),
     },
     execute,
