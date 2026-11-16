@@ -271,7 +271,6 @@ export async function withImplementationPreparationRecovery(options: {
       ["preparing", "planning"].includes(preparing.lifecycle) &&
       preparing.publicationState === "none" &&
       Object.keys(preparing.sessions).length === 0;
-    if (!isImplementationPreparation(current) && !terminalPending && !beforeClaim) throw error;
     // A source fetch happens before the task checkpoint exists. Its verified
     // failure is an unavailable Git prerequisite, not an implementation crash.
     // Keep the same attempt and use the persisted paced wait across restarts.
@@ -291,6 +290,7 @@ export async function withImplementationPreparationRecovery(options: {
         command: process.command,
         cwd: project.repository.path,
       });
+    if (!isImplementationPreparation(current) && !terminalPending && !fetchUnavailable) throw error;
     await defer(
       error,
       terminalPending ? "terminal" : fetchUnavailable ? "dependency" : recoveryKind(error),
