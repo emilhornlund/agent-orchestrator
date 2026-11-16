@@ -46,7 +46,12 @@ export async function refreshTaskSessionCiOutcome(options: {
     );
   const episode = record.ciRepair;
   const quality = record.publicationQuality;
-  const review = implementationReviewResultSchema.safeParse(quality?.review);
+  const retainedReview = record.reviewRepair?.finalReview;
+  const reusableReview =
+    retainedReview?.reviewedContentIdentity === quality?.contentIdentity
+      ? retainedReview
+      : undefined;
+  const review = implementationReviewResultSchema.safeParse(quality?.review ?? reusableReview);
   const localEvidence = !quality
     ? null
     : {
@@ -83,6 +88,7 @@ export async function refreshTaskSessionCiOutcome(options: {
         review: null,
       }).allowed ||
       !review.success ||
+      review.data.reviewedContentIdentity !== quality.contentIdentity ||
       hasUndisposedReviewConcerns(
         review.data,
         record.reviewRepair?.findings ?? [],
@@ -118,6 +124,11 @@ export async function refreshTaskSessionCiOutcome(options: {
       : {}),
     facts: [
       ...ciOutcomeFacts(evaluation),
+      ...(quality?.review == null && reusableReview && review.success
+        ? [
+            "Reused the completed independent review of this exact source snapshot; no additional review execution is claimed.",
+          ]
+        : []),
       ...(unresolvedHumanRequests
         ? ["Human-requested changes remain unresolved or unverified."]
         : []),

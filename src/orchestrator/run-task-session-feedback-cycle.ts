@@ -1408,21 +1408,24 @@ export async function runTaskSessionFeedbackCycle(
         persistQualityEvidence(taskStore, currentRecord, operationId, validation, coverage);
         let review: { review: ImplementationReviewResult | null };
         try {
-          review = await runBoundedFeedbackReview({
-            project,
-            card,
-            expectedBranch: record.expectedBranch!,
-            operationKey: record.operationKey,
-            worktreePath,
-            taskRecordStore: taskStore,
-            planStore,
-            git,
-            openCode,
-            validation,
-            coverage,
-            ...(attachmentContext === undefined ? {} : { attachmentContext }),
-            runOptions: reviewRunOptions(project, signal),
-          });
+          review =
+            finalReview.review?.reviewedContentIdentity === validation.contentIdentity
+              ? finalReview
+              : await runBoundedFeedbackReview({
+                  project,
+                  card,
+                  expectedBranch: record.expectedBranch!,
+                  operationKey: record.operationKey,
+                  worktreePath,
+                  taskRecordStore: taskStore,
+                  planStore,
+                  git,
+                  openCode,
+                  validation,
+                  coverage,
+                  ...(attachmentContext === undefined ? {} : { attachmentContext }),
+                  runOptions: reviewRunOptions(project, signal),
+                });
         } catch (error) {
           if (!(error instanceof TaskSessionReviewUnavailableError)) throw error;
           const currentSource = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);

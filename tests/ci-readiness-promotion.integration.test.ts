@@ -8,6 +8,7 @@ import { FeedbackLedgerStore } from "../src/task-session/feedback-ledger-store.j
 import type { TaskExecutionRecord } from "../src/task-session/task-execution-record.js";
 import { refreshTaskSessionCiOutcome } from "../src/orchestrator/refresh-task-session-ci-outcome.js";
 import { PrMaintenanceStore } from "../src/task-session/pr-maintenance-store.js";
+import { implementationReviewResultSchema } from "../src/task-session/implementation-review-result.js";
 
 const roots: string[] = [];
 const leases: ProjectOwnershipLease[] = [];
@@ -21,6 +22,8 @@ it.each([
   { scenario: "clean", ready: true },
   { scenario: "unconfigured-quality", ready: true },
   { scenario: "historical-exhaustion", ready: true },
+  { scenario: "reused-review", ready: true },
+  { scenario: "stale-retained-review", ready: false },
   { scenario: "pending-ci", ready: false },
   { scenario: "failed-validation", ready: false },
   { scenario: "configured-coverage-missing", ready: false },
@@ -115,6 +118,20 @@ it.each([
         },
       },
     };
+    if (scenario === "reused-review" || scenario === "stale-retained-review") {
+      const review = implementationReviewResultSchema.parse(record.publicationQuality!.review);
+      record.reviewRepair = {
+        cycleId: "task:feedback",
+        status: "passed",
+        maxAttempts: 1,
+        finalReview: {
+          ...review,
+          reviewedContentIdentity:
+            scenario === "stale-retained-review" ? `sha256:${"c".repeat(64)}` : contentIdentity,
+        },
+      };
+      record.publicationQuality!.review = null;
+    }
     if (scenario === "human-request") {
       await f.authority.run(async () => {
         new FeedbackLedgerStore(f.project.contextRoot, f.project, f.authority).create(f.card.id, [
