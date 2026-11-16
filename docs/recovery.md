@@ -38,6 +38,41 @@ Also inspect the attempt's recorded worktree/branch, Git status and head, truste
 authoritative Trello list/history, GitHub PR identity/head, and the per-card session log when
 present. Never delete an unknown worktree or discard changes as a first response.
 
+## OpenCode provider authentication failures
+
+An OpenCode provider error such as `Token refresh failed: 401` indicates an authentication/access
+failure for the configured provider. It is not by itself evidence of a failing test assertion or
+validation check. Inspect the affected OpenCode execution and any validation command output to
+establish which operation failed and whether validation actually ran.
+
+Use the affected attempt's pinned storage root and diagnostic references, rather than guessing paths
+from the current configuration. As described in
+[Logging and retention](operations.md#logging-and-retention), task output is separate from the
+structured service log:
+
+- Per-card session log:
+  `<pinned-storage-root>/history/sessions/<sanitized-project-id>/<sanitized-card-id>-<attempt-id>.log`.
+- Child-process output: the pinned attempt's
+  `artifacts/<project>/<card>/<attempt>/process-executions/` tree. Inspect the relevant execution's
+  `stdout.txt` and `stderr.txt`, including the validation process artifacts when checking test
+  results.
+
+Repair provider access under the actual account/runtime identity running the service or task, using
+its effective OpenCode configuration and authentication store. Authenticating in an operator's own
+shell may not repair the service account's access. Follow the
+[OpenCode configuration guidance](configuration.md#projectsopencode) for provider selection,
+auth-store use and effective configuration locations, and
+[local/container installation guidance](operations.md#local-and-container-installation) for service
+identity and persistent home/authentication storage. Credential locations depend on that runtime's
+setup; the orchestrator does not provide a provider-credential refresh procedure.
+
+Never paste tokens or other credentials into Trello cards, logs, or shared diagnostics. Redact
+sensitive values before sharing output, following [SECURITY.md](../SECURITY.md). Preserve the
+attempt's state and worktree, then follow the existing
+[deliberate retry and operator actions](#deliberate-retry-and-operator-actions) for its recorded
+recovery condition; repairing authentication alone is not permission to bypass an ownership or
+attention fence.
+
 ## Refinement recovery after repository setup
 
 A successful setup checkpoint is reused when an interrupted refinement resumes. Setup inventories
