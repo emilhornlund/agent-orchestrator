@@ -182,6 +182,34 @@ it("retains deduplicated arrivals during a blocked writer without changing its c
   expect(errors).not.toHaveBeenCalled();
 });
 
+it("retains observer failure diagnostics without interrupting the writer and backs off rechecks", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  vi.mocked(f.github.findPullRequestState).mockRejectedValue(new Error("observation unavailable"));
+  const errors = vi.fn();
+  let finish!: () => void;
+  const writer = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const running = withActivePrObservation(
+    { ...f, intervalMs: 100, signal: new AbortController().signal, onError: errors },
+    () => writer,
+  );
+  await vi.advanceTimersByTimeAsync(100);
+  expect(errors).toHaveBeenCalledOnce();
+  const reference = errors.mock.calls[0]![1] as string;
+  expect(JSON.parse(f.store.readArtifact(reference).toString("utf8"))).toEqual({
+    kind: "active-pr-observation-failure",
+    name: "Error",
+    message: "observation unavailable",
+  });
+  await vi.advanceTimersByTimeAsync(199);
+  expect(errors).toHaveBeenCalledOnce();
+  finish();
+  await running;
+  expect(vi.getTimerCount()).toBe(0);
+});
+
 it("preserves prior arrivals on outages and rejects stale owner generations", async () => {
   const f = fixture();
   await observeActivePullRequest(f);
