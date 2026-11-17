@@ -68,6 +68,7 @@ import { isConclusiveOperationResolution } from "../task-session/run-record.js";
 import { isRetryableGitHubError } from "../github/github-client.js";
 import { isShutdownCancellation } from "../runtime/shutdown-cancellation.js";
 import { getLegacyPublishedGitHubReadRecoveryPhase } from "../task-session/reconcile-task-session.js";
+import { canRecheckReviewedPublication } from "../task-session/uncommitted-publication-recovery.js";
 
 export function hasDueTaskSessionRecoveryWait(
   authorityRecord: import("../task-session/run-record.js").RunRecord | null,
@@ -77,6 +78,7 @@ export function hasDueTaskSessionRecoveryWait(
   const projection = authorityRecord.compatibility[`task-execution-${authorityRecord.cardId}`];
   if (projection === undefined) return false;
   const taskProjection = parseTaskExecutionRecord(projection);
+  if (canRecheckReviewedPublication(authorityRecord, taskProjection)) return true;
   const recoveryWait = taskProjection.recoveryWait;
   if (getLegacyPublishedGitHubReadRecoveryPhase(authorityRecord, taskProjection) !== null)
     return true;
