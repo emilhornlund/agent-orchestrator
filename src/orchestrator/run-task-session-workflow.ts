@@ -5734,7 +5734,9 @@ async function runTaskSessionWorkflowAttempt(
             signal,
           },
         });
-        cardLog.event("Validation passed");
+        cardLog.event(
+          `Local quality checks completed: validation ${quality.validation.status}; coverage ${quality.coverage.status}; repair outcome ${quality.record.validationRepair?.status ?? "unavailable"}`,
+        );
       } catch (error) {
         cardLog.event(
           isShutdownCancellation(error, signal)

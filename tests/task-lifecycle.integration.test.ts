@@ -38,6 +38,7 @@ import {
 import { readTerminalPrFence } from "../src/task-session/terminal-pr-fence.js";
 import { AiExecutionCapacity } from "../src/orchestrator/ai-execution-capacity.js";
 import { notificationAuthorityFixture } from "./support/notification-authority-fixture.js";
+import { Logger } from "../src/logging/logger.js";
 
 const execFile = promisify(nodeExecFile);
 let roots: string[] = [];
@@ -288,6 +289,7 @@ describe("task lifecycle through pollProject", () => {
       targetMerge,
       ciBudget,
     }) => {
+      const progress = vi.spyOn(Logger.prototype, "event");
       // Restore the inherited environment even in scenarios without a scripted child.
       originalProcessPath = process.env.PATH;
       originalPrimaryMode = process.env.PRIMARY_MODE;
@@ -1914,6 +1916,23 @@ describe("task lifecycle through pollProject", () => {
       expect(firstPr?.isDraft).toBe(
         draft || preparedReview !== undefined || preparedValidationFailure === true,
       );
+      const progressMessages = progress.mock.calls.map(([message]) => message);
+      if (draft) {
+        expect(
+          progressMessages.some((message) =>
+            message.startsWith("Local quality checks completed: validation failed;"),
+          ),
+        ).toBe(true);
+        expect(progressMessages).not.toContain("Validation passed");
+      }
+      if (quality === "none")
+        expect(
+          progressMessages.some((message) =>
+            message.startsWith(
+              "Local quality checks completed: validation skipped; coverage skipped;",
+            ),
+          ),
+        ).toBe(true);
       if (preparedValidationFailure) {
         expect(store.read("first")?.publicationQuality?.validation).toMatchObject({
           status: "failed",
