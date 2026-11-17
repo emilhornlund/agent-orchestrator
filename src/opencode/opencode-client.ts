@@ -3,6 +3,8 @@ import { containedProcess, observeContainedProcess } from "../process/contained-
 import { StringDecoder } from "node:string_decoder";
 import {
   buildChildEnvironment,
+  taskEnvironmentSecretValues,
+  type TaskEnvironment,
   hasOpenCodeProviderCredentials,
   openCodeDefaultConfigPathIssue,
   providerFromModel,
@@ -55,6 +57,7 @@ export interface OpenCodeRunOptions {
   readOnly?: boolean;
   refinementResultDirectory?: string;
   environment?: Record<string, string>;
+  taskEnvironment?: TaskEnvironment | undefined;
   sessionLogPath?: string;
   sessionLabel?: string;
   secretValues?: readonly string[];
@@ -460,6 +463,7 @@ const defaultRunOpenCode: RunOpenCode = async ({
   readOnly,
   refinementResultDirectory,
   environment,
+  taskEnvironment,
   sessionLogPath,
   sessionLabel,
   secretValues,
@@ -529,7 +533,13 @@ const defaultRunOpenCode: RunOpenCode = async ({
       }
 
       const childEnvironment = {
-        ...buildChildEnvironment("opencode", environment, process.env, effectiveProvider),
+        ...buildChildEnvironment(
+          "opencode",
+          environment,
+          process.env,
+          effectiveProvider,
+          taskEnvironment,
+        ),
         OPENCODE_CONFIG_CONTENT: buildOpenCodeConfigContent(readOnly),
       };
       if (effectiveSignal.aborted) {
@@ -999,6 +1009,7 @@ export class OpenCodeClient {
       ...this.configuredSecretValues,
       ...getProcessRuntime().secretValues,
       ...(options.secretValues ?? []),
+      ...taskEnvironmentSecretValues(options.taskEnvironment),
     ];
     const result = await this.runOpenCode({
       ...options,

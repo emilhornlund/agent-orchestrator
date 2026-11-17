@@ -269,6 +269,7 @@ async function verifyQuality(
       };
     try {
       const result = await options.commands.run({
+        taskEnvironment: options.project.taskEnvironment,
         cwd: options.worktreePath,
         command,
         timeoutMilliseconds: options.project.opencode.timeoutMinutes * 60_000,

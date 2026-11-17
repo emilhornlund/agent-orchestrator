@@ -53,12 +53,59 @@ variables are unnecessary for projects using a GitHub App.
 `.env` is ignored by the repository. Keep Trello credentials, SMTP credentials, API keys, access
 tokens, and other secrets out of configuration files and source control.
 
+### Task application environment
+
+Setup commands, validation commands, and OpenCode inherit a minimal environment by default. Setting
+a variable on the service/container alone does not pass arbitrary application settings to these
+children. Configure `projects[].taskEnvironment` as a mapping from **child variable name** to
+**service environment variable name**. Configuration contains names only, never literal values:
+
+```yaml
+projects:
+  - id: klurigo
+    taskEnvironment:
+      REDIS_HOST: KLURIGO_TEST_REDIS_HOST
+      REDIS_PORT: KLURIGO_TEST_REDIS_PORT
+      MONGODB_HOST: KLURIGO_TEST_MONGODB_HOST
+      MONGODB_PORT: KLURIGO_TEST_MONGODB_PORT
+    # ...the project's remaining configuration...
+```
+
+Define the four source variables in the service's protected environment or Compose `environment`:
+for example, `KLURIGO_TEST_REDIS_HOST=test-redis`. Only Klurigo receives these variables, under the
+names expected by its application. Another project may map the same child name to a different
+source, or omit it entirely. Omitting `taskEnvironment` (or using `{}`) preserves the minimal
+default.
+
+The mapping applies to that project's setup, validation/coverage, OpenCode sessions and tool
+descendants, including corrections, PR maintenance and future dispatches after restart. Source
+values are resolved at dispatch from the current service environment, never persisted in task state.
+Restart with updated configuration/environment to change the mapping; completed setup/validation
+checkpoints are not automatically repeated. Independent projects do not mutate a shared child
+environment. Git, GitHub, and coordination subprocesses keep their separate manifests.
+
+Both source and child names must be shell variable names (letters, digits and underscores, not
+starting with a digit); lowercase proxy names are supported. Reserved service credentials, provider
+credentials, platform variables, and execution controls cannot be mapped; they retain their existing
+operation-specific contracts. Configured SMTP credential sources are also excluded. Invalid names
+fail configuration parsing; missing source variables fail startup and dispatch without including
+their values. Defined empty values are supported. Task-supplied tool overrides cannot widen or
+replace the project's mapping. Credential-like names and connection URLs are registered for output
+redaction; keep task secrets in protected service environment values, outside committed YAML.
+
+Managed processes share the service's network namespace; filesystem/PID isolation does not disable
+network access. In Compose, attach the service and dependencies to a common network and use their
+service DNS names, rather than `localhost` (which identifies the orchestrator container). Configure
+additional networks, DNS, proxies, or host routing in the deployment stack as needed. An environment
+mapping supplies application configuration; it does not create routes or start dependency services.
+
 ## Top-level settings
 
 ### `projects`
 
 `projects` is a non-empty list. Each item has `id`, optional legacy `autoMerge: false`, optional
-`maintenance`, `trello`, `repository`, and `opencode` settings. Project IDs must be unique.
+`maintenance`, optional `taskEnvironment`, `trello`, `repository`, and `opencode` settings. Project
+IDs must be unique.
 
 ### `workflow`
 

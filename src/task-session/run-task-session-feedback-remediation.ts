@@ -176,7 +176,12 @@ export async function runTaskSessionFeedbackRemediation(
       options.openCode,
       options.project.id,
       options.card.id,
-      { ...options.runOptions, cwd: options.worktreePath, prompt },
+      {
+        ...options.runOptions,
+        taskEnvironment: options.project.taskEnvironment,
+        cwd: options.worktreePath,
+        prompt,
+      },
       options.inspectPrimarySession === undefined ? {} : { inspect: options.inspectPrimarySession },
       {
         role: "primary",

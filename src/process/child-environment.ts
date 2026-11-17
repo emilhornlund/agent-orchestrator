@@ -193,11 +193,57 @@ export function providerForOpenCodeDefault(
   return undefined;
 }
 
+/** Child variable name -> service environment variable name. Values stay out of config/state. */
+export type TaskEnvironment = Readonly<Record<string, string>>;
+
+export function isTaskEnvironmentName(key: string): boolean {
+  const managed = new Set([
+    ...platformKeys,
+    ...gitKeys,
+    ...Object.values(openCodeProviderCredentials).flat(),
+  ]);
+  return (
+    /^[A-Za-z_][A-Za-z0-9_]*$/u.test(key) &&
+    !managed.has(key.toUpperCase()) &&
+    !/^(?:TRELLO_|SMTP_|GH_|GITHUB_|GIT_|OPENCODE_|AGENT_ORCHESTRATOR_|XDG_|LD_|DYLD_|NODE_(?!ENV$)|BASH_ENV$|ENV$|__PROTO__$|CONSTRUCTOR$|PROTOTYPE$)/iu.test(
+      key,
+    )
+  );
+}
+
+export function resolveTaskEnvironment(
+  mapping: TaskEnvironment = {},
+  parent: Readonly<NodeJS.ProcessEnv> = process.env,
+): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [target, source] of Object.entries(mapping)) {
+    if (!isTaskEnvironmentName(target) || !isTaskEnvironmentName(source))
+      throw new Error("Task environment contains an invalid or reserved variable name");
+    const value = parent[source];
+    if (value === undefined) throw new Error(`Task environment variable ${source} is not defined`);
+    result[target] = value;
+  }
+  return result;
+}
+
+export function taskEnvironmentSecretValues(
+  mapping: TaskEnvironment = {},
+  parent: Readonly<NodeJS.ProcessEnv> = process.env,
+): string[] {
+  const values = resolveTaskEnvironment(mapping, parent);
+  return Object.entries(mapping)
+    .filter(([target, source]) =>
+      /KEY|TOKEN|PASSWORD|SECRET|CREDENTIAL|AUTH|DSN|URL/iu.test(`${target} ${source}`),
+    )
+    .map(([target]) => values[target]!);
+}
+
 export function buildChildEnvironment(
   family: ChildProcessFamily,
   supplied: Readonly<Record<string, string | undefined>> = {},
   parent: Readonly<NodeJS.ProcessEnv> = process.env,
   selectedProvider?: string,
+  taskEnvironment?: TaskEnvironment,
 ): Record<string, string> {
   const keys = new Set(platformKeys);
   if (family === "git") for (const key of gitKeys) keys.add(key);
@@ -227,6 +273,10 @@ export function buildChildEnvironment(
     if (value !== undefined && keys.has(key)) {
       result[key] = value;
     }
+  }
+  if (family === "command" || family === "opencode") {
+    // Project settings come only from the operator's mapping, not supplied tool overrides.
+    Object.assign(result, resolveTaskEnvironment(taskEnvironment, parent));
   }
   return result;
 }

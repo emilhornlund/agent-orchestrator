@@ -1105,6 +1105,7 @@ export async function runTaskSessionFeedbackCycle(
               project.id,
               card.id,
               {
+                taskEnvironment: project.taskEnvironment,
                 model: project.opencode.remediation.model,
                 variant: project.opencode.remediation.variant,
                 timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,

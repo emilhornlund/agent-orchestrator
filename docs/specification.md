@@ -1124,6 +1124,12 @@ capabilities.
   environments.
 - Runtime paths are configurable rather than tied to container-specific directories.
 - Docker is not required for normal local operation.
+- Optional project-scoped task environment mappings select service environment source names for
+  setup, validation/coverage, and OpenCode/tool subprocesses, including resumed dispatches. The same
+  child name may select different sources for different projects; unconfigured projects and
+  Git/GitHub/coordination operations do not inherit those mappings. Resolved values are not stored
+  in configuration or task state. Reserved/invalid mappings and missing sources prevent dispatch
+  with non-sensitive diagnostics; existing credential scoping and output redaction remain enforced.
 
 ### REQ-ENV-002 — Optional project setup command
 

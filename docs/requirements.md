@@ -724,6 +724,11 @@ the final outcome.
   than tied to container-specific locations.
 - Persistent state, restart recovery, logging, Git operations, and task execution must work
   consistently in both environments.
+- Each project may explicitly map task application environment variables to service environment
+  source names. Only that project's setup, validation/coverage, and agent subprocesses receive the
+  selected settings; other projects and orchestrator-owned Git/GitHub/coordination operations do not
+  implicitly inherit them. Configuration and task state must not contain resolved secret values.
+  Invalid/reserved mappings and missing sources fail clearly before task dispatch.
 
 ## Startup dependency checks
 

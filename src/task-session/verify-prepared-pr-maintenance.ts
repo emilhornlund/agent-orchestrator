@@ -97,6 +97,7 @@ export async function verifyPreparedPrMaintenance(
   const runGate = async (command: string, label: string): Promise<TaskSessionValidationResult> => {
     const gateStartedAt = new Date().toISOString();
     const result = await options.commands.run({
+      taskEnvironment: options.project.taskEnvironment,
       cwd: worktreePath,
       command,
       signal: options.signal,

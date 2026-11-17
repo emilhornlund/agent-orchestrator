@@ -80,6 +80,7 @@ function buildCommandOptions(
   return {
     cwd: options.worktreePath,
     command,
+    taskEnvironment: options.project.taskEnvironment,
     signal: options.signal,
     timeoutMilliseconds: options.timeoutMilliseconds,
     captureOutput: true,

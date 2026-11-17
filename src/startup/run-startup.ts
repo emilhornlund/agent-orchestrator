@@ -12,6 +12,7 @@ import { logger } from "../logging/logger.js";
 import type { EmailNotifier } from "../notifications/email-notifier.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import type { CommandRunner } from "../process/command-runner.js";
+import { resolveTaskEnvironment } from "../process/child-environment.js";
 import {
   getTrelloRequestOperation,
   isRetryableTrelloError,
@@ -452,6 +453,13 @@ export async function runStartup(
   signal: AbortSignal,
   operations: StartupOperations = defaultStartupOperations,
 ): Promise<void> {
+  for (const project of config.projects) {
+    try {
+      resolveTaskEnvironment(project.taskEnvironment);
+    } catch (error) {
+      throw new Error(`Invalid task environment for project ${project.id}`, { cause: error });
+    }
+  }
   // Ownership precedes even startup housekeeping: cleanup and bootstrap can
   // mutate files used by a task. Hold all configured integrations until every
   // worker has stopped, rather than acquiring ownership after bootstrap.

@@ -310,6 +310,7 @@ export async function runTaskSessionReview(
     try {
       runResult = await openCode.run({
         ...runOptions,
+        taskEnvironment: project.taskEnvironment,
         sessionLogPath: runOptions.sessionLogPath ?? getSessionLogPath(project.id, card.id),
         sessionLabel: runOptions.sessionLabel ?? "Task-session implementation review",
         cwd: worktreePath,

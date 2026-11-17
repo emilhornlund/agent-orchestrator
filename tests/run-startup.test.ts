@@ -124,6 +124,43 @@ function validRepositoryGit(): RunGit {
 }
 
 describe("runStartup", () => {
+  it("rejects missing project task environment sources before starting tools or workflow work", async () => {
+    const project = createProject("/unused/source");
+    project.taskEnvironment = { REDIS_HOST: "PROJECT_MISSING_REDIS_HOST" };
+    vi.stubEnv("PROJECT_MISSING_REDIS_HOST", undefined);
+    const config = createConfig(project);
+    const runCommand = vi.fn<RunCommand>();
+    const runOrchestrator = vi.fn<StartupOperations["runOrchestrator"]>();
+    try {
+      await expect(
+        runStartup(
+          config,
+          {
+            trello: {} as TrelloClient,
+            git: new GitClient(validRepositoryGit()),
+            github: {} as GitHubClient,
+            opencode: {} as OpenCodeClient,
+            commands: new CommandRunner(runCommand),
+          },
+          new AbortController().signal,
+          {
+            validateGitHubCli: vi.fn(),
+            validateProjectTrello: vi.fn(),
+            runOrchestrator,
+          },
+        ),
+      ).rejects.toMatchObject({
+        message: "Invalid task environment for project test-project",
+        cause: { message: "Task environment variable PROJECT_MISSING_REDIS_HOST is not defined" },
+      });
+      expect(runCommand).not.toHaveBeenCalled();
+      expect(runOrchestrator).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(config.workflow.coordinationRoot!, { recursive: true, force: true });
+    }
+  });
+
   it.each(["legacy", "canonical"] as const)(
     "isolates corrupt and unsupported %s state on repeated startup without losing originals or blocking a healthy project",
     async (family) => {

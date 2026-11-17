@@ -625,6 +625,13 @@ The writable OpenCode sandbox keeps its root and protected source/Git/runtime mo
 while allowing its private `/tmp` to be writable. Tools which omit `TMPDIR` therefore retain normal
 temporary-file behavior; this does not expose the host's temporary directory or source checkout.
 
+Both managed commands and isolated OpenCode processes retain the service's network namespace.
+Project services such as MongoDB and Redis must be reachable from that namespace, and their endpoint
+settings must reach the child environment. Use
+[`projects[].taskEnvironment`](configuration.md#task-application-environment) to pass project-scoped
+application settings to setup, validation, and OpenCode. Container networking, service discovery,
+and any additional network attachments are configured in the deployment stack.
+
 Startup failures, uncaught exceptions, and unhandled promise rejections are logged as fatal
 diagnostics with the original error details and a UTC timestamp. The first fatal event requests the
 same coordinated shutdown and the process exits with status `1`. Repeated fatal events or signals do

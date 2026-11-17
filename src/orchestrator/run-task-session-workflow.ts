@@ -808,6 +808,7 @@ function commitMessageRunOptions(
   sessionLogPath: string,
 ) {
   return {
+    taskEnvironment: project.taskEnvironment,
     model: project.opencode.commit.model,
     variant: project.opencode.commit.variant,
     timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
@@ -1506,6 +1507,7 @@ async function runTaskSessionWorkflowAttempt(
         sourceCard.id,
         {
           cwd: sourceWorktree,
+          taskEnvironment: project.taskEnvironment,
           model: project.opencode.implementation.model,
           variant: project.opencode.implementation.variant,
           timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
@@ -2697,6 +2699,7 @@ async function runTaskSessionWorkflowAttempt(
               project.id,
               card.id,
               {
+                taskEnvironment: project.taskEnvironment,
                 model: project.opencode.remediation.model,
                 variant: project.opencode.remediation.variant,
                 timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
@@ -2965,6 +2968,7 @@ async function runTaskSessionWorkflowAttempt(
               project.id,
               card.id,
               {
+                taskEnvironment: project.taskEnvironment,
                 model: project.opencode.remediation.model,
                 variant: project.opencode.remediation.variant,
                 timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
@@ -3617,6 +3621,7 @@ async function runTaskSessionWorkflowAttempt(
             card.id,
             {
               cwd: taskResources(project, card.id).path,
+              taskEnvironment: project.taskEnvironment,
               model: project.opencode.remediation.model,
               variant: project.opencode.remediation.variant,
               timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
@@ -5013,6 +5018,7 @@ async function runTaskSessionWorkflowAttempt(
         const setupArtifactDirectory = taskStore.processExecutionDirectory(activeCard.id);
         try {
           setupResult = await runRepositorySetup(commands, {
+            taskEnvironment: project.taskEnvironment,
             cwd: worktreePath,
             command: project.repository.setupCommand,
             timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
@@ -5136,6 +5142,7 @@ async function runTaskSessionWorkflowAttempt(
     const attachmentContext = await options.prepareAttachmentContext(activeCard);
     const sessionLogPath = getSessionLogPath(project.id, activeCard.id);
     const commonRunOptions = {
+      taskEnvironment: project.taskEnvironment,
       model: project.opencode.implementation.model,
       variant: project.opencode.implementation.variant,
       timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
@@ -5180,6 +5187,7 @@ async function runTaskSessionWorkflowAttempt(
                 }),
             },
             runOptions: {
+              taskEnvironment: project.taskEnvironment,
               timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
               signal,
               sessionLabel: "Task-session planning",
@@ -5346,6 +5354,7 @@ async function runTaskSessionWorkflowAttempt(
             card: activeCard,
             ...(attachmentContext === undefined ? {} : { attachmentContext }),
             runOptions: {
+              taskEnvironment: project.taskEnvironment,
               cwd: worktreePath,
               ...project.opencode.planReview,
               timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
@@ -5526,6 +5535,7 @@ async function runTaskSessionWorkflowAttempt(
           activeCard.id,
           {
             ...project.opencode.remediation,
+            taskEnvironment: project.taskEnvironment,
             timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
             signal,
             sessionLabel: "Task-session review remediation",
@@ -6430,6 +6440,7 @@ async function runTaskSessionWorkflowAttempt(
               activeCard.id,
               {
                 ...project.opencode.remediation,
+                taskEnvironment: project.taskEnvironment,
                 timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
                 signal,
                 sessionLabel: "Task-session review remediation",

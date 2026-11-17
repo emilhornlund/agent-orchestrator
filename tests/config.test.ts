@@ -172,6 +172,56 @@ function configWithGithubAppValues(values: Partial<Record<GitHubAppField, string
 }
 
 describe("parseConfig", () => {
+  it("keeps task environment mappings project-specific and stores only source names", () => {
+    const raw = appendProject(
+      validConfig.replace(
+        "    trello:",
+        "    taskEnvironment:\n      REDIS_HOST: PROJECT_ONE_REDIS_HOST\n    trello:",
+      ),
+      "project-two",
+      "two",
+    );
+    const config = parseConfig(raw);
+    expect(config.projects[0]!.taskEnvironment).toEqual({ REDIS_HOST: "PROJECT_ONE_REDIS_HOST" });
+    expect(config.projects[1]!.taskEnvironment).toBeUndefined();
+    expect(parseConfig(validConfig).projects[0]!.taskEnvironment).toBeUndefined();
+  });
+
+  it.each([
+    "      REDIS_HOST: redis.example.test",
+    "      REDIS_HOST: 6379",
+    "      REDIS_HOST: TRELLO_TOKEN",
+    "      NODE_OPTIONS: PROJECT_NODE_OPTIONS",
+    "      OPENAI_API_KEY: PROJECT_PROVIDER_KEY",
+    "      REDIS_HOST: ''",
+  ])("rejects invalid or reserved task environment mapping %s", (mapping) => {
+    expect(() =>
+      parseConfig(
+        validConfig.replace("    trello:", `    taskEnvironment:\n${mapping}\n    trello:`),
+      ),
+    ).toThrow("taskEnvironment");
+  });
+
+  it("rejects mapping custom-named orchestrator SMTP credentials into task inputs", () => {
+    const raw =
+      validConfig.replace(
+        "    trello:",
+        "    taskEnvironment:\n      APP_PASSWORD: MAIL_LOGIN\n    trello:",
+      ) +
+      `
+notifications:
+  email:
+    enabled: false
+    smtp:
+      host: mail.example.test
+      port: 587
+      secure: false
+      usernameEnv: MAIL_LOGIN
+      passwordEnv: MAIL_PASS
+`;
+    expect(() => parseConfig(raw)).toThrow("Must not forward orchestrator SMTP credentials");
+  });
+
   it("parses the unified configuration example", () => {
     const config = parseConfig(
       fs.readFileSync(new URL("../config.example.yaml", import.meta.url), "utf8"),

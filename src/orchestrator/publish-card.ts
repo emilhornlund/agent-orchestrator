@@ -272,6 +272,7 @@ async function generatePullRequestDescription(options: {
 
     try {
       result = await opencode.run({
+        taskEnvironment: project.taskEnvironment,
         cwd: worktreePath,
         model: project.opencode.commit.model,
         variant: project.opencode.commit.variant,

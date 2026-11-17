@@ -62,6 +62,7 @@ export async function classifyCurrentFeedback(options: {
   });
   if (candidates.length === 0) return [...options.incoming];
   const response = await options.openCode.run({
+    taskEnvironment: options.project.taskEnvironment,
     cwd: options.worktreePath,
     readOnly: true,
     model: options.project.opencode.review.model,

@@ -84,6 +84,7 @@ export async function runPrMaintenanceReview(
   let previousError = "";
   for (let attempt = 0; attempt <= 1; attempt += 1) {
     const result = await options.openCode.run({
+      taskEnvironment: options.project.taskEnvironment,
       cwd: options.worktreePath,
       model: options.project.opencode.review.model,
       variant: options.project.opencode.review.variant,
