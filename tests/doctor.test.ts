@@ -12,7 +12,7 @@ import type { CommandRunOptions, CommandRunResult } from "../src/process/command
 
 const example = fs.readFileSync(new URL("../config.example.yaml", import.meta.url), "utf8");
 const usage =
-  "Usage: yarn doctor [--json] [--config PATH | --config=PATH]\n       yarn doctor --help\n       yarn doctor -h";
+  "Usage: yarn doctor [--json] [-c PATH | --config PATH | --config=PATH]\n       yarn doctor --help\n       yarn doctor -h";
 const invalidShortHelpArguments = [
   ["-h", "--json"],
   ["--json", "-h"],
@@ -29,6 +29,37 @@ const invalidShortHelpArguments = [
   ["--unknown", "-h"],
   ["-h", "file"],
   ["file", "-h"],
+];
+const invalidShortConfigArguments = [
+  ["-c"],
+  ["--json", "-c"],
+  ["-c", ""],
+  ["-c", "   "],
+  ["-c", "\t"],
+  ["-c", "--json"],
+  ["-c", "--unknown"],
+  ["-c", "--config"],
+  ["-c", "--config=one.yaml"],
+  ["-c", "-c"],
+  ["--config", "-c"],
+  ["-c=one.yaml"],
+  ["-cone.yaml"],
+  ["-ch"],
+  ["-hc"],
+  ["-c", "one.yaml", "extra.yaml"],
+  ...["-h", "--help"].flatMap((help) => [
+    [help, "-c", "one.yaml"],
+    ["-c", "one.yaml", help],
+    ["-c", help],
+  ]),
+  ...["one.yaml", "two.yaml"].flatMap((secondPath) =>
+    [["-c", secondPath], ["--config", secondPath], [`--config=${secondPath}`]].flatMap(
+      (selection) => [
+        ["-c", "one.yaml", ...selection],
+        [...selection, "-c", "one.yaml"],
+      ],
+    ),
+  ),
 ];
 const responses: Record<string, string> = {
   "git --version": "git version 2.30.0",
@@ -86,6 +117,13 @@ describe("local environment diagnostics", () => {
   it.each([
     { args: [], json: false, configPath: "config.yaml" },
     { args: ["--json"], json: true, configPath: "config.yaml" },
+    { args: ["-c", "configs/local.yaml"], json: false, configPath: "configs/local.yaml" },
+    { args: ["--json", "-c", "/tmp/local.yaml"], json: true, configPath: "/tmp/local.yaml" },
+    { args: ["-c", "local config.yaml", "--json"], json: true, configPath: "local config.yaml" },
+    { args: ["-c", "local=settings.yaml"], json: false, configPath: "local=settings.yaml" },
+    { args: ["-c", "-other"], json: false, configPath: "-other" },
+    { args: ["-c", "./-c"], json: false, configPath: "./-c" },
+    { args: ["--config=-c"], json: false, configPath: "-c" },
     { args: ["--config", "configs/local.yaml"], json: false, configPath: "configs/local.yaml" },
     { args: ["--config=configs/local.yaml"], json: false, configPath: "configs/local.yaml" },
     { args: ["--json", "--config=/tmp/local.yaml"], json: true, configPath: "/tmp/local.yaml" },
@@ -112,6 +150,7 @@ describe("local environment diagnostics", () => {
     "loads the selected file with warnings suppressed: %j",
     async (...mode) => {
       for (const configArgs of [
+        ["-c", "local config.yaml"],
         ["--config", "local config.yaml"],
         ["--config=local config.yaml"],
       ]) {
@@ -205,6 +244,7 @@ describe("local environment diagnostics", () => {
     ["--help", "--help"],
     ["--help", "--unknown"],
     ...invalidShortHelpArguments,
+    ...invalidShortConfigArguments,
   ])(
     "rejects unsupported arguments before loading configuration or probing: %j",
     async (...args) => {
@@ -307,12 +347,15 @@ describe("local environment diagnostics", () => {
       ["--json"],
       ["--config", "selected.yaml"],
       ["--json", "--config", "selected.yaml"],
+      ["-c", "selected.yaml"],
+      ["--json", "-c", "selected.yaml"],
     ]) {
       const result = await diagnose({}, configuration, args);
       expect(result.exitCode).toBe(1);
       expect(result.output).toContain(explanation);
       expect(result.output).not.toContain("secret-config-value");
-      if (args.includes("--config")) expect(result.output).toContain("selected.yaml");
+      if (args.includes("--config") || args.includes("-c"))
+        expect(result.output).toContain("selected.yaml");
       if (args.includes("--json")) {
         const report = JSON.parse(result.output);
         expect(report.checks[0].status).toBe("failed");
@@ -324,8 +367,8 @@ describe("local environment diagnostics", () => {
     }
   });
 
-  it("escapes control characters in selected-file summaries", async () => {
-    const result = await diagnose({}, undefined, ["--config", "local\nconfig.yaml"]);
+  it.each(["--config", "-c"])("escapes control characters in %s summaries", async (option) => {
+    const result = await diagnose({}, undefined, [option, "local\nconfig.yaml"]);
     expect(result.output).toContain('"local\\nconfig.yaml" exists and is valid.');
     expect(result.output).not.toContain("local\nconfig.yaml");
   });
@@ -423,6 +466,7 @@ describe("standalone doctor entrypoint", () => {
     ["--config=one.yaml", "--help"],
     ["--help", "--help"],
     ...invalidShortHelpArguments,
+    ...invalidShortConfigArguments,
   ])("rejects invalid arguments at the entrypoint without probing: %j", async (...args) => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-arguments-"));
     for (const executable of ["git", "gh", "opencode"]) {
@@ -507,18 +551,20 @@ describe("standalone doctor entrypoint", () => {
     ].flatMap((scenario) =>
       [false, true].flatMap((json) =>
         ["default", "relative", "absolute", "spaces"].flatMap((selection) =>
-          (selection === "default" ? [false] : [false, true]).map((equals) => ({
-            ...scenario,
-            json,
-            selection,
-            equals,
-          })),
+          (selection === "default" ? ["default"] : ["--config", "--config=", "-c"]).map(
+            (option) => ({
+              ...scenario,
+              json,
+              selection,
+              option,
+            }),
+          ),
         ),
       ),
     ),
   )(
-    "is read-only and protects both output streams ($scenario, json=$json, $selection, equals=$equals)",
-    async ({ configuration, failure, configFailure, json, selection, equals }) => {
+    "is read-only and protects both output streams ($scenario, json=$json, $selection, option=$option)",
+    async ({ configuration, failure, configFailure, json, selection, option }) => {
       root = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-"));
       const bin = path.join(root, "bin");
       fs.mkdirSync(bin);
@@ -540,9 +586,9 @@ describe("standalone doctor entrypoint", () => {
       const configArgs =
         selection === "default"
           ? []
-          : equals
+          : option === "--config="
             ? [`--config=${configPath}`]
-            : ["--config", configPath];
+            : [option, configPath];
       const args =
         selection === "spaces"
           ? [...configArgs, ...(json ? ["--json"] : [])]
