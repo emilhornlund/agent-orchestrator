@@ -25,11 +25,18 @@ if (fs.readFileSync(path.join(cwd, "primary-mode"), "utf8") === "crash") {
   process.kill(process.pid, "SIGKILL");
 }
 const mode = fs.readFileSync(path.join(cwd, "primary-mode"), "utf8");
+const oneShot = ["outage-once", "auth-once", "late-outage-once"].includes(mode);
 if (
-  (["outage-once", "auth-once"].includes(mode) && count === 1) ||
-  (!["outage-once", "auth-once"].includes(mode) &&
-    count <= Number(process.env.PRIMARY_OUTAGE_WINDOWS ?? "5"))
+  (oneShot && count === 1) ||
+  (!oneShot && count <= Number(process.env.PRIMARY_OUTAGE_WINDOWS ?? "5"))
 ) {
+  if (mode === "late-outage-once") {
+    for (let step = 0; step < 160; step += 1)
+      fs.writeSync(
+        1,
+        `${JSON.stringify({ type: "text", part: { type: "text", text: `implementation progress ${step}` } })}\n`,
+      );
+  }
   process.stdout.write(
     `${JSON.stringify({ type: "error", error: mode === "auth-once" ? { name: "UnknownError", data: { message: "Token refresh failed: 401" } } : { name: "APIError", data: { statusCode: 503 } } })}\n`,
   );

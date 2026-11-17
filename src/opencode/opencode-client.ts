@@ -382,7 +382,7 @@ export function extractOpenCodeTextOutput(output: string): string {
 }
 
 function hasStructuredProviderOutage(output: string): boolean {
-  for (const line of output.split(/\r?\n/u).slice(0, 128)) {
+  for (const line of output.split(/\r?\n/u)) {
     if (line.length > 16_384) continue;
     try {
       const event: unknown = JSON.parse(line);
