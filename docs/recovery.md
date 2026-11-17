@@ -202,6 +202,36 @@ original blocker rather than only reporting that the task was already escalated.
 environment or software defect does not automatically clear an existing attention fence; the
 original attempt must be revalidated under its project lease before resumption.
 
+### Reviewed implementation interrupted before its first commit
+
+A completed review cycle can legitimately leave meaningful implementation changes uncommitted while
+publication prepares its commit metadata and final quality observations. Failed/uncertain
+validation, negative review, and a `no-change` repair outcome still require draft PR delivery; they
+do not turn the implementation into an ambiguous or failed task merely because the worktree is
+dirty.
+
+Startup revalidates this pre-commit checkpoint against the recorded review's exact source identity,
+the owned worktree/branch, unchanged base ancestry, no active merge/rebase/conflicts, and absence of
+an existing task commit, remote task branch or PR. The existing session and mutation queue must also
+remain verifiable. It then continues publication with the preserved implementation and reruns the
+prepared-content checks without renewing implementation/review repair budgets. Remaining concerns
+are disclosed on the draft PR, and verified publication advances the card to Human Review.
+
+An older version may already have fenced this exact state with
+`Authoritative recovery snapshot could not be read: Publication worktree contains changes not represented by the trusted commit`.
+That specific attention checkpoint is eligible for automatic read-only revalidation on the next
+startup/project poll, including when its failed implementation event still occupies the queue. It is
+reopened only after the complete safety proofs pass. A changed source, different branch,
+active/ambiguous writer, conflicting remote effects or unrelated attention reason remains fenced.
+
+For a Portainer upgrade, keep the existing coordination, context, repository and worktree volumes
+and deploy an image containing this recovery fix and the project environment mappings. Keep the card
+in its persisted expected list (normally Working before its first PR); do not requeue it as a new
+Ready task or delete/edit task records to request recovery. A successful revalidation logs
+`Recovered reviewed pre-commit publication; continuing PR delivery with the preserved implementation`.
+Publication's existing paced journal handles subsequent polls and restarts without duplicating the
+commit or PR.
+
 A completed human-feedback writer still owns its validation checkpoint before the first feedback
 review cycle is initialized. Recovery resumes that completed operation's quality stage on the
 existing PR; it does not treat the Working card as a new implementation claim. Original feedback

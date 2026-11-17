@@ -4,6 +4,12 @@ import {
 } from "../task-session/implementation-preparation-recovery.js";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import {
+  PUBLICATION_WORKTREE_CHANGES_ERROR,
+  canRecheckReviewedPublication,
+  hasCompletedPublicationReview,
+  isUncommittedPublicationCandidate,
+} from "../task-session/uncommitted-publication-recovery.js";
 import { taskResources, runTaskResources } from "../task-session/task-resources.js";
 import path from "node:path";
 import type { ProjectConfig } from "../config/config.js";
@@ -985,12 +991,10 @@ async function readTaskSessionRecoverySnapshot(options: {
     record.phase === "publication" &&
     (await git.getStatus(worktreePath)).trim().length > 0 &&
     !(
-      (record.validationRepair?.status === "exhausted" || record.reviewUnavailable !== undefined) &&
-      record.reviewRepair?.finalReview === undefined &&
-      readTrustedCommitState(project, card.id) === null
+      isUncommittedPublicationCandidate(record) && readTrustedCommitState(project, card.id) === null
     )
   )
-    throw new Error("Publication worktree contains changes not represented by the trusted commit");
+    throw new Error(PUBLICATION_WORKTREE_CHANGES_ERROR);
 
   const headSha = record.pullRequest?.headSha;
   let trusted = readTrustedCommitState(project, card.id);
@@ -1102,9 +1106,7 @@ async function readTaskSessionRecoverySnapshot(options: {
   }
 
   const verifiedUncommittedPublication =
-    record.phase === "publication" &&
-    (record.validationRepair?.status === "exhausted" || record.reviewUnavailable !== undefined) &&
-    record.reviewRepair?.finalReview === undefined &&
+    isUncommittedPublicationCandidate(record) &&
     trusted === null &&
     pullRequest === null &&
     remoteBranchHeadSha === null &&
@@ -1116,7 +1118,11 @@ async function readTaskSessionRecoverySnapshot(options: {
       `origin/${project.repository.defaultBranch}`,
       worktreeHeadSha,
     )) === 0 &&
-    (await git.getStatus(worktreePath)).trim().length > 0;
+    (await git.getStatus(worktreePath)).trim().length > 0 &&
+    (!hasCompletedPublicationReview(record) ||
+      ((await git.getMergeHead(worktreePath)) === null &&
+        record.reviewRepair!.finalReview!.reviewedContentIdentity ===
+          (await getTaskSessionSourceSnapshotIdentity(git, worktreePath))));
   return {
     verifiedUncommittedPublication,
     primarySessionAccessible,
@@ -3909,7 +3915,11 @@ async function runTaskSessionWorkflowAttempt(
   const strandedMutation = queue.getActive();
   const strandedTask =
     strandedMutation?.kind === "implementation" ? taskStore.read(strandedMutation.cardId) : null;
-  if (strandedMutation?.kind === "implementation" && strandedTask?.phase === "attention-required") {
+  if (
+    strandedMutation?.kind === "implementation" &&
+    strandedTask?.phase === "attention-required" &&
+    !canRecheckReviewedPublication(authority?.store.read() ?? null, strandedTask)
+  ) {
     const strandedRecord = strandedTask;
     if (
       strandedRecord.projectId !== project.id ||
@@ -4264,6 +4274,7 @@ async function runTaskSessionWorkflowAttempt(
   let selectedCard: TrelloCard | null;
   let mutation: TaskMutationEvent | null = null;
   let recoveryRecord: TaskExecutionRecord | null = null;
+  let recoveredUncommittedPublication = false;
   let recoveryWorktreePath: string | null = null;
   if (workingCards.length > 0) {
     const unowned = workingCards.filter((card) => taskStore.read(card.id) === null);
@@ -4511,6 +4522,13 @@ async function runTaskSessionWorkflowAttempt(
     }
     if (signal.aborted) return;
 
+    if (recovery.verifiedUncommittedPublication === true)
+      logger
+        .child({ projectId: project.id, cardId: card.id })
+        .event(
+          "Recovered reviewed pre-commit publication; continuing PR delivery with the preserved implementation",
+        );
+
     if (recovery.record.pullRequest && ["ci", "human-feedback"].includes(recovery.record.phase)) {
       // This card was temporarily routed through Working recovery because its
       // projection was escalated. Its original publication/feedback writer is
@@ -4600,6 +4618,7 @@ async function runTaskSessionWorkflowAttempt(
     selectedCard = card;
     mutation = claimedRecoveryEvent;
     recoveryRecord = recovery.record;
+    recoveredUncommittedPublication = recovery.verifiedUncommittedPublication === true;
     recoveryWorktreePath = worktreePath;
   } else {
     const readyCards = preflightReadyCards;
@@ -6615,7 +6634,11 @@ async function runTaskSessionWorkflowAttempt(
       throw new Error("Final local evidence does not allow task-session publication");
     const recoveredTrustedCommit =
       phaseRecord.phase === "publication" ? readTrustedCommitState(project, activeCard.id) : null;
-    if (phaseRecord.phase === "publication" && recoveredTrustedCommit === null)
+    if (
+      phaseRecord.phase === "publication" &&
+      recoveredTrustedCommit === null &&
+      !recoveredUncommittedPublication
+    )
       throw new Error(
         "Interrupted publication has no trusted commit; refusing to guess whether commit creation completed",
       );

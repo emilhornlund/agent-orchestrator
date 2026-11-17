@@ -16,6 +16,11 @@ import { assertSetupInventoryIdentity, captureSetupEffects } from "../process/ru
 import { OPERATION_RECOVERY_MAX_EXECUTIONS } from "./operation-recovery-policy.js";
 import { redactSecrets, sanitizeControlledText } from "../security/redact-secrets.js";
 import {
+  canRecheckReviewedPublication,
+  hasCompletedPublicationReview,
+  isUncommittedPublicationCandidate,
+} from "./uncommitted-publication-recovery.js";
+import {
   getProcessRuntime,
   isSameProcessInstance,
   isVerifiedStoppedExecution,
@@ -65,7 +70,12 @@ export interface ReconcileTaskSessionOptions {
 }
 
 export type TaskSessionRecoveryResult =
-  | { status: "resume"; phase: TaskExecutionPhase; record: TaskExecutionRecord }
+  | {
+      status: "resume";
+      phase: TaskExecutionPhase;
+      record: TaskExecutionRecord;
+      verifiedUncommittedPublication?: true;
+    }
   | { status: "reconstruction-required"; record: TaskExecutionRecord }
   | {
       status: "waiting";
@@ -248,7 +258,7 @@ export function persistTaskSessionContextWait(
 function clearWaitAndResume(
   store: TaskExecutionStore,
   record: TaskExecutionRecord,
-): TaskSessionRecoveryResult {
+): Extract<TaskSessionRecoveryResult, { status: "resume" }> {
   const recovered = record.recoveryWait
     ? store.compareAndSwap(record.cardId, record.revision, {
         ...record,
@@ -379,6 +389,7 @@ export async function reconcileTaskSession(
 ): Promise<TaskSessionRecoveryResult> {
   const { project, cardId, expectedBranch, operationKey, taskRecordStore } = options;
   let recoveredPublishedCheckpoint = false;
+  let recoveredReviewedPublication = false;
   let record = loadOwnedTaskExecutionRecord(taskRecordStore, {
     projectId: project.id,
     cardId,
@@ -569,10 +580,11 @@ export async function reconcileTaskSession(
     }
   }
   if (record.phase === "attention-required") {
-    const resumePhase = getLegacyPublishedGitHubReadRecoveryPhase(
-      ProjectRunAuthority.current(project.id)?.store.read() ?? null,
-      record,
-    );
+    const run = ProjectRunAuthority.current(project.id)?.store.read() ?? null;
+    recoveredReviewedPublication = canRecheckReviewedPublication(run, record);
+    const resumePhase = recoveredReviewedPublication
+      ? "publication"
+      : getLegacyPublishedGitHubReadRecoveryPhase(run, record);
     if (resumePhase === null)
       return {
         status: "attention-required",
@@ -580,7 +592,7 @@ export async function reconcileTaskSession(
         record,
       };
     const now = options.now?.() ?? Date.now();
-    recoveredPublishedCheckpoint = true;
+    recoveredPublishedCheckpoint = !recoveredReviewedPublication;
     record = {
       ...record,
       phase: resumePhase,
@@ -680,6 +692,12 @@ export async function reconcileTaskSession(
       return persistWait(taskRecordStore, record, options, reason);
     return preserveAttention(taskRecordStore, record, reason);
   }
+  if (recoveredReviewedPublication && snapshot.verifiedUncommittedPublication !== true)
+    return preserveAttention(
+      taskRecordStore,
+      record,
+      "Reviewed pre-commit publication could not be verified; preserving the worktree and ownership",
+    );
   if (recoveredPublishedCheckpoint) {
     // Re-observing CI must never hide an unshipped correction or revive an
     // already-completed publication. Verify the retained local tree as well.
@@ -827,8 +845,7 @@ export async function reconcileTaskSession(
       );
     }
     const uncommitted =
-      (record.validationRepair?.status === "exhausted" || record.reviewUnavailable !== undefined) &&
-      record.reviewRepair?.finalReview === undefined &&
+      isUncommittedPublicationCandidate(record) &&
       snapshot.verifiedUncommittedPublication === true &&
       snapshot.trustedCommitSha === null &&
       snapshot.remoteBranchHeadSha === null &&
@@ -962,5 +979,8 @@ export async function reconcileTaskSession(
       options,
       "Primary session reconstruction is pending verification",
     );
-  return clearWaitAndResume(taskRecordStore, record);
+  const resumed = clearWaitAndResume(taskRecordStore, record);
+  return snapshot.verifiedUncommittedPublication === true && hasCompletedPublicationReview(record)
+    ? { ...resumed, verifiedUncommittedPublication: true }
+    : resumed;
 }

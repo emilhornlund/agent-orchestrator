@@ -25,6 +25,7 @@ import { readPendingCommitState } from "../src/orchestrator/trusted-commit-state
 import { writeTrustedCommitState } from "../src/orchestrator/trusted-commit-state.js";
 import { getTaskSessionSourceSnapshotIdentity } from "../src/task-session/source-snapshot.js";
 import type { TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
+import { PUBLICATION_WORKTREE_CHANGES_ERROR } from "../src/task-session/uncommitted-publication-recovery.js";
 
 let root: string;
 
@@ -202,6 +203,61 @@ describe("production workflow recovery of reserved review repairs", () => {
       false,
       "unresolved",
     ],
+    [
+      "uncommitted no-change draft handoff",
+      "publication",
+      false,
+      false,
+      false,
+      true,
+      undefined,
+      false,
+      "uncommitted-no-change",
+    ],
+    [
+      "previously escalated no-change draft handoff",
+      "publication",
+      false,
+      false,
+      false,
+      true,
+      undefined,
+      false,
+      "attention-no-change",
+    ],
+    [
+      "changed uncommitted reviewed source",
+      "publication",
+      false,
+      false,
+      false,
+      true,
+      undefined,
+      false,
+      "uncommitted-changed",
+    ],
+    [
+      "uncommitted reviewed source with an active merge",
+      "publication",
+      false,
+      false,
+      false,
+      true,
+      undefined,
+      false,
+      "uncommitted-merge",
+    ],
+    [
+      "uncommitted reviewed source with a remote task branch",
+      "publication",
+      false,
+      false,
+      false,
+      true,
+      undefined,
+      false,
+      "uncommitted-remote",
+    ],
   ] as const)(
     "recovers %s before generic gates",
     async (
@@ -224,7 +280,16 @@ describe("production workflow recovery of reserved review repairs", () => {
       const worktree = path.join(project.repository.worktreeRoot, "card");
       fs.mkdirSync(worktree, { recursive: true });
       fs.writeFileSync(path.join(worktree, "src.ts"), "partial work\n");
-      let taskCommitCreated = publicationReviewCheckpoint !== false;
+      const uncommittedReviewed =
+        publicationReviewCheckpoint !== false &&
+        (publicationReviewCheckpoint.startsWith("uncommitted-") ||
+          publicationReviewCheckpoint === "attention-no-change");
+      const unsafeUncommitted = [
+        "uncommitted-changed",
+        "uncommitted-merge",
+        "uncommitted-remote",
+      ].includes(String(publicationReviewCheckpoint));
+      let taskCommitCreated = publicationReviewCheckpoint !== false && !uncommittedReviewed;
       let publishedPullRequest = false;
       let publishedDraft: boolean | undefined;
       let publishedBody: string | undefined;
@@ -443,7 +508,9 @@ describe("production workflow recovery of reserved review repairs", () => {
         getCurrentBranch: vi.fn(async () => "agent/card"),
         getHeadSha: vi.fn(async () => (taskCommitCreated ? "b".repeat(40) : "a".repeat(40))),
         getRefSha: vi.fn(async () => "a".repeat(40)),
-        getRemoteBranchSha: vi.fn(async () => null),
+        getRemoteBranchSha: vi.fn(async () =>
+          publicationReviewCheckpoint === "uncommitted-remote" ? "c".repeat(40) : null,
+        ),
         getCommitCountBetween: vi.fn(async (_cwd: string, _base: string, head: string) =>
           taskCommitCreated && head === "b".repeat(40) ? 1 : 0,
         ),
@@ -453,6 +520,9 @@ describe("production workflow recovery of reserved review repairs", () => {
         getUntrackedFiles: vi.fn(async () => []),
         getHeadTrackedFiles: vi.fn(async () => ["src.ts"]),
         getRebaseState: vi.fn(async () => null),
+        getMergeHead: vi.fn(async () =>
+          publicationReviewCheckpoint === "uncommitted-merge" ? "c".repeat(40) : null,
+        ),
         getConflictedPaths: vi.fn(async () => []),
         getRefsIdentity: vi.fn(async () => "refs"),
         fetch: vi.fn(async () => undefined),
@@ -554,25 +624,36 @@ describe("production workflow recovery of reserved review repairs", () => {
             };
         store.compareAndSwap(card.id, record.revision, {
           ...record,
+          ...(publicationReviewCheckpoint === "attention-no-change"
+            ? {
+                phase: "attention-required" as const,
+                recoveryAttentionReason: `Authoritative recovery snapshot could not be read: ${PUBLICATION_WORKTREE_CHANGES_ERROR}`,
+              }
+            : {}),
           reviewRepair: {
             cycleId: operationKey,
             status: "exhausted",
+            ...(uncommittedReviewed ? { stopReason: "no-change" as const } : {}),
             maxAttempts: 1,
             finalReview: currentReview,
             findings: [currentLedgerFinding],
           },
           validationRepair: {
             cycleId: operationKey,
-            status: "passed",
+            status: uncommittedReviewed ? "exhausted" : "passed",
             evidence: {
               command: "validate",
               startedAt: now,
               completedAt: now,
-              exitCode: 0,
-              status: "passed",
-              diagnostic: "validation passed",
+              exitCode: uncommittedReviewed ? null : 0,
+              status: uncommittedReviewed ? "uncertain" : "passed",
+              diagnostic: uncommittedReviewed ? "database unavailable" : "validation passed",
               contentIdentity: currentIdentity,
             },
+          },
+          retryCounters: {
+            ...record.retryCounters,
+            validation: uncommittedReviewed ? 2 : record.retryCounters.validation,
           },
           publicationQuality: {
             contentIdentity: currentIdentity,
@@ -592,15 +673,18 @@ describe("production workflow recovery of reserved review repairs", () => {
           revision: record.revision + 1,
           updatedAt: new Date(Math.max(Date.now(), Date.parse(record.updatedAt) + 1)).toISOString(),
         });
-        writeTrustedCommitState(project, card.id, {
-          version: 1,
-          kind: "trusted-commit",
-          projectId: project.id,
-          cardId: card.id,
-          taskBranch: "agent/card",
-          defaultBranch: "main",
-          commitSha: "b".repeat(40),
-        });
+        if (!uncommittedReviewed)
+          writeTrustedCommitState(project, card.id, {
+            version: 1,
+            kind: "trusted-commit",
+            projectId: project.id,
+            cardId: card.id,
+            taskBranch: "agent/card",
+            defaultBranch: "main",
+            commitSha: "b".repeat(40),
+          });
+        if (publicationReviewCheckpoint === "uncommitted-changed")
+          fs.writeFileSync(path.join(worktree, "src.ts"), "unreviewed changes must be preserved\n");
       }
       const github = {
         findPullRequest: vi.fn(async () => null),
@@ -930,6 +1014,17 @@ describe("production workflow recovery of reserved review repairs", () => {
         prepareAttachmentContext: async () => undefined,
         retryIntervalMs: 1_000,
       });
+      if (unsafeUncommitted) {
+        await expect(initialWorkflow).rejects.toThrow(
+          "Partially published task has no unambiguous trusted commit/remote state",
+        );
+        expect(store.read(card.id)?.phase).toBe("attention-required");
+        expect(git.commit).not.toHaveBeenCalled();
+        expect(git.push).not.toHaveBeenCalled();
+        expect(github.createPullRequest).not.toHaveBeenCalled();
+        expect(primaryDispatches).toEqual([]);
+        return;
+      }
       if (reviewFailureError !== undefined) {
         await expect(initialWorkflow).rejects.toBe(reviewFailureError);
         expect(store.read(card.id)?.phase).toBe("attention-required");
@@ -1103,6 +1198,13 @@ describe("production workflow recovery of reserved review repairs", () => {
         expect(store.read(card.id)?.publicationQuality?.review).toMatchObject({
           verdict: "fail",
         });
+        if (uncommittedReviewed) {
+          expect(git.commit).toHaveBeenCalledOnce();
+          expect(runCommand.mock.calls.some(([call]) => call.command === "validate")).toBe(true);
+          expect(store.read(card.id)?.reviewRepair?.stopReason).toBe("no-change");
+          expect(store.read(card.id)?.retryCounters.review).toBe(1);
+          expect(store.read(card.id)?.recoveryAttentionReason).toBeUndefined();
+        }
         return;
       }
 

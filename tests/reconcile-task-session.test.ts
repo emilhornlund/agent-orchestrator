@@ -25,6 +25,7 @@ import type { RunRecord } from "../src/task-session/run-record.js";
 import { transitionTaskExecutionRecord } from "../src/task-session/task-execution-transition.js";
 import { MalformedGitHubResponseError } from "../src/github/github-client.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
+import { PUBLICATION_WORKTREE_CHANGES_ERROR } from "../src/task-session/uncommitted-publication-recovery.js";
 
 let root: string;
 afterEach(() => {
@@ -127,7 +128,7 @@ function fixture(phase: TaskExecutionPhase = "validation") {
   return { project, store, git, sha, worktreePath, baseSnapshot, reconcile };
 }
 
-function canonicalSetupFixture(phase: "planning" | "ci" = "planning") {
+function canonicalSetupFixture(phase: "planning" | "ci" | "publication" = "planning") {
   const f = fixture(phase);
   const storageRoot = path.join(root, "canonical-state");
   const integrationId = JSON.stringify({
@@ -182,7 +183,12 @@ function canonicalSetupFixture(phase: "planning" | "ci" = "planning") {
               provenance: "test",
             },
           ]
-        : [],
+        : phase === "publication"
+          ? [
+              { kind: "worktree", id: "card", path: f.worktreePath, provenance: "test" },
+              { kind: "branch", id: "card", path: "refs/heads/agent/card", provenance: "test" },
+            ]
+          : [],
     pendingOperations: [],
     queue: [],
     budgets: {},
@@ -221,10 +227,169 @@ function canonicalSetupFixture(phase: "planning" | "ci" = "planning") {
         ...snapshot,
       }),
     });
-  return { ...f, store, runStore, authority, reconcile };
+  return { ...f, store, runStore, authority, reconcile, lease, pinned };
 }
 
 describe("reconcileTaskSession", () => {
+  it.each([
+    "verified",
+    "changed-source",
+    "wrong-branch",
+    "remote-branch",
+    "unrelated-attention",
+    "unresolved-primary",
+  ] as const)(
+    "rechecks the retained pre-commit publication on a new service owner only with complete evidence (%s)",
+    async (outcome) => {
+      const f = canonicalSetupFixture("publication");
+      const current = f.store.read("card")!;
+      const identity = `sha256:${"a".repeat(64)}`;
+      f.store.compareAndSwap("card", current.revision, {
+        ...current,
+        reviewRepair: {
+          cycleId: "operation",
+          status: "exhausted",
+          stopReason: "no-change",
+          maxAttempts: 1,
+          finalReview: {
+            version: 1,
+            projectId: "project",
+            cardId: "card",
+            verdict: "fail",
+            requirementAssessments: [],
+            blockingFindings: [
+              {
+                kind: "defect",
+                summary: "Validation unavailable",
+                detail: "MongoDB was unreachable",
+              },
+            ],
+            reviewedContentIdentity: identity,
+          },
+        },
+        validationRepair: {
+          cycleId: "operation",
+          status: "exhausted",
+          evidence: {
+            command: "validate",
+            startedAt: current.createdAt,
+            completedAt: current.updatedAt,
+            exitCode: null,
+            status: "uncertain",
+            diagnostic: "MongoDB was unreachable",
+            contentIdentity: identity,
+          },
+        },
+        retryCounters: { ...current.retryCounters, validation: 2, review: 1 },
+        revision: current.revision + 1,
+        updatedAt: "2026-10-24T09:00:01.000Z",
+      });
+      // Reproduce the older binary's persisted false-positive before replacing its owner.
+      await f.authority.run(() =>
+        reconcileTaskSession({
+          project: f.project,
+          cardId: "card",
+          expectedBranch: "agent/card",
+          operationKey: "operation",
+          worktreePath: f.worktreePath,
+          taskRecordStore: f.store,
+          retryIntervalMs: 1_000,
+          readAuthoritativeSnapshot: async () => {
+            throw new Error(PUBLICATION_WORKTREE_CHANGES_ERROR);
+          },
+        }),
+      );
+      const fenced = f.store.read("card")!;
+      if (outcome === "unrelated-attention" || outcome === "unresolved-primary")
+        f.store.compareAndSwap("card", fenced.revision, {
+          ...fenced,
+          ...(outcome === "unrelated-attention"
+            ? { recoveryAttentionReason: "Unverified worktree ownership" }
+            : {
+                primaryOperations: {
+                  writer: {
+                    id: "writer",
+                    activity: "review-correction",
+                    status: "ambiguous" as const,
+                    executions: 1,
+                    updatedAt: fenced.updatedAt,
+                    lastSessionId: "session",
+                  },
+                },
+              }),
+          revision: fenced.revision + 1,
+          updatedAt: new Date(Date.parse(fenced.updatedAt) + 1).toISOString(),
+        });
+      const restartedRunStore = new RunStore(f.pinned.storageRoot, "attempt-card", f.pinned, {
+        ...f.lease,
+        instanceId: "restarted-instance",
+        token: "restarted-lease",
+      });
+      const priorRun = restartedRunStore.read()!;
+      const taken = restartedRunStore.takeOwnership(
+        priorRun.revision,
+        priorRun.owner.generation,
+        "restarted-lease",
+      );
+      const authority = new ProjectRunAuthority(
+        "project",
+        restartedRunStore,
+        taken.owner.generation,
+      );
+      const store = new TaskExecutionStore(f.pinned.storageRoot, f.project, authority);
+      const eligible = outcome !== "unrelated-attention" && outcome !== "unresolved-primary";
+      expect(hasDueTaskSessionRecoveryWait(restartedRunStore.read())).toBe(eligible);
+      const snapshot = vi.fn(
+        async (record: TaskExecutionRecord): Promise<TaskSessionRecoverySnapshot> => {
+          expect(record.phase).toBe("publication");
+          expect(record.primarySessionId).toBe("session");
+          return {
+            ...f.baseSnapshot,
+            verifiedUncommittedPublication: outcome !== "changed-source",
+            ...(outcome === "wrong-branch" ? { worktreeBranch: "other-branch" } : {}),
+            ...(outcome === "remote-branch" ? { remoteBranchHeadSha: "b".repeat(40) } : {}),
+          };
+        },
+      );
+      const result = await authority.run(() =>
+        reconcileTaskSession({
+          project: f.project,
+          cardId: "card",
+          expectedBranch: "agent/card",
+          operationKey: "operation",
+          worktreePath: f.worktreePath,
+          taskRecordStore: store,
+          retryIntervalMs: 1_000,
+          readAuthoritativeSnapshot: snapshot,
+        }),
+      );
+      if (outcome === "verified") {
+        expect(result).toMatchObject({
+          status: "resume",
+          phase: "publication",
+          verifiedUncommittedPublication: true,
+        });
+        expect(store.read("card")).toMatchObject({
+          primarySessionId: "session",
+          expectedBranch: "agent/card",
+          retryCounters: { validation: 2, review: 1 },
+          reviewRepair: {
+            stopReason: "no-change",
+            finalReview: { reviewedContentIdentity: identity },
+          },
+        });
+        expect(store.read("card")?.recoveryAttentionReason).toBeUndefined();
+        expect(restartedRunStore.read()?.lifecycle).toBe("publication");
+      } else {
+        expect(result.status).toBe("attention-required");
+        expect(store.read("card")?.phase).toBe("attention-required");
+        expect(hasDueTaskSessionRecoveryWait(restartedRunStore.read())).toBe(false);
+      }
+      expect(snapshot).toHaveBeenCalledTimes(eligible ? 1 : 0);
+      expect(fs.existsSync(f.worktreePath)).toBe(true);
+    },
+  );
+
   it.each(["different-blocker", "active-writer", "unknown-process", "missing-pr"] as const)(
     "does not clear an unsafe or unrelated published attention state (%s)",
     async (kind) => {
