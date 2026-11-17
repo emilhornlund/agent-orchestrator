@@ -171,163 +171,169 @@ describe("GitHubClient.getCiObservations", () => {
     },
   );
 
-  it("collects paginated check runs and commit statuses for the exact SHA plus branch contracts", async () => {
-    const cwd = workingDirectory();
-    const command = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
-      if (args.some((arg) => arg.includes("/check-runs?"))) {
-        return JSON.stringify([
-          {
-            total_count: 1,
-            check_runs: [
+  it.each([false, true])(
+    "collects paginated check runs and commit-scoped statuses (optional SHA=%s)",
+    async (includeSha) => {
+      const cwd = workingDirectory();
+      const command = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
+        if (args.some((arg) => arg.includes("/check-runs?"))) {
+          return JSON.stringify([
+            {
+              total_count: 1,
+              check_runs: [
+                {
+                  id: 11,
+                  name: "Build (node 20)",
+                  head_sha: headSha,
+                  status: "completed",
+                  conclusion: "success",
+                  html_url: "https://example.test/check/11",
+                },
+              ],
+            },
+            {
+              total_count: 5,
+              check_runs: [
+                {
+                  id: 12,
+                  name: "Build (node 22)",
+                  head_sha: headSha,
+                  status: "in_progress",
+                  conclusion: null,
+                  html_url: "https://example.test/check/12",
+                },
+                {
+                  id: 13,
+                  name: "Cancelled",
+                  head_sha: headSha,
+                  status: "completed",
+                  conclusion: "cancelled",
+                  html_url: "https://example.test/check/13",
+                },
+                {
+                  id: 14,
+                  name: "Skipped",
+                  head_sha: headSha,
+                  status: "completed",
+                  conclusion: "skipped",
+                  html_url: "https://example.test/check/14",
+                },
+                {
+                  id: 15,
+                  name: "Neutral",
+                  head_sha: headSha,
+                  status: "completed",
+                  conclusion: "neutral",
+                  html_url: "https://example.test/check/15",
+                },
+                {
+                  id: 16,
+                  name: "Lint",
+                  head_sha: headSha,
+                  status: "completed",
+                  conclusion: "failure",
+                  html_url: "https://example.test/check/16",
+                },
+              ],
+            },
+          ]);
+        }
+        if (args.some((arg) => arg.includes("/statuses?"))) {
+          return JSON.stringify([
+            [
               {
-                id: 11,
-                name: "Build (node 20)",
-                head_sha: headSha,
-                status: "completed",
-                conclusion: "success",
-                html_url: "https://example.test/check/11",
+                id: 21,
+                context: "External / security",
+                ...(includeSha ? { sha: headSha } : {}),
+                state: "pending",
+                created_at: "2026-10-24T10:00:00Z",
+                updated_at: "2026-10-24T10:00:00Z",
+                target_url: null,
+                description: "Waiting for scanner",
               },
             ],
-          },
-          {
-            total_count: 5,
-            check_runs: [
+            [
               {
-                id: 12,
-                name: "Build (node 22)",
-                head_sha: headSha,
-                status: "in_progress",
-                conclusion: null,
-                html_url: "https://example.test/check/12",
+                id: 22,
+                context: "Legacy tests",
+                ...(includeSha ? { sha: headSha } : {}),
+                state: "failure",
+                created_at: "2026-10-24T10:01:00Z",
+                updated_at: "2026-10-24T10:02:00Z",
+                target_url: "https://example.test/status/22",
+                description: null,
               },
               {
-                id: 13,
-                name: "Cancelled",
-                head_sha: headSha,
-                status: "completed",
-                conclusion: "cancelled",
-                html_url: "https://example.test/check/13",
-              },
-              {
-                id: 14,
-                name: "Skipped",
-                head_sha: headSha,
-                status: "completed",
-                conclusion: "skipped",
-                html_url: "https://example.test/check/14",
-              },
-              {
-                id: 15,
-                name: "Neutral",
-                head_sha: headSha,
-                status: "completed",
-                conclusion: "neutral",
-                html_url: "https://example.test/check/15",
-              },
-              {
-                id: 16,
-                name: "Lint",
-                head_sha: headSha,
-                status: "completed",
-                conclusion: "failure",
-                html_url: "https://example.test/check/16",
+                id: 23,
+                context: "External / security",
+                ...(includeSha ? { sha: headSha } : {}),
+                state: "success",
+                created_at: "2026-10-24T10:03:00Z",
+                updated_at: "2026-10-24T10:03:00Z",
+                target_url: null,
+                description: "Scanner completed",
               },
             ],
-          },
-        ]);
-      }
-      if (args.some((arg) => arg.includes("/statuses?"))) {
-        return JSON.stringify([
-          [
-            {
-              id: 21,
-              context: "External / security",
-              sha: headSha,
-              state: "pending",
-              created_at: "2026-10-24T10:00:00Z",
-              updated_at: "2026-10-24T10:00:00Z",
-              target_url: null,
-              description: "Waiting for scanner",
-            },
-          ],
-          [
-            {
-              id: 22,
-              context: "Legacy tests",
-              sha: headSha,
-              state: "failure",
-              created_at: "2026-10-24T10:01:00Z",
-              updated_at: "2026-10-24T10:02:00Z",
-              target_url: "https://example.test/status/22",
-              description: null,
-            },
-            {
-              id: 23,
-              context: "External / security",
-              sha: headSha,
-              state: "success",
-              created_at: "2026-10-24T10:03:00Z",
-              updated_at: "2026-10-24T10:03:00Z",
-              target_url: null,
-              description: "Scanner completed",
-            },
-          ],
-        ]);
-      }
-      if (args.some((arg) => arg.includes("/protection/required_status_checks"))) {
-        return JSON.stringify({
-          contexts: ["Build"],
-          checks: [{ context: "Tests", app_id: 42 }],
-        });
-      }
-      throw new Error(`Unexpected GitHub query: ${args.join(" ")}`);
-    });
-    const github = new GitHubClient(withWorkflowApi(command));
+          ]);
+        }
+        if (args.some((arg) => arg.includes("/protection/required_status_checks"))) {
+          return JSON.stringify({
+            contexts: ["Build"],
+            checks: [{ context: "Tests", app_id: 42 }],
+          });
+        }
+        throw new Error(`Unexpected GitHub query: ${args.join(" ")}`);
+      });
+      const github = new GitHubClient(withWorkflowApi(command));
 
-    const observation = await github.getCiObservations({
-      cwd,
-      repository: "owner/repo",
-      defaultBranch: "main",
-      headSha,
-    });
+      const observation = await github.getCiObservations({
+        cwd,
+        repository: "owner/repo",
+        defaultBranch: "main",
+        headSha,
+      });
 
-    expect(observation.headSha).toBe(headSha);
-    expect(observation.checks).toHaveLength(9);
-    expect(observation.checks).toContainEqual(
-      expect.objectContaining({
-        source: "check-run",
-        id: 12,
-        name: "Build (node 22)",
-        status: "in_progress",
-        headSha,
-      }),
-    );
-    expect(
-      observation.checks.filter(
-        (check) => check.source === "commit-status" && check.context === "External / security",
-      ),
-    ).toHaveLength(2);
-    expect(
-      observation.checks
-        .filter((check) => check.source === "check-run")
-        .map((check) => (check.source === "check-run" ? check.conclusion : null)),
-    ).toContain("skipped");
-    expect(observation.checks).toContainEqual(
-      expect.objectContaining({
-        source: "commit-status",
-        context: "Legacy tests",
-        state: "failure",
-        headSha,
-      }),
-    );
-    expect(observation.expectationSources).toContainEqual({
-      kind: "repository-rules",
-      sourceId: "branch-protection:main",
-      complete: true,
-      checkNames: ["Build", "Tests"],
-    });
-    expect(command).toHaveBeenCalledTimes(3);
-  });
+      expect(observation.headSha).toBe(headSha);
+      expect(observation.checks).toHaveLength(9);
+      expect(observation.checks).toContainEqual(
+        expect.objectContaining({
+          source: "check-run",
+          id: 12,
+          name: "Build (node 22)",
+          status: "in_progress",
+          headSha,
+        }),
+      );
+      expect(
+        observation.checks.filter(
+          (check) => check.source === "commit-status" && check.context === "External / security",
+        ),
+      ).toHaveLength(2);
+      expect(
+        observation.checks
+          .filter((check) => check.source === "check-run")
+          .map((check) => (check.source === "check-run" ? check.conclusion : null)),
+      ).toContain("skipped");
+      expect(observation.checks).toContainEqual(
+        expect.objectContaining({
+          source: "commit-status",
+          context: "Legacy tests",
+          state: "failure",
+          headSha,
+        }),
+      );
+      expect(observation.expectationSources).toContainEqual({
+        kind: "repository-rules",
+        sourceId: "branch-protection:main",
+        complete: true,
+        checkNames: ["Build", "Tests"],
+      });
+      expect(command).toHaveBeenCalledTimes(3);
+      expect(
+        command.mock.calls.find(([, args]) => args.some((arg) => arg.includes("/statuses?")))?.[1],
+      ).toContain(`repos/owner/repo/commits/${headSha}/statuses?per_page=100`);
+    },
+  );
 
   it("fails closed on malformed or stale external results", async () => {
     const cwd = workingDirectory();
@@ -364,40 +370,45 @@ describe("GitHubClient.getCiObservations", () => {
     ).rejects.toThrow("different commit SHA");
   });
 
-  it("rejects a stale commit status even when check runs match the head", async () => {
-    const cwd = workingDirectory();
-    const command = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
-      if (args.some((arg) => arg.includes("/check-runs?"))) {
-        return JSON.stringify([{ total_count: 0, check_runs: [] }]);
-      }
-      if (args.some((arg) => arg.includes("/statuses?"))) {
-        return JSON.stringify([
-          [
-            {
-              id: 1,
-              context: "Tests",
-              sha: "b".repeat(40),
-              state: "success",
-              created_at: "2026-10-24T10:00:00Z",
-              updated_at: "2026-10-24T10:00:00Z",
-              target_url: null,
-              description: null,
-            },
-          ],
-        ]);
-      }
-      return JSON.stringify({ contexts: [], checks: [] });
-    });
+  it.each(["b".repeat(40), null, 123])(
+    "rejects a stale or malformed optional status SHA (%s)",
+    async (sha) => {
+      const cwd = workingDirectory();
+      const command = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
+        if (args.some((arg) => arg.includes("/check-runs?"))) {
+          return JSON.stringify([{ total_count: 0, check_runs: [] }]);
+        }
+        if (args.some((arg) => arg.includes("/statuses?"))) {
+          return JSON.stringify([
+            [
+              {
+                id: 1,
+                context: "Tests",
+                sha,
+                state: "success",
+                created_at: "2026-10-24T10:00:00Z",
+                updated_at: "2026-10-24T10:00:00Z",
+                target_url: null,
+                description: null,
+              },
+            ],
+          ]);
+        }
+        return JSON.stringify({ contexts: [], checks: [] });
+      });
 
-    await expect(
-      new GitHubClient(withWorkflowApi(command)).getCiObservations({
-        cwd,
-        repository: "owner/repo",
-        defaultBranch: "main",
-        headSha,
-      }),
-    ).rejects.toThrow("different commit SHA");
-  });
+      await expect(
+        new GitHubClient(withWorkflowApi(command)).getCiObservations({
+          cwd,
+          repository: "owner/repo",
+          defaultBranch: "main",
+          headSha,
+        }),
+      ).rejects.toThrow(
+        typeof sha === "string" ? "different commit SHA" : "invalid commit statuses",
+      );
+    },
+  );
 
   it("records unavailable branch rules as incomplete evidence", async () => {
     const cwd = workingDirectory();

@@ -1527,7 +1527,7 @@ export class GitHubClient {
         value.id <= 0 ||
         typeof value.context !== "string" ||
         value.context.trim().length === 0 ||
-        typeof value.sha !== "string" ||
+        (value.sha !== undefined && typeof value.sha !== "string") ||
         typeof value.state !== "string" ||
         typeof value.created_at !== "string" ||
         typeof value.updated_at !== "string" ||
@@ -1536,7 +1536,7 @@ export class GitHubClient {
       ) {
         throw new MalformedGitHubResponseError("commit statuses", statusesResult.origin);
       }
-      if (value.sha !== options.headSha) {
+      if (value.sha !== undefined && value.sha !== options.headSha) {
         throw new MalformedGitHubResponseError(
           "commit statuses for a different commit SHA",
           statusesResult.origin,
@@ -1546,7 +1546,9 @@ export class GitHubClient {
         source: "commit-status",
         id: value.id,
         context: value.context,
-        headSha: value.sha,
+        // The immutable commit-scoped request binds standard GitHub status
+        // responses, which do not include a SHA field in their payload.
+        headSha: options.headSha,
         state: value.state,
         createdAt: value.created_at,
         updatedAt: value.updated_at,
