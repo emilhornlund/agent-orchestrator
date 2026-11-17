@@ -21,6 +21,7 @@ import {
 import { runStartup } from "./startup/run-startup.js";
 import { TrelloClient } from "./trello/trello-client.js";
 import { isShutdownCancellation } from "./runtime/shutdown-cancellation.js";
+import { taskEnvironmentSecretValues } from "./process/child-environment.js";
 
 function addConfiguredSecretValues(
   lifecycle: RuntimeLifecycle,
@@ -33,6 +34,7 @@ function addConfiguredSecretValues(
     environment.TRELLO_API_KEY,
     environment.TRELLO_TOKEN,
     ...(smtp === undefined ? [] : [process.env[smtp.usernameEnv], process.env[smtp.passwordEnv]]),
+    ...config.projects.flatMap((project) => taskEnvironmentSecretValues(project.taskEnvironment)),
   ]);
 }
 

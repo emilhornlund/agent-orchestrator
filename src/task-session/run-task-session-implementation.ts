@@ -305,7 +305,7 @@ export async function runTaskSessionImplementation(
       openCode,
       projectId,
       card.id,
-      { ...runOptions, cwd: worktreePath, prompt },
+      { ...runOptions, taskEnvironment: project.taskEnvironment, cwd: worktreePath, prompt },
       {
         inspect: async (sessionId) =>
           inspectPrimaryOpenCodeSession({

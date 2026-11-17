@@ -6,6 +6,8 @@ import {
   buildChildEnvironment,
   openCodeDefaultConfigPathIssue,
   providerForOpenCodeDefault,
+  resolveTaskEnvironment,
+  taskEnvironmentSecretValues,
 } from "../src/process/child-environment.js";
 
 describe("child process environment manifests", () => {
@@ -49,6 +51,135 @@ describe("child process environment manifests", () => {
         parent,
       ),
     ).toEqual({ PATH: "/custom", HOME: "/home/user", SYSTEMROOT: "/windows" });
+  });
+
+  it.each(["command", "opencode"] as const)(
+    "forwards only the project's mapped application settings to %s",
+    (family) => {
+      const environment = {
+        ...parent,
+        PROJECT_A_REDIS_HOST: "test-redis-a",
+        PROJECT_B_REDIS_HOST: "test-redis-b",
+        APP_EMPTY: "",
+      };
+      const result = buildChildEnvironment(
+        family,
+        { REDIS_HOST: "untrusted-override" },
+        environment,
+        undefined,
+        {
+          REDIS_HOST: "PROJECT_A_REDIS_HOST",
+          APP_EMPTY: "APP_EMPTY",
+        },
+      );
+      expect(result).toMatchObject({
+        REDIS_HOST: "test-redis-a",
+        APP_EMPTY: "",
+      });
+      const other = buildChildEnvironment(family, {}, environment, undefined, {
+        REDIS_HOST: "PROJECT_B_REDIS_HOST",
+      });
+      expect(other.REDIS_HOST).toBe("test-redis-b");
+      expect(other).not.toHaveProperty("APP_EMPTY");
+      expect(buildChildEnvironment(family, {}, environment)).not.toHaveProperty("REDIS_HOST");
+      expect(result).not.toHaveProperty("PROJECT_A_REDIS_HOST");
+      expect(result).not.toHaveProperty("PROJECT_B_REDIS_HOST");
+      expect(result).not.toHaveProperty("TRELLO_API_KEY");
+      expect(result).not.toHaveProperty("SMTP_PASSWORD");
+      expect(result).not.toHaveProperty("DATABASE_URL");
+    },
+  );
+
+  it.each(["git", "github", "flock"] as const)(
+    "keeps task settings out of %s operations",
+    (family) => {
+      expect(
+        buildChildEnvironment(
+          family,
+          {},
+          {
+            ...parent,
+            REDIS_HOST: "test-redis",
+          },
+          undefined,
+          { REDIS_HOST: "REDIS_HOST" },
+        ),
+      ).not.toHaveProperty("REDIS_HOST");
+    },
+  );
+
+  it("does not let task overrides widen project mappings", () => {
+    expect(
+      buildChildEnvironment(
+        "command",
+        {
+          DATABASE_URL: "unrelated-secret",
+        },
+        parent,
+      ),
+    ).not.toHaveProperty("DATABASE_URL");
+  });
+
+  it.each([
+    "*",
+    "",
+    "not-a-name",
+    "TRELLO_TOKEN",
+    "SMTP_PASSWORD",
+    "GH_TOKEN",
+    "GIT_CONFIG_COUNT",
+    "OPENAI_API_KEY",
+    "NODE_OPTIONS",
+    "PATH",
+    "OPENCODE_CONFIG_CONTENT",
+    "__proto__",
+  ])("rejects malformed or reserved task variable %s as either source or target", (key) => {
+    expect(() => resolveTaskEnvironment({ [key]: "VALUE" }, { VALUE: "secret-value" })).toThrow(
+      "invalid or reserved variable name",
+    );
+    expect(() => resolveTaskEnvironment({ VALUE: key }, { [key]: "secret-value" })).toThrow(
+      "invalid or reserved variable name",
+    );
+  });
+
+  it("rejects missing mapped sources and accepts unconfigured or empty mappings", () => {
+    expect(() => resolveTaskEnvironment({ REDIS_HOST: "PROJECT_REDIS_HOST" }, {})).toThrow(
+      "Task environment variable PROJECT_REDIS_HOST is not defined",
+    );
+    expect(resolveTaskEnvironment(undefined, parent)).toEqual({});
+    expect(resolveTaskEnvironment({}, parent)).toEqual({});
+  });
+
+  it("registers task credentials and connection URLs by source or target without treating ports as secrets", () => {
+    expect(
+      taskEnvironmentSecretValues(
+        {
+          DATABASE_URL: "PROJECT_DATABASE",
+          APP_VALUE: "PROJECT_SECRET",
+          REDIS_PORT: "REDIS_PORT",
+        },
+        {
+          PROJECT_DATABASE: "mongodb://user:pass@db",
+          PROJECT_SECRET: "task-secret",
+          REDIS_PORT: "6379",
+        },
+      ),
+    ).toEqual(["mongodb://user:pass@db", "task-secret"]);
+  });
+
+  it("supports lowercase proxy settings without weakening reserved-name checks", () => {
+    expect(
+      resolveTaskEnvironment(
+        { https_proxy: "PROJECT_PROXY" },
+        { PROJECT_PROXY: "http://proxy:8080" },
+      ),
+    ).toEqual({ https_proxy: "http://proxy:8080" });
+    expect(() =>
+      resolveTaskEnvironment({ node_options: "APP_VALUE" }, { APP_VALUE: "unsafe" }),
+    ).toThrow("reserved variable name");
+    expect(resolveTaskEnvironment({ NODE_ENV: "PROJECT_MODE" }, { PROJECT_MODE: "test" })).toEqual({
+      NODE_ENV: "test",
+    });
   });
 
   it("rejects ambient and supplied GIT_CONFIG injection variables", () => {

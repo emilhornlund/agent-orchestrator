@@ -6,6 +6,7 @@ import { CommandRunAbortedError } from "./command-runner.js";
 import type { GitClient } from "../git/git-client.js";
 import { toFailureError } from "../orchestrator/failure-diagnostic.js";
 import { WorkflowError } from "../orchestrator/workflow-error.js";
+import type { TaskEnvironment } from "./child-environment.js";
 
 /** Content-addressed worktree inventory, including ignored and untracked files. */
 export async function captureSetupEffects(
@@ -152,6 +153,7 @@ export async function runRepositorySetup(
     cwd: string;
     command: string;
     timeoutMilliseconds: number;
+    taskEnvironment?: TaskEnvironment | undefined;
     signal?: AbortSignal;
     sessionLogPath: string;
     sessionLabel: string;
@@ -163,6 +165,7 @@ export async function runRepositorySetup(
     return await commands.run({
       cwd: options.cwd,
       command: options.command,
+      taskEnvironment: options.taskEnvironment,
       timeoutMilliseconds: options.timeoutMilliseconds,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       sessionLogPath: options.sessionLogPath,

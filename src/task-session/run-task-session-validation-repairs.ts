@@ -455,6 +455,7 @@ export async function runTaskSessionValidationWithRepairs(
           cardId,
           {
             ...options.repairRunOptions,
+            taskEnvironment: project.taskEnvironment,
             cwd: worktreePath,
             prompt: promptArtifact.prompt,
           },
@@ -754,6 +755,7 @@ export async function runTaskSessionValidationWithRepairs(
         cardId,
         {
           ...options.repairRunOptions,
+          taskEnvironment: project.taskEnvironment,
           cwd: worktreePath,
           prompt,
         },

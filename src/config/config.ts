@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import YAML from "yaml";
+import { isTaskEnvironmentName } from "../process/child-environment.js";
 
 const nonBlankString = z.string().refine((value) => value.trim().length > 0, {
   message: "Must not be blank",
@@ -235,8 +236,14 @@ const emailNotificationSchema = z
     }
   });
 
+const taskEnvironmentName = z.string().refine(isTaskEnvironmentName, {
+  message:
+    "Must be a shell environment variable name, excluding reserved service/authentication/runtime names",
+});
+
 const projectSchema = z.strictObject({
   id: pathComponent,
+  taskEnvironment: z.record(taskEnvironmentName, taskEnvironmentName).optional(),
   autoMerge: z.boolean().default(false),
   maintenance: z
     .strictObject({
@@ -272,6 +279,16 @@ const configSchema = z
   })
   .superRefine((config, ctx) => {
     config.projects.forEach((project, index) => {
+      const smtp = config.notifications?.email?.smtp;
+      for (const [target, source] of Object.entries(project.taskEnvironment ?? {})) {
+        if (smtp && [smtp.usernameEnv, smtp.passwordEnv].includes(source)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["projects", index, "taskEnvironment", target],
+            message: "Must not forward orchestrator SMTP credentials",
+          });
+        }
+      }
       if (project.autoMerge) {
         ctx.addIssue({
           code: "custom",

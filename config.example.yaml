@@ -1,6 +1,11 @@
 projects:
   - id: "project"
     # Pull requests remain under human control; autoMerge: true is rejected.
+    # Optional: child variable -> service environment variable name (never a literal value).
+    # Only this project's setup, validation, and OpenCode tools receive these settings.
+    # taskEnvironment:
+    #   REDIS_HOST: PROJECT_TEST_REDIS_HOST
+    #   REDIS_PORT: PROJECT_TEST_REDIS_PORT
 
     trello:
       boardId: "board-id"

@@ -331,6 +331,7 @@ export async function runRefinementSetup(options: {
     let executionId: string | undefined;
     try {
       result = await runRepositorySetup(commands, {
+        taskEnvironment: project.taskEnvironment,
         cwd: worktreePath,
         command,
         timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,

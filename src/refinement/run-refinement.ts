@@ -102,6 +102,7 @@ async function runRefinementOnce(
   const sessionLogPath = getSessionLogPath(project.id, card.id);
 
   const refinement = await opencode.run({
+    taskEnvironment: project.taskEnvironment,
     cwd: worktreePath,
     structuredOutput: true,
     model: project.opencode.refinement.model,

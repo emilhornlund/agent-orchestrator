@@ -1,6 +1,11 @@
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
-import { buildChildEnvironment, type ChildProcessFamily } from "./child-environment.js";
+import {
+  buildChildEnvironment,
+  taskEnvironmentSecretValues,
+  type ChildProcessFamily,
+  type TaskEnvironment,
+} from "./child-environment.js";
 
 import { appendSessionLog, appendSessionSection } from "../logging/session-log.js";
 import { createSecretRedactor, redactSecrets } from "../security/redact-secrets.js";
@@ -48,6 +53,7 @@ export interface CommandRunOptions {
   maxCaptureOutputLength?: number;
   suppressOutput?: boolean;
   environment?: Record<string, string>;
+  taskEnvironment?: TaskEnvironment | undefined;
   processFamily?: ChildProcessFamily;
   secretValues?: readonly string[];
   sessionLogPath?: string;
@@ -101,6 +107,7 @@ const defaultRunCommand: RunCommand = async ({
   maxCaptureOutputLength,
   suppressOutput,
   environment,
+  taskEnvironment,
   processFamily,
   secretValues,
   sessionLogPath,
@@ -118,7 +125,13 @@ const defaultRunCommand: RunCommand = async ({
       timeoutMilliseconds ??
       (getGitHubOperationProject()?.opencode.timeoutMinutes ??
         runtime.operationTimeoutMilliseconds / 60_000) * 60_000;
-    const effectiveSecretValues = [...(secretValues ?? []), ...runtime.secretValues];
+    const effectiveSecretValues = [
+      ...(secretValues ?? []),
+      ...runtime.secretValues,
+      ...((processFamily ?? "command") === "command"
+        ? taskEnvironmentSecretValues(taskEnvironment)
+        : []),
+    ];
     if (effectiveSignal?.aborted) {
       reject(new CommandRunAbortedError());
       return;
@@ -180,7 +193,13 @@ const defaultRunCommand: RunCommand = async ({
       cwd,
       stdio: ["inherit", "pipe", "pipe", "pipe", "pipe"],
       detached: process.platform !== "win32",
-      env: buildChildEnvironment(processFamily ?? "command", environment),
+      env: buildChildEnvironment(
+        processFamily ?? "command",
+        environment,
+        process.env,
+        undefined,
+        taskEnvironment,
+      ),
     });
     let settled = false;
     let timedOut = false;

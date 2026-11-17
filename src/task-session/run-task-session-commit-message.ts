@@ -165,6 +165,7 @@ export async function runTaskSessionCommitMessage(
     card.id,
     {
       ...options.runOptions,
+      taskEnvironment: project.taskEnvironment,
       cwd: options.worktreePath,
       sessionLogPath: options.runOptions.sessionLogPath ?? getSessionLogPath(project.id, card.id),
       sessionLabel: options.runOptions.sessionLabel ?? "Task-session commit message",

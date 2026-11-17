@@ -103,6 +103,7 @@ export async function runTaskSessionFeedbackVerification(
   try {
     response = await options.openCode.run({
       ...options.runOptions,
+      taskEnvironment: options.project.taskEnvironment,
       sessionLogPath:
         options.runOptions.sessionLogPath ?? getSessionLogPath(options.project.id, options.card.id),
       sessionLabel: options.runOptions.sessionLabel ?? "Task-session feedback verification",
