@@ -176,8 +176,10 @@ function runRepairs(
   repairOperationKey = operationKey,
   prepareContext?: Parameters<typeof runTaskSessionValidationWithRepairs>[0]["prepareContext"],
   signal: AbortSignal = new AbortController().signal,
+  validationCycleId?: string,
 ) {
   return runTaskSessionValidationWithRepairs({
+    ...(validationCycleId === undefined ? {} : { validationCycleId }),
     ...(prepareContext === undefined ? {} : { prepareContext }),
     validation: {
       project: fixture.project,
@@ -205,6 +207,79 @@ function runRepairs(
 }
 
 describe("runTaskSessionValidationWithRepairs", () => {
+  it("offers a fresh bounded validation allowance for a new human round without renewing the same round", async () => {
+    const fixture = createFixture();
+    fixture.project.opencode.remediation.validationMaxPasses = 1;
+    fixture.runCommand.mockResolvedValue({ exitCode: 1, errorOutput: "quality still failing" });
+    fixture.runOpenCode.mockImplementation(async () => {
+      fs.appendFileSync(path.join(fixture.worktreePath, "src.ts"), "bounded repair\n");
+      return { exitCode: 0, output: "Available correction", errorOutput: "" };
+    });
+    const first = await runRepairs(
+      fixture,
+      primarySessionId,
+      operationKey,
+      undefined,
+      undefined,
+      "human-round-1",
+    );
+    expect(first.validation.status).toBe("failed");
+    expect(fixture.runOpenCode).toHaveBeenCalledTimes(1);
+    fs.appendFileSync(path.join(fixture.worktreePath, "src.ts"), "new human-requested change\n");
+    const second = await runRepairs(
+      fixture,
+      primarySessionId,
+      operationKey,
+      undefined,
+      undefined,
+      "human-round-2",
+    );
+    expect(second.validation.status).toBe("failed");
+    expect(fixture.runOpenCode).toHaveBeenCalledTimes(2);
+    expect(second.record.validationRepair).toMatchObject({
+      cycleId: "human-round-2",
+      status: "exhausted",
+      maxAttempts: 1,
+    });
+    expect(second.record.retryCounters.validation).toBe(1);
+    await runRepairs(
+      fixture,
+      primarySessionId,
+      operationKey,
+      undefined,
+      undefined,
+      "human-round-2",
+    );
+    expect(fixture.runOpenCode).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves an unresolved validation writer when a different cycle is requested", async () => {
+    const fixture = createFixture();
+    fixture.runCommand.mockResolvedValue({ exitCode: 1 });
+    fixture.runOpenCode.mockRejectedValue(new Error("Execution outcome is unknown"));
+    await expect(
+      runRepairs(fixture, primarySessionId, operationKey, undefined, undefined, "human-round-1"),
+    ).rejects.toThrow("preserved");
+    const before = fixture.executionStore.read(card.id)!;
+    expect(before.validationRepair?.activePrimaryOperation).toBeDefined();
+    await expect(
+      runRepairs(fixture, primarySessionId, operationKey, undefined, undefined, "human-round-2"),
+    ).rejects.toThrow("unresolved");
+    expect(fixture.executionStore.read(card.id)).toEqual(before);
+    expect(fixture.runOpenCode).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a blank validation-cycle identity before reserving work", async () => {
+    const fixture = createFixture();
+    const before = fixture.executionStore.read(card.id);
+    await expect(
+      runRepairs(fixture, primarySessionId, operationKey, undefined, undefined, " "),
+    ).rejects.toThrow("must not be blank");
+    expect(fixture.executionStore.read(card.id)).toEqual(before);
+    expect(fixture.runOpenCode).not.toHaveBeenCalled();
+    expect(fixture.runCommand).not.toHaveBeenCalled();
+  });
+
   it("preserves the validation checkpoint and budget on shutdown, then resumes checks without an AI repair", async () => {
     const fixture = createFixture();
     const controller = new AbortController();

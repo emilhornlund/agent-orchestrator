@@ -847,6 +847,12 @@ export async function runTaskSessionFeedbackCycle(
     const validateWithRepairs = () =>
       runTaskSessionValidationWithRepairs({
         validation: validationOptions,
+        // An interrupted legacy round keeps its existing identity and charges.
+        // Only a newly initiated human round receives a fresh allowance.
+        validationCycleId:
+          resumingReviewRepair && record.validationRepair !== undefined
+            ? record.validationRepair.cycleId
+            : `${record.operationKey}:feedback:${operationId}:validation`,
         openCode,
         planStore,
         card,

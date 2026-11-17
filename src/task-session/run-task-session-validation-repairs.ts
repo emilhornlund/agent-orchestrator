@@ -61,6 +61,7 @@ export class TaskSessionValidationRepairError extends Error {
 
 export interface RunTaskSessionValidationRepairsOptions {
   validation: RunTaskSessionValidationOptions;
+  validationCycleId?: string;
   openCode: OpenCodeClient;
   planStore: TaskPlanStore;
   card: TrelloCard;
@@ -250,13 +251,23 @@ export async function runTaskSessionValidationWithRepairs(
       record.retryCounters.validation,
     );
 
-  const cycleId = operationKey;
+  const cycleId = options.validationCycleId ?? operationKey;
+  if (cycleId.trim().length === 0)
+    throw new TaskSessionValidationRepairError(
+      "Validation cycle identity must not be blank",
+      record.retryCounters.validation,
+    );
   const configuredMaximum =
     project.opencode.remediation.validationMaxPasses ?? MAX_VALIDATION_REPAIR_ATTEMPTS;
   let currentRecord = record;
   let repairState = currentRecord.validationRepair;
 
   if (repairState?.cycleId !== cycleId) {
+    if (repairState?.activePrimaryOperation !== undefined)
+      throw new TaskSessionValidationRepairError(
+        "Cannot replace a validation cycle while its primary repair operation is unresolved",
+        currentRecord.retryCounters.validation,
+      );
     currentRecord = updateRecord(validation.taskRecordStore, currentRecord, {
       retryCounters: {
         ...currentRecord.retryCounters,

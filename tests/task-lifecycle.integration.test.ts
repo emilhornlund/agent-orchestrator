@@ -2161,6 +2161,7 @@ describe("task lifecycle through pollProject", () => {
       }
       if (feedbackQuality !== undefined) {
         const originalHead = store.read("first")!.pullRequest!.headSha!;
+        const originalValidationCycle = store.read("first")!.validationRepair?.cycleId;
         firstPr!.body += "\n\nHuman-only deployment note.";
         correctionFeedback = true;
         if (feedbackQuality === "validation") {
@@ -2207,6 +2208,7 @@ describe("task lifecycle through pollProject", () => {
           return;
         }
         expect(corrected.pullRequest!.headSha).not.toBe(originalHead);
+        expect(corrected.validationRepair?.cycleId).not.toBe(originalValidationCycle);
         expect(
           await git.isAncestor(
             path.join(worktrees, firstWorktreeName),
