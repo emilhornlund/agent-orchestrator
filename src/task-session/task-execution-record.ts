@@ -381,7 +381,9 @@ const validationRepairSchema = z
     cycleId: nonBlankIdentifier,
     status: z.enum(["active", "passed", "exhausted", "skipped"]),
     maxAttempts: z.number().int().nonnegative().safe().optional(),
-    stopReason: z.enum(["attempt-limit", "no-change", "finished-early"]).optional(),
+    stopReason: z
+      .enum(["attempt-limit", "no-change", "finished-early", "prepared-check-failed"])
+      .optional(),
     finishAfterNextCheck: z.enum(["no-change", "finished-early"]).optional(),
     activePrimaryOperation: z
       .strictObject({

@@ -130,20 +130,29 @@ export function persistQualityEvidence(
     diagnostic: result.diagnostic,
     contentIdentity: result.contentIdentity,
   });
+  const status =
+    validation.status === "skipped" && coverage.status === "skipped"
+      ? "skipped"
+      : [validation.status, coverage.status].some(
+            (result) => result !== "passed" && result !== "skipped",
+          )
+        ? "exhausted"
+        : "passed";
   return updateRecord(store, record, {
     validationRepair: {
       cycleId: record.validationRepair?.cycleId ?? cycleId,
       ...(record.validationRepair?.maxAttempts === undefined
         ? {}
         : { maxAttempts: record.validationRepair.maxAttempts }),
-      status:
-        validation.status === "skipped" && coverage?.status === "skipped"
-          ? "skipped"
-          : [validation.status, coverage.status].some(
-                (status) => status !== "passed" && status !== "skipped",
-              )
-            ? "exhausted"
-            : "passed",
+      status,
+      ...(status === "exhausted"
+        ? {
+            stopReason:
+              record.validationRepair?.status === "exhausted"
+                ? (record.validationRepair.stopReason ?? "prepared-check-failed")
+                : "prepared-check-failed",
+          }
+        : {}),
       evidence: storedEvidence(validation),
       coverageEvidence: storedEvidence(coverage),
     },

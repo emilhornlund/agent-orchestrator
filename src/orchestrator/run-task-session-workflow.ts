@@ -118,6 +118,7 @@ import {
   refreshCurrentTaskFeedback,
   feedbackOperationId,
   feedbackReplyOperationId,
+  persistQualityEvidence,
 } from "./run-task-session-feedback-cycle.js";
 import { inspectPrimaryOperationEvidence } from "../task-session/inspect-primary-operation.js";
 import { FeedbackLedgerStore } from "../task-session/feedback-ledger-store.js";
@@ -814,43 +815,6 @@ function commitMessageRunOptions(
     sessionLogPath,
     sessionLabel: "Task-session commit message",
   };
-}
-
-function persistQualityEvidence(
-  store: TaskExecutionStore,
-  record: TaskExecutionRecord,
-  cycleId: string,
-  validation: TaskSessionValidationResult,
-  coverage: TaskSessionValidationResult,
-): TaskExecutionRecord {
-  return updateRecord(store, record, {
-    validationRepair: {
-      cycleId: record.validationRepair?.cycleId ?? cycleId,
-      ...(record.validationRepair?.maxAttempts === undefined
-        ? {}
-        : { maxAttempts: record.validationRepair.maxAttempts }),
-      status:
-        validation.status === "skipped" && coverage?.status === "skipped" ? "skipped" : "passed",
-      evidence: {
-        command: validation.command,
-        startedAt: validation.startedAt,
-        completedAt: validation.completedAt,
-        exitCode: validation.exitCode,
-        status: validation.status,
-        diagnostic: validation.diagnostic,
-        contentIdentity: validation.contentIdentity,
-      },
-      coverageEvidence: {
-        command: coverage.command,
-        startedAt: coverage.startedAt,
-        completedAt: coverage.completedAt,
-        exitCode: coverage.exitCode,
-        status: coverage.status,
-        diagnostic: coverage.diagnostic,
-        contentIdentity: coverage.contentIdentity,
-      },
-    },
-  });
 }
 
 type PersistedQualityEvidence = NonNullable<
@@ -6780,27 +6744,16 @@ async function runTaskSessionWorkflowAttempt(
       const freshValidation = await runTaskSessionValidation(validationOptions);
       const freshCoverage = await runTaskSessionCoverage(validationOptions);
       const freshIdentity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
-      const preparedQualityPassed =
-        (freshValidation.status === "passed" || freshValidation.status === "skipped") &&
-        (freshCoverage.status === "passed" || freshCoverage.status === "skipped");
-      if (
-        !preparedQualityPassed &&
-        freshIdentity === preparedEvidence.currentContentIdentity &&
-        finalReview.record.reviewRepair?.status !== "exhausted" &&
-        finalReview.record.validationRepair?.status !== "exhausted"
-      )
-        throw new Error("Prepared publication quality checks failed");
       let current = taskStore.read(activeCard.id);
       if (current === null)
         throw new Error("Task record disappeared during publication preparation");
-      if (preparedQualityPassed)
-        current = persistQualityEvidence(
-          taskStore,
-          current,
-          operationKey,
-          freshValidation,
-          freshCoverage,
-        );
+      current = persistQualityEvidence(
+        taskStore,
+        current,
+        operationKey,
+        freshValidation,
+        freshCoverage,
+      );
       currentValidation = freshValidation;
       currentCoverage = freshCoverage;
       const priorFindings = current.reviewRepair?.findings ?? [];

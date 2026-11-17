@@ -45,6 +45,7 @@ let originalProcessPath: string | undefined;
 let originalPrimaryMode: string | undefined;
 const leases: ProjectOwnershipLease[] = [];
 interface LifecycleScenario {
+  preparedValidationFailure?: boolean;
   draft: boolean;
   terminal: "merged" | "closed";
   destination: "done" | "backlog";
@@ -85,6 +86,14 @@ afterEach(async () => {
 
 describe("task lifecycle through pollProject", () => {
   it.each<LifecycleScenario>([
+    {
+      draft: false,
+      terminal: "merged",
+      destination: "done",
+      ackLoss: false,
+      quality: "both",
+      preparedValidationFailure: true,
+    },
     ...(["merged", "closed"] as const).map((terminal) => ({
       draft: false,
       terminal,
@@ -259,7 +268,7 @@ describe("task lifecycle through pollProject", () => {
       }),
     ),
   ] as const)(
-    "preserves the owned lifecycle (quality=$quality, draft=$draft, terminal=$terminal, ackLoss=$ackLoss, correctionFailure=$correctionFailure, feedbackQuality=$feedbackQuality, terminalDuringFeedback=$terminalDuringFeedback, preparedReview=$preparedReview, ciReviewHandoffs=$ciReviewHandoffs, feedbackReviewRecovery=$feedbackReviewRecovery, ciReviewRecovery=$ciReviewRecovery, ciQuality=$ciQuality, targetMerge=$targetMerge, ciBudget=$ciBudget)",
+    "preserves the owned lifecycle (quality=$quality, draft=$draft, terminal=$terminal, ackLoss=$ackLoss, correctionFailure=$correctionFailure, feedbackQuality=$feedbackQuality, terminalDuringFeedback=$terminalDuringFeedback, preparedReview=$preparedReview, ciReviewHandoffs=$ciReviewHandoffs, feedbackReviewRecovery=$feedbackReviewRecovery, ciReviewRecovery=$ciReviewRecovery, ciQuality=$ciQuality, targetMerge=$targetMerge, ciBudget=$ciBudget, preparedValidationFailure=$preparedValidationFailure)",
     async ({
       draft,
       terminal,
@@ -271,6 +280,7 @@ describe("task lifecycle through pollProject", () => {
       terminalDuringFeedback,
       quality,
       preparedReview,
+      preparedValidationFailure,
       ciReviewHandoffs = false,
       feedbackReviewRecovery,
       ciReviewRecovery,
@@ -1435,6 +1445,16 @@ describe("task lifecycle through pollProject", () => {
       const commandOutcomes: string[] = [];
       const commands = new CommandRunner(async (options: CommandRunOptions) => {
         if (
+          preparedValidationFailure &&
+          options.command === project.repository.validationCommand &&
+          store.read("first")?.phase === "publication"
+        )
+          return {
+            exitCode: 42,
+            output: "Prepared validation failed after earlier passing checks",
+            errorOutput: "Observed prepared-stage failure",
+          };
+        if (
           ((feedbackQuality === "validation" && correctionFeedback) ||
             (ciQuality === "validation" && ciPrimaryCorrections > 0)) &&
           options.command === project.repository.validationCommand
@@ -1891,7 +1911,25 @@ describe("task lifecycle through pollProject", () => {
         expect(store.read("first")!.pullRequest!.headSha).toBe(maintained.pullRequest!.headSha);
         return;
       }
-      expect(firstPr?.isDraft).toBe(draft || preparedReview !== undefined);
+      expect(firstPr?.isDraft).toBe(
+        draft || preparedReview !== undefined || preparedValidationFailure === true,
+      );
+      if (preparedValidationFailure) {
+        expect(store.read("first")?.publicationQuality?.validation).toMatchObject({
+          status: "failed",
+          exitCode: 42,
+        });
+        expect(store.read("first")?.validationRepair).toMatchObject({
+          status: "exhausted",
+          stopReason: "prepared-check-failed",
+        });
+        expect(store.read("first")?.retryCounters.validation).toBe(0);
+        expect(firstPr?.body).toContain("failed");
+        expect(lists.get("first")).toBe("review");
+        expect(lists.get("next")).toBe("ready");
+        expect(prs.size).toBe(1);
+        return;
+      }
       if (preparedReview !== undefined) {
         expect(reviewerRounds).toBe(2);
         if (preparedReview === "material") {
