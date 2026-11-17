@@ -9,7 +9,8 @@ import type { TaskExecutionRecord, TaskExecutionPhase } from "./task-execution-r
 import { transitionTaskExecutionRecord } from "./task-execution-transition.js";
 import { loadOwnedTaskExecutionRecord } from "./task-execution-ownership.js";
 import { assertOwnedTaskWorktreePath } from "./run-task-session-implementation.js";
-import { isRetryableGitHubError } from "../github/github-client.js";
+import { isRetryableGitHubError, MalformedGitHubResponseError } from "../github/github-client.js";
+import { isConclusiveOperationResolution, type RunRecord } from "./run-record.js";
 import { isRetryableTrelloError } from "../trello/trello-client.js";
 import { assertSetupInventoryIdentity, captureSetupEffects } from "../process/run-setup.js";
 import { OPERATION_RECOVERY_MAX_EXECUTIONS } from "./operation-recovery-policy.js";
@@ -79,6 +80,62 @@ export type TaskSessionRecoveryResult =
     }
   | { status: "terminal-observed"; record: TaskExecutionRecord }
   | { status: "complete"; record: TaskExecutionRecord };
+
+/** Older versions escalated unreadable GitHub snapshots without a retry phase.
+ * Only authorize read-only reconciliation of an idle, already-published task;
+ * the complete authoritative snapshot must still pass before work can resume. */
+export function getLegacyPublishedGitHubReadRecoveryPhase(
+  run: RunRecord | null,
+  record: TaskExecutionRecord,
+): "ci" | "human-feedback" | null {
+  if (
+    !run ||
+    run.lifecycle !== "waiting" ||
+    run.taskKind !== "implementation" ||
+    run.publicationState !== "open" ||
+    run.projectId !== record.projectId ||
+    run.cardId !== record.cardId ||
+    !["ci", "human-review"].includes(run.checkpoint) ||
+    run.operation.id !== record.operationKey ||
+    run.operation.kind !== "attention-required" ||
+    run.wait.reason !== "task-attention-required" ||
+    record.phase !== "attention-required" ||
+    !record.pullRequest ||
+    record.terminalFailure ||
+    record.externalRecovery ||
+    record.sessionCreationStatus !== "bound" ||
+    !record.primarySessionId ||
+    run.sessions.primary !== record.primarySessionId ||
+    !record.recoveryAttentionReason?.startsWith(
+      "Authoritative recovery snapshot could not be read: GitHub CLI returned an invalid ",
+    ) ||
+    record.validationRepair?.activePrimaryOperation ||
+    record.reviewRepair?.activePrimaryOperation ||
+    record.ciRepair?.activePrimaryOperation ||
+    record.feedbackRemediation?.status === "active" ||
+    (record.sessionRecovery && record.sessionRecovery.status !== "reconstruction-verified") ||
+    !run.pendingOperations.every(isConclusiveOperationResolution) ||
+    Object.values(record.primaryOperations ?? {}).some(
+      (operation) => operation && !["completed", "cancelled"].includes(operation.status),
+    ) ||
+    !run.resources.some(
+      (resource) =>
+        resource.kind === "pull-request" &&
+        resource.id === String(record.pullRequest!.number) &&
+        resource.path === record.pullRequest!.url,
+    )
+  )
+    return null;
+  const queue = run.compatibility[`project-queue-${record.projectId}`];
+  if (
+    !queue ||
+    typeof queue !== "object" ||
+    !("activeEventId" in queue) ||
+    queue.activeEventId !== null
+  )
+    return null;
+  return run.checkpoint === "ci" ? "ci" : "human-feedback";
+}
 
 function bumpTimestamp(record: TaskExecutionRecord): string {
   return new Date(Math.max(Date.now(), Date.parse(record.updatedAt) + 1)).toISOString();
@@ -495,10 +552,30 @@ export async function reconcileTaskSession(
     }
   }
   if (record.phase === "attention-required") {
-    return {
-      status: "attention-required",
-      reason: record.recoveryAttentionReason ?? "Task was already escalated",
+    const resumePhase = getLegacyPublishedGitHubReadRecoveryPhase(
+      ProjectRunAuthority.current(project.id)?.store.read() ?? null,
       record,
+    );
+    if (resumePhase === null)
+      return {
+        status: "attention-required",
+        reason: record.recoveryAttentionReason ?? "Task was already escalated",
+        record,
+      };
+    const now = options.now?.() ?? Date.now();
+    record = {
+      ...record,
+      phase: resumePhase,
+      recoveryAttentionReason: undefined,
+      recoveryWait: {
+        kind: "dependency",
+        reason: record.recoveryAttentionReason!,
+        resumePhase,
+        since: record.updatedAt,
+        retryAt: new Date(now).toISOString(),
+        attempts: 0,
+        notificationId: `${record.projectId}/${record.cardId}/${record.operationKey}/dependency`,
+      },
     };
   }
   if (record.setup?.status === "passed") {
@@ -574,10 +651,14 @@ export async function reconcileTaskSession(
   } catch (error) {
     if (options.signal?.aborted) throw error;
     const reason = `Authoritative recovery snapshot could not be read: ${error instanceof Error ? error.message : String(error)}`;
-    // Only recognized transient provider failures are waits. Git/worktree,
-    // malformed response, ancestry and safety failures must not be relabeled
-    // as outages; they remain attention checkpoints and fail closed.
-    if (isRetryableGitHubError(error) || isRetryableTrelloError(error))
+    // An unreadable provider response permits paced reads, never success or
+    // replay of an uncertain mutation. Local Git/ancestry/safety errors remain
+    // attention checkpoints; only a complete valid snapshot resumes work.
+    if (
+      isRetryableGitHubError(error) ||
+      isRetryableTrelloError(error) ||
+      error instanceof MalformedGitHubResponseError
+    )
       return persistWait(taskRecordStore, record, options, reason);
     return preserveAttention(taskRecordStore, record, reason);
   }
