@@ -20,7 +20,7 @@ Before starting, check a selected configuration file and local executable compat
 ```sh
 yarn doctor -c /secure/config.yaml
 # Optional machine-readable report:
-yarn doctor -c /secure/config.yaml --json
+yarn doctor -j -c "/secure/config files/production.yaml"
 ```
 
 `-c PATH` is equivalent to `--config PATH` and selects only the diagnostic configuration file;
