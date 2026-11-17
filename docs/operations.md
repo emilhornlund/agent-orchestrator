@@ -662,6 +662,10 @@ attempt's `artifacts/<project>/<card>/<attempt>/process-executions/` tree. Valid
 reported by an agent are concise diagnostics with a session-log reference; the complete redacted
 stdout and stderr remain in that per-card log instead of being dumped to the service log.
 
+Managed command and OpenCode subprocesses inherit only the non-secret service endpoint variables
+`MONGODB_HOST`, `MONGODB_PORT`, `REDIS_HOST`, and `REDIS_PORT` alongside their normal allowlists.
+Database URLs, passwords, and unrelated credentials are not forwarded.
+
 Credential redaction retains quoted escape boundaries in serialized tool output, including nested
 planning JSON and values split across stream chunks. Intentional review or requested-changes
 cancellation is logged as cancellation with its checkpoint preserved; a genuine concurrent failure

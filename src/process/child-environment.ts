@@ -23,6 +23,9 @@ const platformKeys = [
   "TZ",
 ];
 
+/** Non-secret service locations needed by repository-owned tests and tools. */
+const repositoryServiceKeys = ["REDIS_HOST", "REDIS_PORT", "MONGODB_HOST", "MONGODB_PORT"];
+
 const gitKeys = [
   "GIT_AUTHOR_NAME",
   "GIT_AUTHOR_EMAIL",
@@ -200,6 +203,9 @@ export function buildChildEnvironment(
   selectedProvider?: string,
 ): Record<string, string> {
   const keys = new Set(platformKeys);
+  if (family === "command" || family === "opencode") {
+    for (const key of repositoryServiceKeys) keys.add(key);
+  }
   if (family === "git") for (const key of gitKeys) keys.add(key);
   if (family === "git") {
     // Git's HTTPS askpass bridge uses the project's scoped GitHub token.

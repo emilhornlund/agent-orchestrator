@@ -20,21 +20,50 @@ describe("child process environment manifests", () => {
     TRELLO_API_KEY: "trello-secret",
     SMTP_PASSWORD: "mail-secret",
     DATABASE_URL: "unrelated-secret",
+    MONGODB_HOST: "klurigo-test-mongodb",
+    MONGODB_PORT: "27017",
+    REDIS_HOST: "klurigo-test-redis",
+    REDIS_PORT: "6379",
+    MONGODB_URI: "mongodb://private:secret@host/test",
+    REDIS_URL: "redis://:secret@host:6379",
     GIT_AUTHOR_NAME: "Agent",
   };
 
   it.each([
-    ["command", ["PATH", "HOME", "SYSTEMROOT"]],
+    [
+      "command",
+      ["PATH", "HOME", "SYSTEMROOT", "MONGODB_HOST", "MONGODB_PORT", "REDIS_HOST", "REDIS_PORT"],
+    ],
     ["flock", ["PATH", "HOME", "SYSTEMROOT"]],
     ["git", ["PATH", "HOME", "SYSTEMROOT", "GIT_AUTHOR_NAME", "GH_TOKEN", "GITHUB_TOKEN"]],
     ["github", ["PATH", "HOME", "SYSTEMROOT", "GIT_AUTHOR_NAME", "GH_TOKEN", "GITHUB_TOKEN"]],
-    ["opencode", ["PATH", "HOME", "SYSTEMROOT"]],
+    [
+      "opencode",
+      ["PATH", "HOME", "SYSTEMROOT", "MONGODB_HOST", "MONGODB_PORT", "REDIS_HOST", "REDIS_PORT"],
+    ],
   ] as const)("allows only the %s process manifest", (family, expected) => {
     const actual = buildChildEnvironment(family, {}, parent);
     expect(Object.keys(actual).sort()).toEqual([...expected].sort());
     expect(actual).not.toHaveProperty("TRELLO_API_KEY");
     expect(actual).not.toHaveProperty("SMTP_PASSWORD");
     expect(actual).not.toHaveProperty("DATABASE_URL");
+    expect(actual).not.toHaveProperty("MONGODB_URI");
+    expect(actual).not.toHaveProperty("REDIS_URL");
+  });
+
+  it("forwards repository service addresses but not credentials into task execution", () => {
+    for (const family of ["command", "opencode"] as const) {
+      const actual = buildChildEnvironment(family, { REDIS_HOST: "isolated-redis" }, parent);
+      expect(actual).toMatchObject({
+        REDIS_HOST: "isolated-redis",
+        REDIS_PORT: "6379",
+        MONGODB_HOST: "klurigo-test-mongodb",
+        MONGODB_PORT: "27017",
+      });
+      expect(actual).not.toHaveProperty("MONGODB_URI");
+      expect(actual).not.toHaveProperty("REDIS_URL");
+      expect(actual).not.toHaveProperty("SMTP_PASSWORD");
+    }
   });
 
   it("does not forward explicitly supplied unrelated credentials", () => {
