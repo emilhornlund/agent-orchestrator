@@ -103,6 +103,7 @@ async function runRefinementOnce(
 
   const refinement = await opencode.run({
     cwd: worktreePath,
+    structuredOutput: true,
     model: project.opencode.refinement.model,
     variant: project.opencode.refinement.variant,
     timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
@@ -216,6 +217,15 @@ export async function runRefinement(
         save({ ...state, status: "invalid" });
       }
     } else if (isVerifiedStoppedExecution(evidence, expected)) {
+      if (
+        "failureClassification" in evidence &&
+        evidence.failureClassification === "dependency-outage"
+      ) {
+        save({ ...state, attempts: Math.max(0, state.attempts - 1), status: "pending" });
+        throw new RefinementSetupAmbiguousError(
+          "Recovered refinement provider outage; preserve context and retry on a controlled recheck",
+        );
+      }
       save({ ...state, status: "invalid" });
     } else
       throw new RefinementSetupAmbiguousError(
