@@ -124,12 +124,14 @@ Check your local configuration and executable compatibility before starting:
 yarn doctor
 ```
 
-Syntax: `yarn doctor [--json] [-c PATH | --config PATH | --config=PATH]`. Omit configuration options
-to check `config.yaml`, or select a named file without copying it or changing directories. Relative
-paths resolve against the invocation working directory; absolute paths are also supported. Quote
-paths containing spaces. `-c PATH`, `--config PATH`, and `--config=PATH` are equivalent and may
-appear before or after `--json`. The short `-c` option requires a separate path argument; `-c=PATH`,
-attached values, and combined short flags are unsupported.
+Syntax: `yarn doctor [-j | --json] [-c PATH | --config PATH | --config=PATH]`. Omit configuration
+options to check `config.yaml`, or select a named file without copying it or changing directories.
+Relative paths resolve against the invocation working directory; absolute paths are also supported.
+Quote paths containing spaces. `-c PATH`, `--config PATH`, and `--config=PATH` are equivalent and
+may appear before or after `-j` or `--json`. The short `-c` option requires a separate path
+argument; `-c=PATH`, attached values, and combined short flags are unsupported. Separate path
+arguments beginning with `-c`, `-h`, or `-j` are reserved for options; use an explicit literal path
+such as `-c ./-jj` or `--config=-jj` for such filenames.
 
 ```bash
 yarn doctor --config configs/local.yaml
@@ -142,12 +144,14 @@ yarn doctor --config="configs/local settings.yaml" --json
 yarn doctor -c configs/local.yaml
 yarn doctor --json -c "configs/local settings.yaml"
 yarn doctor -c "configs/local settings.yaml" --json
+yarn doctor -j -c "configs/local settings.yaml"
+yarn doctor --config=configs/local.yaml -j
 ```
 
 Use `yarn doctor --help` or `yarn doctor -h` to print concise usage and exit successfully without
 loading configuration, probing executables, or writing state, even when `config.yaml` is absent.
-Either help spelling must be used alone; combining it with `--json`, any configuration option
-spelling, another help option, or any other argument is a usage error.
+Either help spelling must be used alone; combining it with `-j` or `--json`, any configuration
+option spelling, another help option, or any other argument is a usage error.
 
 This read-only command reports passed, failed, or skipped checks for the selected configuration
 file, Git, GitHub CLI, and OpenCode. Required failures include remediation guidance and produce a
@@ -156,10 +160,11 @@ checks do not establish external integration operation or complete runtime readi
 authentication, remote resources, isolation namespaces, coordination provisioning, and runtime
 permissions remain unverified and are reported as skipped.
 
-For machine-readable results, use `yarn doctor --json`. The doctor program emits exactly one JSON
-document to stdout, with no text headings. Yarn itself may add wrapper output; use
-`yarn --silent doctor --json` when capturing stdout for a JSON parser. For a selected file, use
-`yarn --silent doctor --json --config "configs/local settings.yaml"`.
+For machine-readable results, use `yarn doctor -j` or `yarn doctor --json`. Both spellings are
+standalone options; combined short flags such as `-jc`, `-cj`, and `-jh` are unsupported. The doctor
+program emits exactly one JSON document to stdout, with no text headings. Yarn itself may add
+wrapper output; use `yarn --silent doctor --json` when capturing stdout for a JSON parser. For a
+selected file, use `yarn --silent doctor --json --config "configs/local settings.yaml"`.
 
 For example, text output for a valid selected file starts its configuration result with
 `PASSED Configuration: "configs/local.yaml" exists and is valid.` The corresponding JSON check is
@@ -223,13 +228,14 @@ Example successful report:
 }
 ```
 
-Unsupported arguments, duplicate options (including mixed `-c PATH`, `--config PATH`, and
-`--config=PATH` spellings, even when they select the same file), and missing, empty or
-whitespace-only configuration option values produce
-`Usage: yarn doctor [--json] [-c PATH | --config PATH | --config=PATH]` and a nonzero exit status
-before configuration loading or executable probes. Usage also lists the standalone
-`yarn doctor --help` and `yarn doctor -h` invocations. Usage errors are text rather than diagnostic
-JSON reports. Both formats omit configuration values, parser excerpts, and raw executable output.
+Unsupported arguments, duplicate JSON flags (including mixed `-j` and `--json`), duplicate
+configuration options (including mixed `-c PATH`, `--config PATH`, and `--config=PATH` spellings,
+even when they select the same file), and missing, empty or whitespace-only configuration option
+values produce `Usage: yarn doctor [-j | --json] [-c PATH | --config PATH | --config=PATH]` and a
+nonzero exit status before configuration loading or executable probes. Usage also lists the
+standalone `yarn doctor --help` and `yarn doctor -h` invocations. Usage errors are text rather than
+diagnostic JSON reports. Both formats omit configuration values, parser excerpts, and raw executable
+output.
 
 Before processing live tasks, treat `requiredLocalChecksPassed: true` together with
 `runtimeReadiness: "not-verified"` as local configuration/tool compatibility success only. Doctor's

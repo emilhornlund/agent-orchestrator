@@ -12,7 +12,27 @@ import type { CommandRunOptions, CommandRunResult } from "../src/process/command
 
 const example = fs.readFileSync(new URL("../config.example.yaml", import.meta.url), "utf8");
 const usage =
-  "Usage: yarn doctor [--json] [-c PATH | --config PATH | --config=PATH]\n       yarn doctor --help\n       yarn doctor -h";
+  "Usage: yarn doctor [-j | --json] [-c PATH | --config PATH | --config=PATH]\n       yarn doctor --help\n       yarn doctor -h";
+const jsonOptions = ["--json", "-j"];
+const invalidJsonArguments = [
+  ...jsonOptions.flatMap((first) =>
+    jsonOptions.flatMap((second) => [
+      [first, second],
+      [first, "-c", "selected.yaml", second],
+    ]),
+  ),
+  ...["-jc", "-cj", "-jh", "-hj", "-jj", "-ch", "-hc", "-j=true"].flatMap((option) => [
+    [option],
+    ...["-c", "--config"].flatMap((selector) => [
+      [selector, option],
+      ...jsonOptions.map((json) => [json, selector, option]),
+    ]),
+  ]),
+  ...["-c", "--config", "-h", "--help"].flatMap((option) => [
+    [option, "-j"],
+    ["-j", option],
+  ]),
+];
 const invalidShortHelpArguments = [
   ["-h", "--json"],
   ["--json", "-h"],
@@ -117,6 +137,17 @@ describe("local environment diagnostics", () => {
   it.each([
     { args: [], json: false, configPath: "config.yaml" },
     { args: ["--json"], json: true, configPath: "config.yaml" },
+    { args: ["-j"], json: true, configPath: "config.yaml" },
+    { args: ["-c", "./-j"], json: false, configPath: "./-j" },
+    { args: ["--config=-j"], json: false, configPath: "-j" },
+    ...["-jc", "-cj", "-jh", "-hj", "-jj", "-ch", "-hc", "-j=true"].flatMap((value) => [
+      { args: [`--config=${value}`], json: false, configPath: value },
+      ...["-c", "--config"].map((selector) => ({
+        args: [selector, `./${value}`],
+        json: false,
+        configPath: `./${value}`,
+      })),
+    ]),
     { args: ["-c", "configs/local.yaml"], json: false, configPath: "configs/local.yaml" },
     { args: ["--json", "-c", "/tmp/local.yaml"], json: true, configPath: "/tmp/local.yaml" },
     { args: ["-c", "local config.yaml", "--json"], json: true, configPath: "local config.yaml" },
@@ -146,7 +177,7 @@ describe("local environment diagnostics", () => {
     expect(parseDoctorArguments(args)).toEqual({ json, configPath });
   });
 
-  it.each([[], ["--json"]])(
+  it.each([[], ...jsonOptions.map((option) => [option])])(
     "loads the selected file with warnings suppressed: %j",
     async (...mode) => {
       for (const configArgs of [
@@ -155,49 +186,62 @@ describe("local environment diagnostics", () => {
         ["--config=local config.yaml"],
       ]) {
         const loadConfig = vi.fn(() => parseConfig(example));
-        const result = await diagnose({}, loadConfig, [...mode, ...configArgs]);
-        expect(loadConfig).toHaveBeenCalledExactlyOnceWith("local config.yaml", {
-          suppressWarnings: true,
-        });
-        expect(result.exitCode).toBe(0);
-        expect(result.output).toContain(
-          mode.length ? '\\"local config.yaml\\"' : '"local config.yaml"',
-        );
+        for (const args of [
+          [...mode, ...configArgs],
+          [...configArgs, ...mode],
+        ]) {
+          expect(parseDoctorArguments(args)).toEqual({
+            json: mode.length > 0,
+            configPath: "local config.yaml",
+          });
+          loadConfig.mockClear();
+          const result = await diagnose({}, loadConfig, args);
+          expect(loadConfig).toHaveBeenCalledExactlyOnceWith("local config.yaml", {
+            suppressWarnings: true,
+          });
+          expect(result.exitCode).toBe(0);
+          expect(result.output).toContain(
+            mode.length ? '\\"local config.yaml\\"' : '"local config.yaml"',
+          );
+        }
       }
     },
   );
 
-  it("emits a deterministic versioned JSON report with explicit skipped checks", async () => {
-    const result = await diagnose({}, undefined, ["--json"]);
-    expect(result.exitCode).toBe(0);
-    const report = JSON.parse(result.output);
-    expect(report).toEqual({
-      schemaVersion: 1,
-      requiredLocalChecksPassed: true,
-      runtimeReadiness: "not-verified",
-      checks: [
-        { id: "configuration", status: "passed", summary: "config.yaml exists and is valid." },
-        ...["git", "github-cli", "opencode"].map((id) => ({
-          id,
-          status: "passed",
-          summary: "installed version and required executable capabilities are compatible.",
-        })),
-        {
-          id: "external-integrations",
-          status: "skipped",
-          summary: expect.stringContaining("not checked"),
-        },
-        {
-          id: "runtime-prerequisites",
-          status: "skipped",
-          summary: expect.stringContaining("not checked"),
-        },
-      ],
-    });
-    expect((await diagnose({}, undefined, ["--json"])).output).toBe(result.output);
-  });
+  it.each(jsonOptions)(
+    "emits a deterministic versioned %s report with explicit skipped checks",
+    async (option) => {
+      const result = await diagnose({}, undefined, [option]);
+      expect(result.exitCode).toBe(0);
+      const report = JSON.parse(result.output);
+      expect(report).toEqual({
+        schemaVersion: 1,
+        requiredLocalChecksPassed: true,
+        runtimeReadiness: "not-verified",
+        checks: [
+          { id: "configuration", status: "passed", summary: "config.yaml exists and is valid." },
+          ...["git", "github-cli", "opencode"].map((id) => ({
+            id,
+            status: "passed",
+            summary: "installed version and required executable capabilities are compatible.",
+          })),
+          {
+            id: "external-integrations",
+            status: "skipped",
+            summary: expect.stringContaining("not checked"),
+          },
+          {
+            id: "runtime-prerequisites",
+            status: "skipped",
+            summary: expect.stringContaining("not checked"),
+          },
+        ],
+      });
+      expect((await diagnose({}, undefined, ["--json"])).output).toBe(result.output);
+    },
+  );
 
-  it.each([{ args: [] }, { args: ["--json"] }])(
+  it.each([[], ...jsonOptions.map((option) => [option])].map((args) => ({ args })))(
     "sanitizes arbitrary probe exceptions in mode $args",
     async ({ args }) => {
       const result = await diagnose(
@@ -245,6 +289,7 @@ describe("local environment diagnostics", () => {
     ["--help", "--unknown"],
     ...invalidShortHelpArguments,
     ...invalidShortConfigArguments,
+    ...invalidJsonArguments,
   ])(
     "rejects unsupported arguments before loading configuration or probing: %j",
     async (...args) => {
@@ -285,7 +330,7 @@ describe("local environment diagnostics", () => {
     ["gh pr list --help", "secret-help-value", "missing required options"],
     ["opencode run --help", "secret-help-value", "missing required options"],
   ])("explains incompatible %s results", async (command, response, explanation) => {
-    for (const args of [[], ["--json"]]) {
+    for (const args of [[], ...jsonOptions.map((option) => [option])]) {
       const result = await diagnose({ [command]: response }, undefined, args);
       expect(result.exitCode).toBe(1);
       expect(result.output).toContain(explanation);
@@ -345,10 +390,13 @@ describe("local environment diagnostics", () => {
     for (const args of [
       [],
       ["--json"],
+      ["-j"],
       ["--config", "selected.yaml"],
       ["--json", "--config", "selected.yaml"],
       ["-c", "selected.yaml"],
       ["--json", "-c", "selected.yaml"],
+      ["-j", "-c", "selected.yaml"],
+      ["--config", "selected.yaml", "-j"],
     ]) {
       const result = await diagnose({}, configuration, args);
       expect(result.exitCode).toBe(1);
@@ -356,7 +404,7 @@ describe("local environment diagnostics", () => {
       expect(result.output).not.toContain("secret-config-value");
       if (args.includes("--config") || args.includes("-c"))
         expect(result.output).toContain("selected.yaml");
-      if (args.includes("--json")) {
+      if (args.some((argument) => jsonOptions.includes(argument))) {
         const report = JSON.parse(result.output);
         expect(report.checks[0].status).toBe("failed");
         expect(report.requiredLocalChecksPassed).toBe(false);
@@ -467,6 +515,7 @@ describe("standalone doctor entrypoint", () => {
     ["--help", "--help"],
     ...invalidShortHelpArguments,
     ...invalidShortConfigArguments,
+    ...invalidJsonArguments,
   ])("rejects invalid arguments at the entrypoint without probing: %j", async (...args) => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-arguments-"));
     for (const executable of ["git", "gh", "opencode"]) {
@@ -549,12 +598,12 @@ describe("standalone doctor entrypoint", () => {
         configFailure: true,
       },
     ].flatMap((scenario) =>
-      [false, true].flatMap((json) =>
+      [undefined, ...jsonOptions].flatMap((jsonOption) =>
         ["default", "relative", "absolute", "spaces"].flatMap((selection) =>
           (selection === "default" ? ["default"] : ["--config", "--config=", "-c"]).map(
             (option) => ({
               ...scenario,
-              json,
+              jsonOption,
               selection,
               option,
             }),
@@ -563,8 +612,9 @@ describe("standalone doctor entrypoint", () => {
       ),
     ),
   )(
-    "is read-only and protects both output streams ($scenario, json=$json, $selection, option=$option)",
-    async ({ configuration, failure, configFailure, json, selection, option }) => {
+    "is read-only and protects both output streams ($scenario, json=$jsonOption, $selection, option=$option)",
+    async ({ configuration, failure, configFailure, jsonOption, selection, option }) => {
+      const json = jsonOption !== undefined;
       root = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-"));
       const bin = path.join(root, "bin");
       fs.mkdirSync(bin);
@@ -591,8 +641,8 @@ describe("standalone doctor entrypoint", () => {
             : [option, configPath];
       const args =
         selection === "spaces"
-          ? [...configArgs, ...(json ? ["--json"] : [])]
-          : [...(json ? ["--json"] : []), ...configArgs];
+          ? [...configArgs, ...(jsonOption ? [jsonOption] : [])]
+          : [...(jsonOption ? [jsonOption] : []), ...configArgs];
       for (const executable of ["git", "gh", "opencode"]) {
         fs.writeFileSync(
           path.join(bin, executable),
