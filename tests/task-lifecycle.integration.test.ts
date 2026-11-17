@@ -39,6 +39,7 @@ import { readTerminalPrFence } from "../src/task-session/terminal-pr-fence.js";
 import { AiExecutionCapacity } from "../src/orchestrator/ai-execution-capacity.js";
 import { notificationAuthorityFixture } from "./support/notification-authority-fixture.js";
 import { Logger } from "../src/logging/logger.js";
+import { transitionTaskExecutionRecord } from "../src/task-session/task-execution-transition.js";
 
 const execFile = promisify(nodeExecFile);
 let roots: string[] = [];
@@ -46,6 +47,7 @@ let originalProcessPath: string | undefined;
 let originalPrimaryMode: string | undefined;
 const leases: ProjectOwnershipLease[] = [];
 interface LifecycleScenario {
+  publishedReadRecovery?: "ci" | "publication";
   preparedValidationFailure?: boolean;
   draft: boolean;
   terminal: "merged" | "closed";
@@ -87,6 +89,14 @@ afterEach(async () => {
 
 describe("task lifecycle through pollProject", () => {
   it.each<LifecycleScenario>([
+    ...(["ci", "publication"] as const).map((publishedReadRecovery) => ({
+      draft: false,
+      terminal: "merged" as const,
+      destination: "done" as const,
+      ackLoss: false,
+      quality: "both" as const,
+      publishedReadRecovery,
+    })),
     {
       draft: false,
       terminal: "merged",
@@ -269,7 +279,7 @@ describe("task lifecycle through pollProject", () => {
       }),
     ),
   ] as const)(
-    "preserves the owned lifecycle (quality=$quality, draft=$draft, terminal=$terminal, ackLoss=$ackLoss, correctionFailure=$correctionFailure, feedbackQuality=$feedbackQuality, terminalDuringFeedback=$terminalDuringFeedback, preparedReview=$preparedReview, ciReviewHandoffs=$ciReviewHandoffs, feedbackReviewRecovery=$feedbackReviewRecovery, ciReviewRecovery=$ciReviewRecovery, ciQuality=$ciQuality, targetMerge=$targetMerge, ciBudget=$ciBudget, preparedValidationFailure=$preparedValidationFailure)",
+    "preserves the owned lifecycle (quality=$quality, draft=$draft, terminal=$terminal, ackLoss=$ackLoss, correctionFailure=$correctionFailure, feedbackQuality=$feedbackQuality, terminalDuringFeedback=$terminalDuringFeedback, preparedReview=$preparedReview, ciReviewHandoffs=$ciReviewHandoffs, feedbackReviewRecovery=$feedbackReviewRecovery, ciReviewRecovery=$ciReviewRecovery, ciQuality=$ciQuality, targetMerge=$targetMerge, ciBudget=$ciBudget, preparedValidationFailure=$preparedValidationFailure, publishedReadRecovery=$publishedReadRecovery)",
     async ({
       draft,
       terminal,
@@ -282,6 +292,7 @@ describe("task lifecycle through pollProject", () => {
       quality,
       preparedReview,
       preparedValidationFailure,
+      publishedReadRecovery,
       ciReviewHandoffs = false,
       feedbackReviewRecovery,
       ciReviewRecovery,
@@ -1917,6 +1928,50 @@ describe("task lifecycle through pollProject", () => {
         draft || preparedReview !== undefined || preparedValidationFailure === true,
       );
       const progressMessages = progress.mock.calls.map(([message]) => message);
+      if (publishedReadRecovery) {
+        const owner = authorities.get("first")!;
+        const taskStore = new TaskExecutionStore(contextRoot, project, owner);
+        const before = taskStore.read("first")!;
+        const escalate = () => {
+          const current = taskStore.read("first")!;
+          taskStore.compareAndSwap("first", current.revision, {
+            ...transitionTaskExecutionRecord(current, {
+              type: "attention-required",
+              eventId: `read-recovery-${current.revision}`,
+              projectId: project.id,
+              cardId: "first",
+              operationKey: current.operationKey,
+              occurredAt: new Date(
+                Math.max(Date.now() + 1, Date.parse(current.updatedAt) + 1),
+              ).toISOString(),
+            }),
+            recoveryAttentionReason:
+              "Authoritative recovery snapshot could not be read: GitHub CLI returned an invalid commit statuses",
+          });
+        };
+        escalate();
+        if (publishedReadRecovery === "publication") {
+          const current = taskStore.read("first")!;
+          taskStore.compareAndSwap("first", current.revision, {
+            ...current,
+            phase: "publication",
+            reviewObservation: undefined,
+            revision: current.revision + 1,
+            updatedAt: new Date(Date.now() + 2).toISOString(),
+          });
+          escalate();
+        }
+        await expect(poll()).resolves.toBeUndefined();
+        await expect(poll()).resolves.toBeUndefined();
+        expect(["ci", "human-feedback"]).toContain(taskStore.read("first")?.phase);
+        expect(taskStore.read("first")?.pullRequest).toEqual(before.pullRequest);
+        expect(taskStore.read("first")?.primarySessionId).toBe(before.primarySessionId);
+        expect(requests).toEqual([firstBranch]);
+        expect(prs.size).toBe(1);
+        expect(lists.get("first")).toBe("review");
+        expect(lists.get("next")).toBe("ready");
+        return;
+      }
       if (draft) {
         expect(
           progressMessages.some((message) =>

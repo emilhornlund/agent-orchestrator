@@ -95,7 +95,7 @@ export function getLegacyPublishedGitHubReadRecoveryPhase(
     run.publicationState !== "open" ||
     run.projectId !== record.projectId ||
     run.cardId !== record.cardId ||
-    !["ci", "human-review"].includes(run.checkpoint) ||
+    !["ci", "human-review", "publication"].includes(run.checkpoint) ||
     run.operation.id !== record.operationKey ||
     run.operation.kind !== "attention-required" ||
     run.wait.reason !== "task-attention-required" ||
@@ -126,6 +126,22 @@ export function getLegacyPublishedGitHubReadRecoveryPhase(
     )
   )
     return null;
+  if (run.checkpoint === "publication") {
+    const publication = run.compatibility["initial-publication-v1"];
+    if (
+      !publication ||
+      typeof publication !== "object" ||
+      !("version" in publication) ||
+      publication.version !== 1 ||
+      !("completed" in publication) ||
+      publication.completed !== true ||
+      !("cardId" in publication) ||
+      publication.cardId !== record.cardId ||
+      !("branch" in publication) ||
+      publication.branch !== record.expectedBranch
+    )
+      return null;
+  }
   const queue = run.compatibility[`project-queue-${record.projectId}`];
   if (
     !queue ||
@@ -134,7 +150,7 @@ export function getLegacyPublishedGitHubReadRecoveryPhase(
     queue.activeEventId !== null
   )
     return null;
-  return run.checkpoint === "ci" ? "ci" : "human-feedback";
+  return run.checkpoint === "human-review" ? "human-feedback" : "ci";
 }
 
 function bumpTimestamp(record: TaskExecutionRecord): string {
@@ -362,6 +378,7 @@ export async function reconcileTaskSession(
   options: ReconcileTaskSessionOptions,
 ): Promise<TaskSessionRecoveryResult> {
   const { project, cardId, expectedBranch, operationKey, taskRecordStore } = options;
+  let recoveredPublishedCheckpoint = false;
   let record = loadOwnedTaskExecutionRecord(taskRecordStore, {
     projectId: project.id,
     cardId,
@@ -563,6 +580,7 @@ export async function reconcileTaskSession(
         record,
       };
     const now = options.now?.() ?? Date.now();
+    recoveredPublishedCheckpoint = true;
     record = {
       ...record,
       phase: resumePhase,
@@ -661,6 +679,16 @@ export async function reconcileTaskSession(
     )
       return persistWait(taskRecordStore, record, options, reason);
     return preserveAttention(taskRecordStore, record, reason);
+  }
+  if (recoveredPublishedCheckpoint) {
+    // Re-observing CI must never hide an unshipped correction or revive an
+    // already-completed publication. Verify the retained local tree as well.
+    if (!options.setupGit || (await options.setupGit.getStatus(options.worktreePath)).trim() !== "")
+      return preserveAttention(
+        taskRecordStore,
+        record,
+        "Published snapshot recovery has unshipped or unverifiable worktree changes",
+      );
   }
   const expectedTerminalPr = record.pullRequest;
   if (

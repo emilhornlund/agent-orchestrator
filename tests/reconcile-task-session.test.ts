@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { GitClient } from "../src/git/git-client.js";
 import { CommandRunner } from "../src/process/command-runner.js";
@@ -28,6 +28,7 @@ import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 
 let root: string;
 afterEach(() => {
+  vi.restoreAllMocks();
   if (root !== undefined) fs.rmSync(root, { recursive: true, force: true });
 });
 function fixture(phase: TaskExecutionPhase = "validation") {
@@ -318,7 +319,12 @@ describe("reconcileTaskSession", () => {
       f.reconcile({ remoteBranchHeadSha: f.sha }, () => now + 1001),
     ).resolves.toMatchObject({ status: "resume", phase: "ci" });
   });
-  it.each(["valid", "unsafe-worktree"] as const)(
+  it.each([
+    "valid",
+    "unsafe-worktree",
+    "published-checkpoint",
+    "dirty-published-checkpoint",
+  ] as const)(
     "reconciles an idle published read-contract escalation through its canonical checkpoint (%s)",
     async (outcome) => {
       const f = canonicalSetupFixture("ci");
@@ -336,12 +342,44 @@ describe("reconcileTaskSession", () => {
         recoveryAttentionReason:
           "Authoritative recovery snapshot could not be read: GitHub CLI returned an invalid commit statuses",
       });
-      expect(f.runStore.read()!.checkpoint).toBe("ci");
+      const publicationCheckpoint = outcome.includes("published-checkpoint");
+      if (publicationCheckpoint) {
+        const escalated = f.store.read("card")!;
+        f.store.compareAndSwap("card", escalated.revision, {
+          ...escalated,
+          phase: "publication",
+          revision: escalated.revision + 1,
+          updatedAt: new Date(Date.now() + 1).toISOString(),
+        });
+        const revived = f.store.read("card")!;
+        f.store.compareAndSwap(
+          "card",
+          revived.revision,
+          transitionTaskExecutionRecord(revived, {
+            type: "attention-required",
+            eventId: "legacy-publication-revival-failed",
+            projectId: "project",
+            cardId: "card",
+            operationKey: "operation",
+            occurredAt: new Date(Date.now() + 2).toISOString(),
+          }),
+        );
+        f.authority.mutate(
+          "initial-publication-v1",
+          { version: 1, cardId: "card", branch: "agent/card", completed: true },
+          (value) => ({ value, result: undefined }),
+          (value) => value,
+        );
+      }
+      vi.spyOn(f.git, "getStatus").mockResolvedValue(
+        outcome === "dirty-published-checkpoint" ? " M source.ts" : "",
+      );
+      expect(f.runStore.read()!.checkpoint).toBe(publicationCheckpoint ? "publication" : "ci");
       expect(hasDueTaskSessionRecoveryWait(f.runStore.read())).toBe(true);
       const result = await f.authority.run(() =>
         f.reconcile({ remoteBranchHeadSha: f.sha, worktreeExists: outcome !== "unsafe-worktree" }),
       );
-      if (outcome === "valid") {
+      if (outcome === "valid" || outcome === "published-checkpoint") {
         expect(result).toMatchObject({ status: "resume", phase: "ci" });
         expect(f.store.read("card")).toMatchObject({
           phase: "ci",

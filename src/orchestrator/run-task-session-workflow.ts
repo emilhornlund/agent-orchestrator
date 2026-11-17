@@ -4280,6 +4280,8 @@ async function runTaskSessionWorkflowAttempt(
     // Reopening this checkpoint must never rerun implementation or repairs.
     if (
       record.phase === "attention-required" &&
+      record.pullRequest === undefined &&
+      record.externalRecovery === undefined &&
       record.terminalFailure === undefined &&
       record.reviewRepair?.finalReview !== undefined &&
       record.publicationQuality !== undefined
@@ -4503,6 +4505,13 @@ async function runTaskSessionWorkflowAttempt(
       return;
     }
     if (signal.aborted) return;
+
+    if (recovery.record.pullRequest && ["ci", "human-feedback"].includes(recovery.record.phase)) {
+      // This card was temporarily routed through Working recovery because its
+      // projection was escalated. Its original publication/feedback writer is
+      // already completed; the next poll uses normal published-PR scheduling.
+      return;
+    }
 
     const correctionOperationId = record.feedbackRemediation?.operationId;
     const correctionEvents =
