@@ -3,9 +3,22 @@
 import fs from "node:fs";
 import { spawn } from "node:child_process";
 
-const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
-  stdio: "ignore",
-});
+const child = spawn(
+  process.execPath,
+  [
+    "-e",
+    `
+const fs = require('node:fs');
+let sequence = 0;
+const heartbeat = () => fs.writeFileSync('writer-child.heartbeat', String(++sequence));
+heartbeat();
+setInterval(heartbeat, 20);
+`,
+  ],
+  {
+    stdio: "ignore",
+  },
+);
 let stopping = false;
 child.on("exit", () => {
   if (stopping) process.exit(0);

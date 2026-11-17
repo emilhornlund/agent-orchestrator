@@ -2105,11 +2105,19 @@ describe("task lifecycle through pollProject", () => {
           );
           expect(readTerminalPrFence(owned)?.preserveArtifacts).toBe(true);
         } else {
+          const heartbeatPath = path.join(worktree, "writer-child.heartbeat");
           const running = poll();
           try {
             await vi.waitFor(
-              () => expect(fs.existsSync(path.join(worktree, "writer-started"))).toBe(true),
+              () => {
+                expect(fs.existsSync(path.join(worktree, "writer-started"))).toBe(true);
+                expect(fs.existsSync(heartbeatPath)).toBe(true);
+              },
               { timeout: 10_000 },
+            );
+            const initialHeartbeat = fs.readFileSync(heartbeatPath, "utf8");
+            await vi.waitFor(() =>
+              expect(fs.readFileSync(heartbeatPath, "utf8")).not.toBe(initialHeartbeat),
             );
             const boundary = ledger.length;
             await humanOutcome();
@@ -2135,12 +2143,12 @@ describe("task lifecycle through pollProject", () => {
               fs.readFileSync(operation.processMetadataPath!, "utf8"),
             ) as { treeStopped?: boolean };
             expect(execution.treeStopped).toBe(true);
-            expect(() =>
-              process.kill(
-                Number(fs.readFileSync(path.join(worktree, "writer-child.pid"), "utf8")),
-                0,
-              ),
-            ).toThrow();
+            // The child PID belongs to its private PID namespace; checking
+            // that number in the caller's namespace can identify an unrelated
+            // live process. Verify its actual work stopped instead.
+            const stoppedHeartbeat = fs.readFileSync(heartbeatPath, "utf8");
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            expect(fs.readFileSync(heartbeatPath, "utf8")).toBe(stoppedHeartbeat);
           } finally {
             lifecycleController.abort();
             await Promise.allSettled([running]);
