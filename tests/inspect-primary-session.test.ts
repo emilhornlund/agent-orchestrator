@@ -2,15 +2,50 @@ import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
 import { describe, expect, it, vi } from "vitest";
-import { CommandRunner, type RunCommand } from "../src/process/command-runner.js";
+import {
+  CommandRunner,
+  CommandRunAbortedError,
+  type RunCommand,
+} from "../src/process/command-runner.js";
 import {
   inspectPrimaryOpenCodeSession,
   OpenCodeSessionListError,
   parseOpenCodeSessionList,
 } from "../src/opencode/inspect-primary-session.js";
-import { configureProcessRuntime } from "../src/process/process-runtime.js";
+import { configureProcessRuntime, ProcessEvidenceError } from "../src/process/process-runtime.js";
+import { isShutdownCancellation } from "../src/runtime/shutdown-cancellation.js";
 
 describe("inspectPrimaryOpenCodeSession", () => {
+  it.each(["cancelled", "evidence-failure", "unknown-failure"] as const)(
+    "preserves shutdown classification without exposing runner diagnostics (%s)",
+    async (kind) => {
+      const controller = new AbortController();
+      const marker = "PRIVATE_SESSION_INSPECTION_ERROR";
+      const run = vi.fn<RunCommand>(async () => {
+        controller.abort("signal");
+        if (kind === "cancelled") throw new CommandRunAbortedError();
+        if (kind === "evidence-failure") throw new ProcessEvidenceError(marker);
+        throw new Error(marker);
+      });
+      let failure: unknown;
+      try {
+        await inspectPrimaryOpenCodeSession({
+          commands: new CommandRunner(run),
+          cwd: "/tmp/worktree",
+          sessionId: "ses_primary",
+          signal: controller.signal,
+          timeoutMilliseconds: 1000,
+        });
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(Error);
+      expect(isShutdownCancellation(failure, controller.signal)).toBe(kind === "cancelled");
+      expect((failure as Error).message).not.toContain(marker);
+      expect((failure as Error).cause).toBeUndefined();
+    },
+  );
+
   it("parses session identities and confirms only a session in the owned worktree", async () => {
     expect(
       parseOpenCodeSessionList(
