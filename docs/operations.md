@@ -15,6 +15,21 @@ provision the shared coordination namespace as described in
 `yarn dev`, or `yarn build` followed by `node dist/main.js`. Both commands read `config.yaml` from
 the working directory. No container engine is needed locally.
 
+Before starting, check a selected configuration file and local executable compatibility:
+
+```sh
+yarn doctor -c /secure/config.yaml
+# Optional machine-readable report:
+yarn doctor -c /secure/config.yaml --json
+```
+
+`-c PATH` is equivalent to `--config PATH` and selects only the diagnostic configuration file;
+`yarn dev` and `node dist/main.js` still load `config.yaml` from the service working directory.
+Passing doctor confirms local configuration/tool compatibility only, not live service readiness:
+authentication, remote resources, isolation namespaces, coordination provisioning, and runtime
+permissions remain unverified. See the [README doctor guidance](../README.md#running) for full usage
+and report details.
+
 The supplied `Containerfile` builds the same production entry point, installs the required tools and
 runs as the non-root `node` user. Build it with either:
 
