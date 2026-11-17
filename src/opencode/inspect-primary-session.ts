@@ -150,7 +150,6 @@ export async function inspectPrimaryOpenCodeSession(options: {
   } catch (error) {
     if (isShutdownCancellation(error, options.signal))
       // Preserve typed cancellation, but never retain raw runner diagnostics.
-      // eslint-disable-next-line preserve-caught-error
       throw new CommandRunAbortedError();
     if (options.signal.aborted)
       // Do not retain the runner error: it may contain untrusted child output.
