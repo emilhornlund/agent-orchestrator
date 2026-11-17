@@ -101,7 +101,10 @@ describe("TaskMutationQueue", () => {
     const restarted = queueFor("long-lived");
     expect(restarted.claimForRecovery("later")?.eventId).toBe("later");
     restarted.complete("later");
-  }, 120_000);
+    // This is a durability/retention stress scenario with 30,000+ synchronous
+    // filesystem transactions, not a two-minute performance contract. Hosted
+    // runner storage can exceed that deadline while every transition progresses.
+  }, 300_000);
 
   it("persists human/CI/maintenance priority and prevents specific-claim callers bypassing it", () => {
     const queue = queueFor("project-a");

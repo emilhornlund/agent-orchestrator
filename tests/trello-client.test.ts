@@ -312,69 +312,72 @@ describe("TrelloClient", () => {
     await expect(client.getCards("ready-list")).rejects.toThrow("Must be a valid date");
   });
 
-  it("gets card attachment metadata in Trello order", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(
-        JSON.stringify([
+  it.each(["2048", 2048])(
+    "gets card attachment metadata in Trello order and normalizes byte count %s",
+    async (bytes) => {
+      const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(
+          JSON.stringify([
+            {
+              id: "attachment-file",
+              name: "design.pdf",
+              mimeType: "application/pdf",
+              bytes,
+              url: "https://trello.com/1/cards/card-1/attachments/attachment-file/download/design.pdf",
+              isUpload: true,
+            },
+            {
+              id: "attachment-link",
+              name: "Design reference",
+              mimeType: null,
+              bytes: null,
+              url: "https://example.com/design",
+              isUpload: false,
+            },
+          ]),
           {
-            id: "attachment-file",
-            name: "design.pdf",
-            mimeType: "application/pdf",
-            bytes: "2048",
-            url: "https://trello.com/1/cards/card-1/attachments/attachment-file/download/design.pdf",
-            isUpload: true,
+            status: 200,
+            headers: {
+              "Content-Type": "application/json",
+            },
           },
-          {
-            id: "attachment-link",
-            name: "Design reference",
-            mimeType: null,
-            bytes: null,
-            url: "https://example.com/design",
-            isUpload: false,
-          },
-        ]),
+        ),
+      );
+
+      const client = new TrelloClient({
+        apiKey: "test-key",
+        token: "test-token",
+      });
+
+      await expect(client.getCardAttachments("card-1")).resolves.toEqual([
         {
-          status: 200,
-          headers: {
-            "Content-Type": "application/json",
-          },
+          id: "attachment-file",
+          name: "design.pdf",
+          mimeType: "application/pdf",
+          bytes: "2048",
+          url: "https://trello.com/1/cards/card-1/attachments/attachment-file/download/design.pdf",
+          isUpload: true,
         },
-      ),
-    );
+        {
+          id: "attachment-link",
+          name: "Design reference",
+          mimeType: null,
+          bytes: null,
+          url: "https://example.com/design",
+          isUpload: false,
+        },
+      ]);
 
-    const client = new TrelloClient({
-      apiKey: "test-key",
-      token: "test-token",
-    });
+      expect(fetchMock).toHaveBeenCalledOnce();
 
-    await expect(client.getCardAttachments("card-1")).resolves.toEqual([
-      {
-        id: "attachment-file",
-        name: "design.pdf",
-        mimeType: "application/pdf",
-        bytes: "2048",
-        url: "https://trello.com/1/cards/card-1/attachments/attachment-file/download/design.pdf",
-        isUpload: true,
-      },
-      {
-        id: "attachment-link",
-        name: "Design reference",
-        mimeType: null,
-        bytes: null,
-        url: "https://example.com/design",
-        isUpload: false,
-      },
-    ]);
+      const [requestUrl] = fetchMock.mock.calls[0] ?? [];
+      const url = new URL(String(requestUrl));
 
-    expect(fetchMock).toHaveBeenCalledOnce();
-
-    const [requestUrl] = fetchMock.mock.calls[0] ?? [];
-    const url = new URL(String(requestUrl));
-
-    expect(url.pathname).toBe("/1/cards/card-1/attachments");
-    expect(url.searchParams.get("key")).toBe("test-key");
-    expect(url.searchParams.get("token")).toBe("test-token");
-  });
+      expect(url.pathname).toBe("/1/cards/card-1/attachments");
+      expect(url.searchParams.get("key")).toBe("test-key");
+      expect(url.searchParams.get("token")).toBe("test-token");
+    },
+  );
 
   it("returns an empty list when a card has no attachments", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -435,8 +438,80 @@ describe("TrelloClient", () => {
 
     const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
     expect(url.pathname).toBe("/1/cards/card-1/attachments/attachment-file/download/design.pdf");
-    expect(url.searchParams.get("key")).toBe("test-key");
-    expect(url.searchParams.get("token")).toBe("test-token");
+    expect(url.hostname).toBe("api.trello.com");
+    expect(url.searchParams.has("key")).toBe(false);
+    expect(url.searchParams.has("token")).toBe(false);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      redirect: "manual",
+      headers: { Authorization: 'OAuth oauth_consumer_key="test-key", oauth_token="test-token"' },
+    });
+  });
+
+  it("follows a bounded signed storage redirect without forwarding Trello authorization", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 302,
+          headers: { location: "https://storage.example/file?signature=opaque" },
+        }),
+      )
+      .mockResolvedValueOnce(new Response("attachment", { status: 200 }));
+    const client = new TrelloClient({ apiKey: "test-key", token: "test-token" });
+    const response = await client.downloadCardAttachment({
+      id: "attachment",
+      name: "file.log",
+      bytes: "10",
+      mimeType: "text/plain",
+      isUpload: true,
+      url: "https://trello.com/1/cards/card/attachments/attachment/download/file.log",
+    });
+    expect(await response.text()).toBe("attachment");
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).toBeDefined();
+    expect(fetchMock.mock.calls[1]?.[1]?.headers).toBeUndefined();
+    expect(String(fetchMock.mock.calls[1]?.[0])).not.toContain("test-token");
+  });
+
+  it.each([
+    "http://storage.example/file",
+    "https://user:password@storage.example/file",
+    "https://storage.example:444/file",
+  ])("rejects unsafe attachment redirect %s", async (location) => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 302, headers: { location } }));
+    const client = new TrelloClient({ apiKey: "test-key", token: "test-token" });
+    await expect(
+      client.downloadCardAttachment({
+        id: "attachment",
+        name: "file.log",
+        bytes: "10",
+        mimeType: "text/plain",
+        isUpload: true,
+        url: "https://trello.com/1/cards/card/attachments/attachment/download/file.log",
+      }),
+    ).rejects.toThrow("credential-free HTTPS");
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("stops an attachment redirect loop at its fixed bound", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(
+        async () => new Response(null, { status: 302, headers: { location: "/loop" } }),
+      );
+    const client = new TrelloClient({ apiKey: "test-key", token: "test-token" });
+    await expect(
+      client.downloadCardAttachment({
+        id: "attachment",
+        name: "file.log",
+        bytes: "10",
+        mimeType: "text/plain",
+        isUpload: true,
+        url: "https://trello.com/1/cards/card/attachments/attachment/download/file.log",
+      }),
+    ).rejects.toThrow("bounded limit");
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it("does not download external attachment metadata through the client method", async () => {
@@ -572,7 +647,10 @@ describe("TrelloClient", () => {
     { id: 123 },
     { name: 123 },
     { mimeType: 123 },
-    { bytes: 2048 },
+    { bytes: false },
+    { bytes: -1 },
+    { bytes: 0.5 },
+    { bytes: Number.MAX_SAFE_INTEGER + 1 },
     { url: 123 },
     { isUpload: "true" },
   ])("rejects an attachment with an incorrectly typed field", async (field) => {

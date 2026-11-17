@@ -1527,7 +1527,7 @@ export class GitHubClient {
         value.id <= 0 ||
         typeof value.context !== "string" ||
         value.context.trim().length === 0 ||
-        typeof value.sha !== "string" ||
+        (value.sha !== undefined && typeof value.sha !== "string") ||
         typeof value.state !== "string" ||
         typeof value.created_at !== "string" ||
         typeof value.updated_at !== "string" ||
@@ -1536,7 +1536,7 @@ export class GitHubClient {
       ) {
         throw new MalformedGitHubResponseError("commit statuses", statusesResult.origin);
       }
-      if (value.sha !== options.headSha) {
+      if (value.sha !== undefined && value.sha !== options.headSha) {
         throw new MalformedGitHubResponseError(
           "commit statuses for a different commit SHA",
           statusesResult.origin,
@@ -1546,7 +1546,9 @@ export class GitHubClient {
         source: "commit-status",
         id: value.id,
         context: value.context,
-        headSha: value.sha,
+        // The immutable commit-scoped request binds standard GitHub status
+        // responses, which do not include a SHA field in their payload.
+        headSha: options.headSha,
         state: value.state,
         createdAt: value.created_at,
         updatedAt: value.updated_at,
@@ -3117,20 +3119,30 @@ export class GitHubClient {
     };
     const request = { route: "github-pr-ready", args };
     const verify = async () => {
-      await this.assertMutationOpen(options);
       const state = await this.getPullRequestPublicationFields(options);
-      const pullRequest = await this.findPullRequestState({
+      const pullRequest = await this.getPullRequestStateByNumber({
         cwd: options.cwd,
         repository: options.repository,
-        headBranch: options.headBranch,
+        pullRequestNumber: getPullRequestNumberForRepository(
+          options.pullRequestUrl,
+          options.repository,
+        ),
         ...(options.project === undefined ? {} : { project: options.project }),
       });
       if (
-        pullRequest?.url !== options.pullRequestUrl ||
+        pullRequest.url !== options.pullRequestUrl ||
+        pullRequest.state !== "OPEN" ||
+        pullRequest.headRefName !== options.headBranch ||
         pullRequest.headRefOid !== options.expectedHeadSha ||
         state.body !== options.expectedBody
       )
-        throw new Error("Pull request readiness evidence changed before promotion");
+        throw new WorkflowMutationPreconditionChangedError({
+          reason: "Pull request readiness evidence changed before promotion",
+          headSha: pullRequest.headRefOid,
+          headBranch: pullRequest.headRefName,
+          state: pullRequest.state,
+          bodyChanged: state.body !== options.expectedBody,
+        });
       return state;
     };
     if (!consumeJournaledDispatch(authority, request) && authority) {

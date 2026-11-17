@@ -228,7 +228,7 @@ export async function withActivePrObservation<T>(
     authority: ProjectRunAuthority;
     intervalMs: number;
     signal: AbortSignal;
-    onError: (error: unknown) => void;
+    onError: (error: unknown, diagnosticReference?: string) => void;
   },
   operation: () => Promise<T>,
 ): Promise<T> {
@@ -250,7 +250,19 @@ export async function withActivePrObservation<T>(
           } catch (error) {
             failures = Math.min(failures + 1, 5);
             try {
-              options.onError(error);
+              const diagnostic = options.authority.store.writeArtifact(
+                Buffer.from(
+                  sanitizeControlledText(
+                    JSON.stringify({
+                      kind: "active-pr-observation-failure",
+                      name: error instanceof Error ? error.name : "UnknownError",
+                      message: error instanceof Error ? error.message : String(error),
+                    }),
+                  ),
+                ),
+                "application/json",
+              );
+              options.onError(error, diagnostic.id);
             } catch {
               // Diagnostics must not replace a writer's successful completion.
             }

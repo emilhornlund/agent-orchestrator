@@ -758,6 +758,62 @@ describe("GitHubClient", () => {
     expect(runGitHubCommand).toHaveBeenCalledOnce();
   });
 
+  it.each(["current", "head-changed", "body-changed", "branch-changed", "closed"] as const)(
+    "uses explicitly requested numbered PR head evidence before draft promotion (%s)",
+    async (scenario) => {
+      let draft = true;
+      const url = "https://github.com/example/repository/pull/123";
+      const head = "a".repeat(40);
+      const run = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
+        if (args[0] === "pr" && args[1] === "ready") {
+          draft = false;
+          return "";
+        }
+        if (args[0] !== "pr" || args[1] !== "view") throw new Error("Unexpected lookup");
+        const state = {
+          url,
+          state: scenario === "closed" ? "CLOSED" : "OPEN",
+          mergedAt: null,
+          headRefOid: scenario === "head-changed" ? "b".repeat(40) : head,
+          headRefName: scenario === "branch-changed" ? "agent/other" : "agent/card",
+          baseRefName: "main",
+        };
+        // Model gh faithfully: unrequested fields do not appear in its JSON.
+        const requested = args[args.indexOf("--json") + 1]!.split(",");
+        return JSON.stringify(
+          Object.fromEntries(Object.entries(state).filter(([key]) => requested.includes(key))),
+        );
+      });
+      const fields = vi.fn(async () =>
+        JSON.stringify({
+          title: "Task",
+          body: scenario === "body-changed" ? "Human edit" : "Reviewed body",
+          draft,
+        }),
+      );
+      const client = new GitHubClient(run, undefined, fields);
+      const operation = client.ensurePullRequestReady({
+        cwd: "/repo",
+        repository: "example/repository",
+        pullRequestUrl: url,
+        headBranch: "agent/card",
+        expectedHeadSha: head,
+        expectedBody: "Reviewed body",
+      });
+      if (scenario === "current") {
+        await expect(operation).resolves.toBeUndefined();
+        expect(draft).toBe(false);
+      } else {
+        await expect(operation).rejects.toThrow("External fields changed before dispatch");
+        expect(draft).toBe(true);
+      }
+      expect(run).toHaveBeenCalledWith(
+        "/repo",
+        expect.arrayContaining(["view", "123", "--json", expect.stringContaining("headRefOid")]),
+      );
+    },
+  );
+
   it("fails closed if GitHub does not confirm draft status", async () => {
     const runGitHubCommand = vi
       .fn<RunGitHubCommand>()

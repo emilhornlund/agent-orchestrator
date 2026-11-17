@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { GitClient } from "../src/git/git-client.js";
 import { CommandRunner } from "../src/process/command-runner.js";
@@ -22,9 +22,13 @@ import type {
 } from "../src/task-session/task-execution-record.js";
 import { hasDueTaskSessionRecoveryWait } from "../src/orchestrator/run-orchestrator.js";
 import type { RunRecord } from "../src/task-session/run-record.js";
+import { transitionTaskExecutionRecord } from "../src/task-session/task-execution-transition.js";
+import { MalformedGitHubResponseError } from "../src/github/github-client.js";
+import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 
 let root: string;
 afterEach(() => {
+  vi.restoreAllMocks();
   if (root !== undefined) fs.rmSync(root, { recursive: true, force: true });
 });
 function fixture(phase: TaskExecutionPhase = "validation") {
@@ -123,8 +127,8 @@ function fixture(phase: TaskExecutionPhase = "validation") {
   return { project, store, git, sha, worktreePath, baseSnapshot, reconcile };
 }
 
-function canonicalSetupFixture() {
-  const f = fixture("planning");
+function canonicalSetupFixture(phase: "planning" | "ci" = "planning") {
+  const f = fixture(phase);
   const storageRoot = path.join(root, "canonical-state");
   const integrationId = JSON.stringify({
     trelloBoardId: "board",
@@ -162,13 +166,23 @@ function canonicalSetupFixture() {
     attemptId: "attempt-card",
     taskKind: "implementation",
     pinned,
-    lifecycle: "planning",
-    checkpoint: "planning",
-    publicationState: "none",
+    lifecycle: phase,
+    checkpoint: phase,
+    publicationState: phase === "ci" ? "open" : "none",
     operation: { id: null, kind: null, generation: 0 },
     wait: { reason: null, dependency: null, since: null, retryAt: null },
     owner: { instanceId: lease.instanceId, token: lease.token, generation: 1 },
-    resources: [],
+    resources:
+      phase === "ci"
+        ? [
+            {
+              kind: "pull-request",
+              id: "1",
+              path: "https://github.com/o/r/pull/1",
+              provenance: "test",
+            },
+          ]
+        : [],
     pendingOperations: [],
     queue: [],
     budgets: {},
@@ -184,6 +198,13 @@ function canonicalSetupFixture() {
   const authority = new ProjectRunAuthority(f.project.id, runStore, 1);
   const store = new TaskExecutionStore(storageRoot, f.project, authority);
   store.create(f.store.read("card")!);
+  if (phase === "ci")
+    authority.mutate(
+      "project-queue-project",
+      { version: 1, projectId: "project", revision: 1, activeEventId: null, events: [] },
+      (value) => ({ value, result: undefined }),
+      (value) => value,
+    );
   const reconcile = (snapshot: Partial<TaskSessionRecoverySnapshot> = {}, now?: () => number) =>
     reconcileTaskSession({
       project: f.project,
@@ -204,6 +225,174 @@ function canonicalSetupFixture() {
 }
 
 describe("reconcileTaskSession", () => {
+  it.each(["different-blocker", "active-writer", "unknown-process", "missing-pr"] as const)(
+    "does not clear an unsafe or unrelated published attention state (%s)",
+    async (kind) => {
+      const f = canonicalSetupFixture("ci");
+      const current = f.store.read("card")!;
+      const attention = transitionTaskExecutionRecord(current, {
+        type: "attention-required",
+        eventId: "legacy-read-error",
+        projectId: "project",
+        cardId: "card",
+        operationKey: "operation",
+        occurredAt: new Date().toISOString(),
+      });
+      f.store.compareAndSwap("card", current.revision, {
+        ...attention,
+        recoveryAttentionReason:
+          kind === "different-blocker"
+            ? "Owned worktree identity is uncertain"
+            : "Authoritative recovery snapshot could not be read: GitHub CLI returned an invalid commit statuses",
+        ...(kind === "missing-pr" ? { pullRequest: undefined } : {}),
+        ...(kind === "unknown-process"
+          ? {
+              primaryOperations: {
+                pending: {
+                  id: "pending",
+                  activity: "implementation",
+                  executions: 1,
+                  status: "ambiguous" as const,
+                  updatedAt: new Date().toISOString(),
+                },
+              },
+            }
+          : {}),
+      });
+      if (kind === "active-writer") {
+        const queue = new TaskMutationQueue(f.runStore.storageRoot, f.project, f.authority);
+        queue.enqueue({
+          projectId: "project",
+          cardId: "card",
+          eventId: "writer",
+          operationKey: "writer",
+          kind: "feedback",
+          enqueuedAt: new Date().toISOString(),
+        });
+        expect(queue.claimNext()?.eventId).toBe("writer");
+      }
+      expect(hasDueTaskSessionRecoveryWait(f.runStore.read())).toBe(false);
+      let reads = 0;
+      await expect(
+        f.authority.run(() =>
+          reconcileTaskSession({
+            project: f.project,
+            cardId: "card",
+            expectedBranch: "agent/card",
+            operationKey: "operation",
+            worktreePath: f.worktreePath,
+            taskRecordStore: f.store,
+            retryIntervalMs: 1000,
+            readAuthoritativeSnapshot: async () => {
+              reads += 1;
+              return { ...f.baseSnapshot, remoteBranchHeadSha: f.sha };
+            },
+          }),
+        ),
+      ).resolves.toMatchObject({ status: "attention-required" });
+      expect(reads).toBe(0);
+      expect(f.store.read("card")?.phase).toBe("attention-required");
+    },
+  );
+  it("paces unreadable GitHub snapshot responses without losing the resumable phase", async () => {
+    const f = fixture("ci");
+    const now = Date.now();
+    const result = await reconcileTaskSession({
+      project: f.project,
+      cardId: "card",
+      expectedBranch: "agent/card",
+      operationKey: "operation",
+      worktreePath: f.worktreePath,
+      taskRecordStore: f.store,
+      retryIntervalMs: 1000,
+      now: () => now,
+      readAuthoritativeSnapshot: async () => {
+        throw new MalformedGitHubResponseError("commit statuses");
+      },
+    });
+    expect(result).toMatchObject({ status: "waiting", checkpoint: "ci" });
+    expect(f.store.read("card")).toMatchObject({
+      phase: "ci",
+      recoveryWait: { kind: "dependency", retryAt: new Date(now + 1000).toISOString() },
+    });
+    await expect(
+      f.reconcile({ remoteBranchHeadSha: f.sha }, () => now + 1001),
+    ).resolves.toMatchObject({ status: "resume", phase: "ci" });
+  });
+  it.each([
+    "valid",
+    "unsafe-worktree",
+    "published-checkpoint",
+    "dirty-published-checkpoint",
+  ] as const)(
+    "reconciles an idle published read-contract escalation through its canonical checkpoint (%s)",
+    async (outcome) => {
+      const f = canonicalSetupFixture("ci");
+      const current = f.store.read("card")!;
+      const attention = transitionTaskExecutionRecord(current, {
+        type: "attention-required",
+        eventId: "snapshot-read-escalated",
+        projectId: "project",
+        cardId: "card",
+        operationKey: "operation",
+        occurredAt: new Date().toISOString(),
+      });
+      f.store.compareAndSwap("card", current.revision, {
+        ...attention,
+        recoveryAttentionReason:
+          "Authoritative recovery snapshot could not be read: GitHub CLI returned an invalid commit statuses",
+      });
+      const publicationCheckpoint = outcome.includes("published-checkpoint");
+      if (publicationCheckpoint) {
+        const escalated = f.store.read("card")!;
+        f.store.compareAndSwap("card", escalated.revision, {
+          ...escalated,
+          phase: "publication",
+          revision: escalated.revision + 1,
+          updatedAt: new Date(Date.now() + 1).toISOString(),
+        });
+        const revived = f.store.read("card")!;
+        f.store.compareAndSwap(
+          "card",
+          revived.revision,
+          transitionTaskExecutionRecord(revived, {
+            type: "attention-required",
+            eventId: "legacy-publication-revival-failed",
+            projectId: "project",
+            cardId: "card",
+            operationKey: "operation",
+            occurredAt: new Date(Date.now() + 2).toISOString(),
+          }),
+        );
+        f.authority.mutate(
+          "initial-publication-v1",
+          { version: 1, cardId: "card", branch: "agent/card", completed: true },
+          (value) => ({ value, result: undefined }),
+          (value) => value,
+        );
+      }
+      vi.spyOn(f.git, "getStatus").mockResolvedValue(
+        outcome === "dirty-published-checkpoint" ? " M source.ts" : "",
+      );
+      expect(f.runStore.read()!.checkpoint).toBe(publicationCheckpoint ? "publication" : "ci");
+      expect(hasDueTaskSessionRecoveryWait(f.runStore.read())).toBe(true);
+      const result = await f.authority.run(() =>
+        f.reconcile({ remoteBranchHeadSha: f.sha, worktreeExists: outcome !== "unsafe-worktree" }),
+      );
+      if (outcome === "valid" || outcome === "published-checkpoint") {
+        expect(result).toMatchObject({ status: "resume", phase: "ci" });
+        expect(f.store.read("card")).toMatchObject({
+          phase: "ci",
+          primarySessionId: "session",
+          retryCounters: { ci: 0, validation: 0 },
+        });
+      } else {
+        expect(result.status).toBe("attention-required");
+        expect(f.store.read("card")?.phase).toBe("attention-required");
+        expect(hasDueTaskSessionRecoveryWait(f.runStore.read())).toBe(false);
+      }
+    },
+  );
   it("retains the exact recovery blocker across later polls without releasing a missing worktree", async () => {
     const f = fixture("ci");
     const first = await f.reconcile({ worktreeExists: false });
@@ -1188,6 +1377,56 @@ describe("reconcileTaskSession", () => {
     const f = fixture();
     const result = await f.reconcile();
     expect(result).toMatchObject({ status: "resume", phase: "validation" });
+  });
+
+  it("lets the worker reconcile an unpublished pending terminal failure instead of abandoning its Working card", () => {
+    const f = fixture("attention-required");
+    const task = {
+      ...f.store.read("card")!,
+      terminalFailure: {
+        kind: "implementation" as const,
+        outcome: "pending" as const,
+        reason: "No meaningful task output",
+      },
+    };
+    const run = {
+      lifecycle: "waiting",
+      cardId: "card",
+      compatibility: { "task-execution-card": task },
+    } as unknown as RunRecord;
+    expect(hasDueTaskSessionRecoveryWait(run)).toBe(true);
+    expect(
+      hasDueTaskSessionRecoveryWait({
+        ...run,
+        compatibility: { "task-execution-card": { ...task, terminalFailure: undefined } },
+      }),
+    ).toBe(false);
+    expect(
+      hasDueTaskSessionRecoveryWait({
+        ...run,
+        compatibility: {
+          "task-execution-card": {
+            ...task,
+            pullRequest: {
+              number: 1,
+              url: "https://github.com/o/r/pull/1",
+              headSha: "a".repeat(40),
+            },
+          },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      hasDueTaskSessionRecoveryWait({
+        ...run,
+        compatibility: {
+          "task-execution-card": {
+            ...task,
+            terminalFailure: { ...task.terminalFailure, outcome: "confirmed" },
+          },
+        },
+      }),
+    ).toBe(false);
   });
 
   it("keeps the authoritative checkpoint recoverable when a dependency read fails", async () => {

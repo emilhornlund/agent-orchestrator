@@ -415,6 +415,14 @@ list to `Ready for Agent`; a cardless project-level block requires resolving the
 and restarting the worker. Authentication, malformed responses, unknown persisted data, or
 unsupported state are not treated as transient success.
 
+An unreadable GitHub recovery-snapshot response remains an explicit, paced read-only wait, not a
+successful check or permission to replay a write. Work resumes only after a complete snapshot
+verifies the task's external and local identities. Older idle open-PR tasks escalated solely for a
+GitHub read-contract failure can re-enter this reconciliation from their preserved canonical CI or
+Human Review checkpoint after an upgrade, provided no writer or external effect remains unresolved.
+Other attention blockers, missing PR identity, and uncertain active processes are not cleared by
+this recovery path; a newly detected worktree or history conflict remains paused.
+
 When investigating an `Attention Required` card, compare the durable record/queue with Trello list
 history, PR state and head, worktree branch/head/status, trusted commit, primary session, complete
 CI evidence, and unresolved feedback. Do not start a second task in the project while the current

@@ -821,8 +821,6 @@ export async function publishCard({
               publicationReviewResult,
             ) &&
             !unresolvedHumanRequests &&
-            readinessEvidence.validation?.status === "passed" &&
-            readinessEvidence.coverage?.status === "passed" &&
             readinessEvidence.review?.reviewedContentIdentity ===
               readinessEvidence.currentContentIdentity &&
             decideValidatedHumanReviewPublication(readinessEvidence).allowed &&

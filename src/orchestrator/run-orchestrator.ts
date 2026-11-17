@@ -67,6 +67,7 @@ import { hasPendingSessionCreation } from "../task-session/reconcile-session-cre
 import { isConclusiveOperationResolution } from "../task-session/run-record.js";
 import { isRetryableGitHubError } from "../github/github-client.js";
 import { isShutdownCancellation } from "../runtime/shutdown-cancellation.js";
+import { getLegacyPublishedGitHubReadRecoveryPhase } from "../task-session/reconcile-task-session.js";
 
 export function hasDueTaskSessionRecoveryWait(
   authorityRecord: import("../task-session/run-record.js").RunRecord | null,
@@ -77,6 +78,15 @@ export function hasDueTaskSessionRecoveryWait(
   if (projection === undefined) return false;
   const taskProjection = parseTaskExecutionRecord(projection);
   const recoveryWait = taskProjection.recoveryWait;
+  if (getLegacyPublishedGitHubReadRecoveryPhase(authorityRecord, taskProjection) !== null)
+    return true;
+  if (
+    taskProjection.phase === "attention-required" &&
+    taskProjection.terminalFailure?.outcome === "pending" &&
+    taskProjection.pullRequest === undefined &&
+    taskProjection.externalRecovery === undefined
+  )
+    return recoveryWait === undefined || now >= Date.parse(recoveryWait.retryAt);
   if (hasPendingSessionCreation(taskProjection))
     return recoveryWait === undefined || now >= Date.parse(recoveryWait.retryAt);
   return (
@@ -451,11 +461,11 @@ async function runProjectWorkerInner(
       authority: runContext.authority,
       intervalMs: pollIntervalMilliseconds,
       signal,
-      onError: () =>
+      onError: (_error, diagnosticReference) =>
         logger
           .child({ projectId: project.id })
           .warn(
-            "Active PR observation deferred; project state and retained arrivals are unchanged",
+            `Active PR observation deferred; project state and retained arrivals are unchanged; diagnostics: ${diagnosticReference ?? "unavailable"}`,
           ),
     },
     execute,

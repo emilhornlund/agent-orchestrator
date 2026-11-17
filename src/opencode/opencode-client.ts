@@ -382,7 +382,7 @@ export function extractOpenCodeTextOutput(output: string): string {
 }
 
 function hasStructuredProviderOutage(output: string): boolean {
-  for (const line of output.split(/\r?\n/u).slice(0, 128)) {
+  for (const line of output.split(/\r?\n/u)) {
     if (line.length > 16_384) continue;
     try {
       const event: unknown = JSON.parse(line);
@@ -402,7 +402,16 @@ function hasStructuredProviderOutage(output: string): boolean {
       const error = event.error as Record<string, unknown>;
       if (typeof error.data !== "object" || error.data === null) continue;
       const data = error.data as Record<string, unknown>;
-      if (error.name === "APIError" && [429, 502, 503, 504].includes(data.statusCode as number))
+      if (
+        error.name === "APIError" &&
+        [401, 403, 429, 502, 503, 504].includes(data.statusCode as number)
+      )
+        return true;
+      if (
+        error.name === "UnknownError" &&
+        typeof data.message === "string" &&
+        /^Token refresh failed: (?:401|403)$/u.test(data.message.trim())
+      )
         return true;
       const cause = data.cause;
       const causeCode =

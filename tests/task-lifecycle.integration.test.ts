@@ -38,6 +38,8 @@ import {
 import { readTerminalPrFence } from "../src/task-session/terminal-pr-fence.js";
 import { AiExecutionCapacity } from "../src/orchestrator/ai-execution-capacity.js";
 import { notificationAuthorityFixture } from "./support/notification-authority-fixture.js";
+import { Logger } from "../src/logging/logger.js";
+import { transitionTaskExecutionRecord } from "../src/task-session/task-execution-transition.js";
 
 const execFile = promisify(nodeExecFile);
 let roots: string[] = [];
@@ -45,6 +47,8 @@ let originalProcessPath: string | undefined;
 let originalPrimaryMode: string | undefined;
 const leases: ProjectOwnershipLease[] = [];
 interface LifecycleScenario {
+  publishedReadRecovery?: "ci" | "publication";
+  preparedValidationFailure?: boolean;
   draft: boolean;
   terminal: "merged" | "closed";
   destination: "done" | "backlog";
@@ -60,7 +64,13 @@ interface LifecycleScenario {
   ciBudget?: number;
   targetMerge?: boolean;
   feedbackReviewRecovery?:
-    "before-review" | "reserved" | "completed" | "validation" | "reviewed" | "unknown";
+    | "before-review"
+    | "active-validation"
+    | "reserved"
+    | "completed"
+    | "validation"
+    | "reviewed"
+    | "unknown";
   ciReviewRecovery?: "reserved" | "completed" | "validation" | "reviewed" | "unknown";
 }
 afterEach(async () => {
@@ -79,6 +89,22 @@ afterEach(async () => {
 
 describe("task lifecycle through pollProject", () => {
   it.each<LifecycleScenario>([
+    ...(["ci", "publication"] as const).map((publishedReadRecovery) => ({
+      draft: false,
+      terminal: "merged" as const,
+      destination: "done" as const,
+      ackLoss: false,
+      quality: "both" as const,
+      publishedReadRecovery,
+    })),
+    {
+      draft: false,
+      terminal: "merged",
+      destination: "done",
+      ackLoss: false,
+      quality: "both",
+      preparedValidationFailure: true,
+    },
     ...(["merged", "closed"] as const).map((terminal) => ({
       draft: false,
       terminal,
@@ -224,7 +250,15 @@ describe("task lifecycle through pollProject", () => {
       ciQuality,
     })),
     ...(
-      ["before-review", "reserved", "completed", "validation", "reviewed", "unknown"] as const
+      [
+        "before-review",
+        "active-validation",
+        "reserved",
+        "completed",
+        "validation",
+        "reviewed",
+        "unknown",
+      ] as const
     ).map((feedbackReviewRecovery) => ({
       draft: false,
       terminal: "merged" as const,
@@ -245,7 +279,7 @@ describe("task lifecycle through pollProject", () => {
       }),
     ),
   ] as const)(
-    "preserves the owned lifecycle (quality=$quality, draft=$draft, terminal=$terminal, ackLoss=$ackLoss, correctionFailure=$correctionFailure, feedbackQuality=$feedbackQuality, terminalDuringFeedback=$terminalDuringFeedback, preparedReview=$preparedReview, ciReviewHandoffs=$ciReviewHandoffs, feedbackReviewRecovery=$feedbackReviewRecovery, ciReviewRecovery=$ciReviewRecovery, ciQuality=$ciQuality, targetMerge=$targetMerge, ciBudget=$ciBudget)",
+    "preserves the owned lifecycle (quality=$quality, draft=$draft, terminal=$terminal, ackLoss=$ackLoss, correctionFailure=$correctionFailure, feedbackQuality=$feedbackQuality, terminalDuringFeedback=$terminalDuringFeedback, preparedReview=$preparedReview, ciReviewHandoffs=$ciReviewHandoffs, feedbackReviewRecovery=$feedbackReviewRecovery, ciReviewRecovery=$ciReviewRecovery, ciQuality=$ciQuality, targetMerge=$targetMerge, ciBudget=$ciBudget, preparedValidationFailure=$preparedValidationFailure, publishedReadRecovery=$publishedReadRecovery)",
     async ({
       draft,
       terminal,
@@ -257,6 +291,8 @@ describe("task lifecycle through pollProject", () => {
       terminalDuringFeedback,
       quality,
       preparedReview,
+      preparedValidationFailure,
+      publishedReadRecovery,
       ciReviewHandoffs = false,
       feedbackReviewRecovery,
       ciReviewRecovery,
@@ -264,6 +300,7 @@ describe("task lifecycle through pollProject", () => {
       targetMerge,
       ciBudget,
     }) => {
+      const progress = vi.spyOn(Logger.prototype, "event");
       // Restore the inherited environment even in scenarios without a scripted child.
       originalProcessPath = process.env.PATH;
       originalPrimaryMode = process.env.PRIMARY_MODE;
@@ -1421,6 +1458,16 @@ describe("task lifecycle through pollProject", () => {
       const commandOutcomes: string[] = [];
       const commands = new CommandRunner(async (options: CommandRunOptions) => {
         if (
+          preparedValidationFailure &&
+          options.command === project.repository.validationCommand &&
+          store.read("first")?.phase === "publication"
+        )
+          return {
+            exitCode: 42,
+            output: "Prepared validation failed after earlier passing checks",
+            errorOutput: "Observed prepared-stage failure",
+          };
+        if (
           ((feedbackQuality === "validation" && correctionFeedback) ||
             (ciQuality === "validation" && ciPrimaryCorrections > 0)) &&
           options.command === project.repository.validationCommand
@@ -1877,7 +1924,86 @@ describe("task lifecycle through pollProject", () => {
         expect(store.read("first")!.pullRequest!.headSha).toBe(maintained.pullRequest!.headSha);
         return;
       }
-      expect(firstPr?.isDraft).toBe(draft || preparedReview !== undefined);
+      expect(firstPr?.isDraft).toBe(
+        draft || preparedReview !== undefined || preparedValidationFailure === true,
+      );
+      const progressMessages = progress.mock.calls.map(([message]) => message);
+      if (publishedReadRecovery) {
+        const owner = authorities.get("first")!;
+        const taskStore = new TaskExecutionStore(contextRoot, project, owner);
+        const before = taskStore.read("first")!;
+        const escalate = () => {
+          const current = taskStore.read("first")!;
+          taskStore.compareAndSwap("first", current.revision, {
+            ...transitionTaskExecutionRecord(current, {
+              type: "attention-required",
+              eventId: `read-recovery-${current.revision}`,
+              projectId: project.id,
+              cardId: "first",
+              operationKey: current.operationKey,
+              occurredAt: new Date(
+                Math.max(Date.now() + 1, Date.parse(current.updatedAt) + 1),
+              ).toISOString(),
+            }),
+            recoveryAttentionReason:
+              "Authoritative recovery snapshot could not be read: GitHub CLI returned an invalid commit statuses",
+          });
+        };
+        escalate();
+        if (publishedReadRecovery === "publication") {
+          const current = taskStore.read("first")!;
+          taskStore.compareAndSwap("first", current.revision, {
+            ...current,
+            phase: "publication",
+            reviewObservation: undefined,
+            revision: current.revision + 1,
+            updatedAt: new Date(Date.now() + 2).toISOString(),
+          });
+          escalate();
+        }
+        await expect(poll()).resolves.toBeUndefined();
+        await expect(poll()).resolves.toBeUndefined();
+        expect(["ci", "human-feedback"]).toContain(taskStore.read("first")?.phase);
+        expect(taskStore.read("first")?.pullRequest).toEqual(before.pullRequest);
+        expect(taskStore.read("first")?.primarySessionId).toBe(before.primarySessionId);
+        expect(requests).toEqual([firstBranch]);
+        expect(prs.size).toBe(1);
+        expect(lists.get("first")).toBe("review");
+        expect(lists.get("next")).toBe("ready");
+        return;
+      }
+      if (draft) {
+        expect(
+          progressMessages.some((message) =>
+            message.startsWith("Local quality checks completed: validation failed;"),
+          ),
+        ).toBe(true);
+        expect(progressMessages).not.toContain("Validation passed");
+      }
+      if (quality === "none")
+        expect(
+          progressMessages.some((message) =>
+            message.startsWith(
+              "Local quality checks completed: validation skipped; coverage skipped;",
+            ),
+          ),
+        ).toBe(true);
+      if (preparedValidationFailure) {
+        expect(store.read("first")?.publicationQuality?.validation).toMatchObject({
+          status: "failed",
+          exitCode: 42,
+        });
+        expect(store.read("first")?.validationRepair).toMatchObject({
+          status: "exhausted",
+          stopReason: "prepared-check-failed",
+        });
+        expect(store.read("first")?.retryCounters.validation).toBe(0);
+        expect(firstPr?.body).toContain("failed");
+        expect(lists.get("first")).toBe("review");
+        expect(lists.get("next")).toBe("ready");
+        expect(prs.size).toBe(1);
+        return;
+      }
       if (preparedReview !== undefined) {
         expect(reviewerRounds).toBe(2);
         if (preparedReview === "material") {
@@ -2091,11 +2217,19 @@ describe("task lifecycle through pollProject", () => {
           );
           expect(readTerminalPrFence(owned)?.preserveArtifacts).toBe(true);
         } else {
+          const heartbeatPath = path.join(worktree, "writer-child.heartbeat");
           const running = poll();
           try {
             await vi.waitFor(
-              () => expect(fs.existsSync(path.join(worktree, "writer-started"))).toBe(true),
+              () => {
+                expect(fs.existsSync(path.join(worktree, "writer-started"))).toBe(true);
+                expect(fs.existsSync(heartbeatPath)).toBe(true);
+              },
               { timeout: 10_000 },
+            );
+            const initialHeartbeat = fs.readFileSync(heartbeatPath, "utf8");
+            await vi.waitFor(() =>
+              expect(fs.readFileSync(heartbeatPath, "utf8")).not.toBe(initialHeartbeat),
             );
             const boundary = ledger.length;
             await humanOutcome();
@@ -2121,12 +2255,12 @@ describe("task lifecycle through pollProject", () => {
               fs.readFileSync(operation.processMetadataPath!, "utf8"),
             ) as { treeStopped?: boolean };
             expect(execution.treeStopped).toBe(true);
-            expect(() =>
-              process.kill(
-                Number(fs.readFileSync(path.join(worktree, "writer-child.pid"), "utf8")),
-                0,
-              ),
-            ).toThrow();
+            // The child PID belongs to its private PID namespace; checking
+            // that number in the caller's namespace can identify an unrelated
+            // live process. Verify its actual work stopped instead.
+            const stoppedHeartbeat = fs.readFileSync(heartbeatPath, "utf8");
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            expect(fs.readFileSync(heartbeatPath, "utf8")).toBe(stoppedHeartbeat);
           } finally {
             lifecycleController.abort();
             await Promise.allSettled([running]);
@@ -2139,6 +2273,7 @@ describe("task lifecycle through pollProject", () => {
       }
       if (feedbackQuality !== undefined) {
         const originalHead = store.read("first")!.pullRequest!.headSha!;
+        const originalValidationCycle = store.read("first")!.validationRepair?.cycleId;
         firstPr!.body += "\n\nHuman-only deployment note.";
         correctionFeedback = true;
         if (feedbackQuality === "validation") {
@@ -2185,6 +2320,7 @@ describe("task lifecycle through pollProject", () => {
           return;
         }
         expect(corrected.pullRequest!.headSha).not.toBe(originalHead);
+        expect(corrected.validationRepair?.cycleId).not.toBe(originalValidationCycle);
         expect(
           await git.isAncestor(
             path.join(worktrees, firstWorktreeName),
@@ -2229,7 +2365,9 @@ describe("task lifecycle through pollProject", () => {
             const persisted = compare.call(this, cardId, revision, next);
             const repair = persisted.reviewRepair;
             if (
-              feedbackReviewRecovery === "before-review" &&
+              (feedbackReviewRecovery === "before-review" ||
+                (feedbackReviewRecovery === "active-validation" &&
+                  persisted.validationRepair?.status === "active")) &&
               persisted.feedbackRemediation?.status === "changed" &&
               persisted.phase === "validation" &&
               repair === undefined
@@ -2281,7 +2419,11 @@ describe("task lifecycle through pollProject", () => {
         });
         expect(feedbackPrimaryCorrections).toBe(1);
         const reservation = interrupted?.reviewRepair?.activePrimaryOperation;
-        if (feedbackReviewRecovery !== "reviewed" && feedbackReviewRecovery !== "before-review")
+        if (
+          feedbackReviewRecovery !== "reviewed" &&
+          feedbackReviewRecovery !== "before-review" &&
+          feedbackReviewRecovery !== "active-validation"
+        )
           expect(reservation).toBeDefined();
         const originalPrompt =
           reservation?.promptArtifact === undefined

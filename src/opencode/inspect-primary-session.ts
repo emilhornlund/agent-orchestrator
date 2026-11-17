@@ -1,5 +1,6 @@
 import path from "node:path";
-import type { CommandRunner } from "../process/command-runner.js";
+import { CommandRunAbortedError, type CommandRunner } from "../process/command-runner.js";
+import { isShutdownCancellation } from "../runtime/shutdown-cancellation.js";
 
 export interface ListedOpenCodeSession {
   id: string;
@@ -147,10 +148,13 @@ export async function inspectPrimaryOpenCodeSession(options: {
     if (matching.length === 0) return "confirmed-absent";
     return matching[0]!.directory === path.resolve(options.cwd) ? "reachable" : "conflict";
   } catch (error) {
+    if (isShutdownCancellation(error, options.signal))
+      // Preserve typed cancellation, but never retain raw runner diagnostics.
+      throw new CommandRunAbortedError();
     if (options.signal.aborted)
       // Do not retain the runner error: it may contain untrusted child output.
       // eslint-disable-next-line preserve-caught-error
-      throw new Error("OpenCode session inspection aborted");
+      throw new Error("OpenCode session inspection failed during shutdown");
     if (error instanceof OpenCodeSessionListError) throw error;
     return "unknown";
   }

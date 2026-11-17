@@ -13,6 +13,8 @@ import {
   implementationReviewResultSchema,
   hasUndisposedReviewConcerns,
 } from "../task-session/implementation-review-result.js";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import { FeedbackLedgerStore } from "../task-session/feedback-ledger-store.js";
 
 /** Repeatable presentation has no AI dispatch and can recover after a no-op or exhausted episode. */
 export async function refreshTaskSessionCiOutcome(options: {
@@ -44,7 +46,12 @@ export async function refreshTaskSessionCiOutcome(options: {
     );
   const episode = record.ciRepair;
   const quality = record.publicationQuality;
-  const review = implementationReviewResultSchema.safeParse(quality?.review);
+  const retainedReview = record.reviewRepair?.finalReview;
+  const reusableReview =
+    retainedReview?.reviewedContentIdentity === quality?.contentIdentity
+      ? retainedReview
+      : undefined;
+  const review = implementationReviewResultSchema.safeParse(quality?.review ?? reusableReview);
   const localEvidence = !quality
     ? null
     : {
@@ -81,23 +88,50 @@ export async function refreshTaskSessionCiOutcome(options: {
         review: null,
       }).allowed ||
       !review.success ||
+      review.data.reviewedContentIdentity !== quality.contentIdentity ||
       hasUndisposedReviewConcerns(
         review.data,
         record.reviewRepair?.findings ?? [],
         record.reviewRepair?.requirementDispositions ?? [],
       );
+  const authority = ProjectRunAuthority.current(project.id);
+  const feedback = authority
+    ? new FeedbackLedgerStore(authority.store.storageRoot, project, authority).read(card.id)
+    : null;
+  const unresolvedHumanRequests =
+    feedback?.entries.some(
+      (entry) =>
+        entry.actionability === "unclassified" ||
+        (entry.actionability === "actionable" &&
+          entry.status !== "closed" &&
+          (entry.unresolvedReason !== undefined ||
+            entry.verificationEvidence.length === 0 ||
+            !["verified", "published"].includes(entry.status))),
+    ) ?? false;
   await refreshPrAutomationOutcome({
     github,
     project,
     card,
     pullRequestUrl: record.pullRequest.url,
     headSha: record.pullRequest.headSha!,
-    draft:
-      evaluation.status !== "passed" ||
-      qualityUnresolved ||
-      ["exhausted", "stopped"].includes(episode?.status ?? ""),
+    draft: evaluation.status !== "passed" || qualityUnresolved || unresolvedHumanRequests,
+    ...(authority && record.expectedBranch && typeof github.ensurePullRequestReady === "function"
+      ? {
+          readiness: {
+            headBranch: record.expectedBranch,
+          },
+        }
+      : {}),
     facts: [
       ...ciOutcomeFacts(evaluation),
+      ...(quality?.review == null && reusableReview && review.success
+        ? [
+            "Reused the completed independent review of this exact source snapshot; no additional review execution is claimed.",
+          ]
+        : []),
+      ...(unresolvedHumanRequests
+        ? ["Human-requested changes remain unresolved or unverified."]
+        : []),
       ...(record.ciObservationWindow?.headSha === record.pullRequest.headSha &&
       record.ciObservationWindow.timedOut
         ? [

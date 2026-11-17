@@ -290,87 +290,99 @@ describe("Human Review attachment preparation", () => {
     expect(f.common.taskStore.read("card")?.phase).toBe("human-feedback");
   });
 
-  it("preserves a higher validation budget and used attempts when feedback publication stores fresh evidence", () => {
-    const f = fixture();
-    const current = f.common.taskStore.read(f.common.card.id);
-    if (current === null) throw new Error("Expected task record");
-    const identity = `sha256:${"c".repeat(64)}`;
-    const withPriorValidation = f.common.taskStore.compareAndSwap(
-      f.common.card.id,
-      current.revision,
-      {
-        ...current,
-        retryCounters: { ...current.retryCounters, validation: 3 },
-        validationRepair: {
-          cycleId: "operation",
-          status: "exhausted",
-          maxAttempts: 4,
-          stopReason: "no-change",
-          evidence: {
-            command: "yarn validate",
-            startedAt: "2026-10-24T09:00:00.000Z",
-            completedAt: "2026-10-24T09:01:00.000Z",
-            exitCode: 1,
-            status: "failed",
-            diagnostic: "Prior validation failure",
-            contentIdentity: identity,
-          },
-          coverageEvidence: {
-            command: "",
-            startedAt: "2026-10-24T09:00:00.000Z",
-            completedAt: "2026-10-24T09:00:00.000Z",
-            exitCode: null,
-            status: "skipped",
-            diagnostic: "Coverage is not configured",
-            contentIdentity: identity,
-          },
+  it.each(["passed", "failed", "new-failure"] as const)(
+    "records prepared quality honestly without discarding bounded recovery history (%s)",
+    (scenario) => {
+      const f = fixture();
+      const current = f.common.taskStore.read(f.common.card.id);
+      if (current === null) throw new Error("Expected task record");
+      const identity = `sha256:${"c".repeat(64)}`;
+      const withPriorValidation =
+        scenario === "new-failure"
+          ? current
+          : f.common.taskStore.compareAndSwap(f.common.card.id, current.revision, {
+              ...current,
+              retryCounters: { ...current.retryCounters, validation: 3 },
+              validationRepair: {
+                cycleId: "operation",
+                status: "exhausted",
+                maxAttempts: 4,
+                stopReason: "no-change",
+                evidence: {
+                  command: "yarn validate",
+                  startedAt: "2026-10-24T09:00:00.000Z",
+                  completedAt: "2026-10-24T09:01:00.000Z",
+                  exitCode: 1,
+                  status: "failed",
+                  diagnostic: "Prior validation failure",
+                  contentIdentity: identity,
+                },
+                coverageEvidence: {
+                  command: "",
+                  startedAt: "2026-10-24T09:00:00.000Z",
+                  completedAt: "2026-10-24T09:00:00.000Z",
+                  exitCode: null,
+                  status: "skipped",
+                  diagnostic: "Coverage is not configured",
+                  contentIdentity: identity,
+                },
+              },
+              revision: current.revision + 1,
+              updatedAt: new Date().toISOString(),
+            });
+      const validation = {
+        command: "yarn validate",
+        startedAt: "2026-10-24T09:02:00.000Z",
+        completedAt: "2026-10-24T09:03:00.000Z",
+        exitCode: scenario === "passed" ? 0 : 1,
+        status: scenario === "passed" ? ("passed" as const) : ("failed" as const),
+        timedOut: false,
+        aborted: false,
+        diagnostic:
+          scenario === "passed"
+            ? "Prepared feedback content passes validation"
+            : "Observed prepared-stage validation failure",
+        contentIdentity: identity,
+      };
+      const coverage = {
+        command: "",
+        startedAt: "2026-10-24T09:03:00.000Z",
+        completedAt: "2026-10-24T09:03:00.000Z",
+        exitCode: null,
+        status: "skipped" as const,
+        timedOut: false,
+        aborted: false,
+        diagnostic: "Coverage is not configured",
+        contentIdentity: identity,
+      };
+
+      const persisted = persistQualityEvidence(
+        f.common.taskStore,
+        withPriorValidation,
+        "feedback-operation",
+        validation,
+        coverage,
+      );
+
+      expect(persisted.retryCounters.validation).toBe(scenario === "new-failure" ? 0 : 3);
+      expect(persisted.validationRepair).toMatchObject({
+        cycleId: scenario === "new-failure" ? "feedback-operation" : "operation",
+        ...(scenario === "new-failure" ? {} : { maxAttempts: 4 }),
+        status: scenario === "passed" ? "passed" : "exhausted",
+        evidence: {
+          status: scenario === "passed" ? "passed" : "failed",
+          diagnostic:
+            scenario === "passed"
+              ? "Prepared feedback content passes validation"
+              : "Observed prepared-stage validation failure",
         },
-        revision: current.revision + 1,
-        updatedAt: new Date().toISOString(),
-      },
-    );
-    const validation = {
-      command: "yarn validate",
-      startedAt: "2026-10-24T09:02:00.000Z",
-      completedAt: "2026-10-24T09:03:00.000Z",
-      exitCode: 0,
-      status: "passed" as const,
-      timedOut: false,
-      aborted: false,
-      diagnostic: "Prepared feedback content passes validation",
-      contentIdentity: identity,
-    };
-    const coverage = {
-      command: "",
-      startedAt: "2026-10-24T09:03:00.000Z",
-      completedAt: "2026-10-24T09:03:00.000Z",
-      exitCode: null,
-      status: "skipped" as const,
-      timedOut: false,
-      aborted: false,
-      diagnostic: "Coverage is not configured",
-      contentIdentity: identity,
-    };
-
-    const persisted = persistQualityEvidence(
-      f.common.taskStore,
-      withPriorValidation,
-      "feedback-operation",
-      validation,
-      coverage,
-    );
-
-    expect(persisted.retryCounters.validation).toBe(3);
-    expect(persisted.validationRepair).toMatchObject({
-      cycleId: "operation",
-      maxAttempts: 4,
-      status: "passed",
-      evidence: {
-        status: "passed",
-        diagnostic: "Prepared feedback content passes validation",
-      },
-    });
-  });
+      });
+      if (scenario !== "passed")
+        expect(persisted.validationRepair?.stopReason).toBe(
+          scenario === "new-failure" ? "prepared-check-failed" : "no-change",
+        );
+    },
+  );
 
   it("skips attachment reconciliation across repeated idle polls", async () => {
     const f = fixture();

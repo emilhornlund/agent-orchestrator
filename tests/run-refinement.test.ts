@@ -220,6 +220,7 @@ describe("runRefinement", () => {
         variant: "xhigh",
         timeoutMilliseconds: 360 * 60_000,
         sessionLabel: "OpenCode refinement",
+        structuredOutput: true,
       }),
     );
   });
