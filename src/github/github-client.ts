@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { actionsJobIdentity, actionsFailureExcerpt } from "./actions-job-diagnostics.js";
 import { containedProcess, observeContainedProcess } from "../process/contained-process.js";
 import { StringDecoder } from "node:string_decoder";
 import { buildChildEnvironment } from "../process/child-environment.js";
@@ -1492,7 +1493,10 @@ export class GitHubClient {
         typeof value.head_sha !== "string" ||
         typeof value.status !== "string" ||
         (value.conclusion !== null && typeof value.conclusion !== "string") ||
-        (value.html_url !== null && typeof value.html_url !== "string")
+        (value.html_url !== null && typeof value.html_url !== "string") ||
+        (value.details_url !== undefined &&
+          value.details_url !== null &&
+          typeof value.details_url !== "string")
       ) {
         throw new MalformedGitHubResponseError("check runs", checkRunsResult.origin);
       }
@@ -1502,6 +1506,11 @@ export class GitHubClient {
           checkRunsResult.origin,
         );
       }
+      const actionsJobUrl =
+        typeof value.details_url === "string" &&
+        actionsJobIdentity(value.details_url, options.repository) !== null
+          ? value.details_url
+          : null;
       checks.push({
         source: "check-run",
         id: value.id,
@@ -1509,7 +1518,7 @@ export class GitHubClient {
         headSha: value.head_sha,
         status: value.status,
         conclusion: typeof value.conclusion === "string" ? value.conclusion : null,
-        url: typeof value.html_url === "string" ? value.html_url : null,
+        url: actionsJobUrl ?? (typeof value.html_url === "string" ? value.html_url : null),
       });
     }
 
@@ -1880,6 +1889,7 @@ export class GitHubClient {
         if (check.headSha !== options.headSha || !Number.isSafeInteger(check.id) || check.id <= 0) {
           throw new Error("Failed check diagnostics refer to a stale or unidentified check run");
         }
+        let result: FailedCheckDiagnostic;
         try {
           const runResult = await this.runWithOrigin(
             options.cwd,
@@ -1910,7 +1920,7 @@ export class GitHubClient {
             }
             return `${annotation.annotation_level}: ${annotation.path}:${annotation.start_line}: ${annotation.message}`;
           });
-          return {
+          result = {
             name: check.name,
             checkRunId: check.id,
             headSha: options.headSha,
@@ -1922,7 +1932,7 @@ export class GitHubClient {
             ),
           };
         } catch (error) {
-          return {
+          result = {
             name: check.name,
             checkRunId: check.id,
             headSha: options.headSha,
@@ -1934,6 +1944,60 @@ export class GitHubClient {
             ),
           };
         }
+        const job = actionsJobIdentity(check.url, options.repository);
+        if (job !== null) {
+          try {
+            const metadataResult = await this.runWithOrigin(
+              options.cwd,
+              ["api", `repos/${options.repository}/actions/jobs/${job.jobId}`],
+              credential,
+            );
+            const metadata: unknown = parseGitHubJson(
+              metadataResult.output,
+              metadataResult.origin,
+              "Actions job diagnostics identity",
+            );
+            if (
+              !isRecord(metadata) ||
+              metadata.id !== job.jobId ||
+              metadata.run_id !== job.runId ||
+              metadata.head_sha !== options.headSha ||
+              metadata.status !== "completed" ||
+              metadata.conclusion !== check.conclusion ||
+              typeof metadata.check_run_url !== "string" ||
+              metadata.check_run_url.toLowerCase() !==
+                `https://api.github.com/repos/${options.repository}/check-runs/${check.id}`.toLowerCase()
+            )
+              throw new MalformedGitHubResponseError(
+                "Actions job diagnostics identity",
+                metadataResult.origin,
+              );
+            const logs = await this.runWithOrigin(
+              options.cwd,
+              ["api", `repos/${options.repository}/actions/jobs/${job.jobId}/logs`],
+              credential,
+            );
+            if (logs.output.trim() === "") throw new Error("Actions job log was empty");
+            result = {
+              ...result,
+              available: true,
+              diagnostic: presentExternalDiagnostic(
+                `Actions job failure log (verified head ${options.headSha}):\n${actionsFailureExcerpt(logs.output)}\n\nCheck annotations:\n${result.diagnostic}`,
+                [...getProcessRuntime().secretValues, ...credential.secretValues],
+                14_000,
+              ),
+            };
+          } catch (error) {
+            result = {
+              ...result,
+              diagnostic: presentExternalDiagnostic(
+                `${result.diagnostic}\nActions job log unavailable: ${error instanceof Error ? error.message : String(error)}`,
+                [...getProcessRuntime().secretValues, ...credential.secretValues],
+              ),
+            };
+          }
+        }
+        return result;
       }),
     );
   }

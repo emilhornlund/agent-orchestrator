@@ -47,7 +47,14 @@ export function canResumeCiReviewRepair(
   const reservation = repair.activePrimaryOperation;
   if (reservation === undefined)
     return (
-      record.phase !== "implementation" && (event.status === "active" || repair.status === "passed")
+      record.phase !== "implementation" &&
+      (event.status === "active" ||
+        repair.status === "passed" ||
+        (event.status === "failed" &&
+          record.phase === "validation" &&
+          repair.status === "active" &&
+          ci.sourceIdentity !== undefined &&
+          (completedCi.resultArtifact !== undefined || completedCi.result?.exitCode === 0)))
     );
   const primary = record.primaryOperations?.[reservation.operationId];
   return (

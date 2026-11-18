@@ -32,6 +32,7 @@ export const taskExecutionEventTypes = [
   "pull-request-merged",
   "external-pull-request-reconciled",
   "ci-failed",
+  "ci-repair-ended",
   "feedback-received",
   "feedback-ci-failed",
   "feedback-replies-published",

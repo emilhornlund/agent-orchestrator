@@ -444,6 +444,19 @@ failures trigger the bounded primary-session CI repair cycle; complete passes ma
 feedback replies but never authorize merging. Open PRs remain active regardless of approval or CI
 status.
 
+CI repair diagnostics include check annotations and, for GitHub Actions job links, a bounded
+failure-focused job-log excerpt. Before downloading logs, the orchestrator verifies the repository,
+job/run IDs, check-run identity and exact commit SHA. Job logs require the configured GitHub
+identity to have Actions read access; denied, missing or mismatched logs remain explicitly
+unavailable and do not erase annotation evidence. Known credentials are redacted before diagnostics
+reach the agent. The orchestrator fetches this evidence; the agent does not need GitHub credentials
+or network access to retrieve the failing assertion itself.
+
+A successful CI correction that changes no source ends its episode through an explicit
+`ci-repair-ended` transition, preserving the existing PR and reporting `no-change` rather than an
+execution failure. Exhausted and early-finished episodes use the same authoritative handoff to human
+review. The repair's attempt budget is retained; a green CI rerun does not dispatch another repair.
+
 On review feedback, stable review/thread/comment identities remain in the durable task ledger
 through remediation and independent verification. Replies use the original GitHub conversation
 context and the observed published PR head, distinguishing verified fixes, unresolved requests and

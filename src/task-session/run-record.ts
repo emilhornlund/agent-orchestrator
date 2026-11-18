@@ -47,6 +47,7 @@ export const runEventTypes = [
   "review-completed",
   "publication-completed",
   "ci-observed",
+  "ci-repair-ended",
   "feedback-received",
   "human-review-entered",
   "implementation-correction",
@@ -78,6 +79,7 @@ export const runTransitionMatrix: Readonly<
   "review-completed": { review: "publication" },
   "publication-completed": { publication: "ci" },
   "ci-observed": { ci: "human-review" },
+  "ci-repair-ended": { ci: "human-review", validation: "human-review" },
   "feedback-received": { "human-review": "implementation" },
   "human-review-entered": { "human-feedback": "human-review" },
   "implementation-correction": {

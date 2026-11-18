@@ -853,6 +853,10 @@ export class RunStore {
       : lifecycleTransition;
     if (effectiveTransition) {
       const { event, to } = effectiveTransition;
+      if (event === "ci-repair-ended" && current.publicationState !== "open")
+        throw new RunStoreConflictError(
+          "CI repair completion requires an existing open publication",
+        );
       if (
         to !== "waiting" &&
         !options.terminal &&
@@ -1019,6 +1023,8 @@ export class RunStore {
         "An open or uncertain PR cannot be terminally failed; preserve as operational blockage",
       );
     const matrixTarget = runTransitionMatrix[event]?.[from];
+    if (event === "ci-repair-ended" && current.publicationState !== "open")
+      throw new RunStoreConflictError("CI repair completion requires an existing open publication");
     if (matrixTarget === undefined)
       throw new Error(`Forbidden transition event/source pair: ${event} from ${from}`);
     const terminalObservation = [

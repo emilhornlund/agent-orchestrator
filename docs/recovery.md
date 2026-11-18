@@ -276,6 +276,24 @@ comment resend or code disposal.
 
 ## CI waiting, failure, and repair
 
+Older versions could finish an unchanged CI correction successfully and then fail its handoff with
+`CI repair did not complete; PR and task state are preserved`. The task could remain in `validation`
+with an active CI reservation and a failed queue event, even though its primary operation had
+completed. That retained checkpoint is now routed back to its exact owning CI episode after normal
+PR/worktree/session verification. The saved successful primary result is verified, the source
+identity is checked again, and unchanged output ends the cycle without replaying the agent,
+rerunning local review or creating another commit. This recovery also applies when CI has since
+passed on the same head; current CI observations still determine the disclosed PR outcome.
+
+Keep the existing PR, worktree and state when upgrading.
+`CI repair stopped (no-change); existing PR remains available for human review` indicates the old
+completion has been reconciled. The same failed CI result cannot restart a stopped episode
+automatically; a deliberate new human request is required to authorize further correction.
+Unknown/unsuccessful primary results and mismatched episode/head identities remain fenced. Actual
+repair failures now include a bounded, redacted cause in their summary;
+`Active PR observation deferred (timeout)` remains a separate paced read failure with its detailed
+artifact reference, not evidence that a correction failed.
+
 CI expectations come from available branch-protection rules and reliable static repository workflow
 contracts. Check runs and commit statuses are observed for the exact persisted PR head.
 Conditional/dynamic workflow contracts, inaccessible policy, empty expectations, delayed check

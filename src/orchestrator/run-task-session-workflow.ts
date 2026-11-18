@@ -3400,7 +3400,9 @@ async function runTaskSessionWorkflowAttempt(
             ? "CI repair succeeded"
             : ciResult.status === "waiting"
               ? "CI repair published; awaiting current-head checks"
-              : "CI repair failed",
+              : ciResult.status === "stopped"
+                ? `CI repair stopped (${ciResult.reason}); existing PR remains available for human review`
+                : "CI repair exhausted; existing PR remains available for human review",
         );
       if (ciResult.status === "passed") {
         const latest = taskStore.read(card.id);

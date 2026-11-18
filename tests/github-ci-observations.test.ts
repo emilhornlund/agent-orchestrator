@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { GitHubClient, type RunGitHubCommand } from "../src/github/github-client.js";
 import { establishCiCheckExpectations } from "../src/github/ci-check-expectations.js";
 import { evaluateCiChecks } from "../src/github/evaluate-ci-checks.js";
+import type { ProjectConfig } from "../src/config/config.js";
 
 let root: string;
 afterEach(() => {
@@ -46,6 +47,71 @@ function withWorkflowApi(command: RunGitHubCommand): RunGitHubCommand {
 }
 
 describe("GitHubClient.getCiObservations", () => {
+  it.each([true, false])(
+    "connects observed check details to same-head Actions logs only for the owned repository (trusted=%s)",
+    async (trusted) => {
+      const cwd = workingDirectory();
+      const jobUrl = "https://github.com/owner/repo/actions/runs/12/job/34";
+      const run = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
+        const endpoint = args.at(-1)!;
+        if (endpoint.includes("/check-runs?"))
+          return JSON.stringify([
+            {
+              check_runs: [
+                {
+                  id: 42,
+                  name: "Frontend E2E",
+                  head_sha: headSha,
+                  status: "completed",
+                  conclusion: "failure",
+                  html_url: "https://github.com/owner/repo/runs/42",
+                  details_url: trusted
+                    ? jobUrl
+                    : "https://github.com/other/repo/actions/runs/12/job/34",
+                },
+              ],
+            },
+          ]);
+        if (endpoint.includes("/statuses?")) return "[[]]";
+        if (endpoint.includes("/protection/"))
+          return JSON.stringify({ contexts: ["Frontend E2E"], checks: [] });
+        if (endpoint.includes("/annotations?")) return "[[]]";
+        if (endpoint.endsWith("/actions/jobs/34"))
+          return JSON.stringify({
+            id: 34,
+            run_id: 12,
+            head_sha: headSha,
+            status: "completed",
+            conclusion: "failure",
+            check_run_url: "https://api.github.com/repos/owner/repo/check-runs/42",
+          });
+        if (endpoint.endsWith("/actions/jobs/34/logs"))
+          return "1) [chromium] › GameJoinAvatar.spec.ts\nError: waiting for Game PIN\nat GameJoinAvatar.spec.ts:197";
+        throw new Error(`Unexpected endpoint ${endpoint}`);
+      });
+      const github = new GitHubClient(withWorkflowApi(run));
+      const observation = await github.getCiObservations({
+        cwd,
+        repository: "owner/repo",
+        defaultBranch: "main",
+        headSha,
+      });
+      expect(observation.checks[0]?.url).toBe(
+        trusted ? jobUrl : "https://github.com/owner/repo/runs/42",
+      );
+      const diagnostics = await github.getCiCheckRunDiagnostics({
+        cwd,
+        repository: "owner/repo",
+        headSha,
+        checks: observation.checks.filter((check) => check.source === "check-run"),
+        project: { id: "p", repository: { github: "owner/repo" } } as ProjectConfig,
+      });
+      expect(diagnostics[0]?.available).toBe(trusted);
+      expect(run.mock.calls.some(([, args]) => args.at(-1)?.endsWith("/logs"))).toBe(trusted);
+      if (trusted) expect(diagnostics[0]?.diagnostic).toContain("GameJoinAvatar.spec.ts:197");
+    },
+  );
+
   it.each(["static-new-check", "undiscovered-workflow", "latest-run"] as const)(
     "evaluates exact-revision workflow contracts without substituting unrelated runtime coverage: %s",
     async (scenario) => {

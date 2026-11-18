@@ -233,7 +233,9 @@ export function taskEnvironmentSecretValues(
   const values = resolveTaskEnvironment(mapping, parent);
   return Object.entries(mapping)
     .filter(([target, source]) =>
-      /KEY|TOKEN|PASSWORD|SECRET|CREDENTIAL|AUTH|DSN|URL/iu.test(`${target} ${source}`),
+      /KEY|TOKEN|PASSWORD|SECRET|CREDENTIAL|AUTH|DSN|URL|URI(?:_|\s|$)/iu.test(
+        `${target} ${source}`,
+      ),
     )
     .map(([target]) => values[target]!);
 }

@@ -117,6 +117,39 @@ const transitionCells = runEventTypes.flatMap((event) =>
 );
 
 describe("RunStore authoritative foundation", () => {
+  it.each(["ci", "validation"] as const)(
+    "cannot end CI repair from %s without an existing open PR",
+    (source) => {
+      const base = setup();
+      const store = new RunStore(
+        base.identity.storageRoot,
+        "no-open-pr",
+        base.identity,
+        base.lease,
+      );
+      store.create({
+        ...fixture(base.identity),
+        attemptId: "no-open-pr",
+        lifecycle: source,
+        checkpoint: source,
+      });
+      expect(() =>
+        store.transition(1, 1, null, "ci-repair-ended", source, "human-review", (run) => run),
+      ).toThrow("requires an existing open publication");
+      expect(() =>
+        store.mutateCompatibility({
+          expectedRevision: 1,
+          expectedOwnerGeneration: 1,
+          key: "test",
+          current: () => ({ value: {}, result: undefined }),
+          validate: (value) => value,
+          lifecycleTransition: { event: "ci-repair-ended", to: "human-review" },
+        }),
+      ).toThrow("requires an existing open publication");
+      expect(store.read()?.lifecycle).toBe(source);
+    },
+  );
+
   it.each(["unpointed", "wrong-hash", "own", "multiple", "other"] as const)(
     "retains the unreadable-attempt fence unless exactly one other canonical pointer owns it (%s)",
     (ownership) => {
@@ -233,7 +266,9 @@ describe("RunStore authoritative foundation", () => {
         lifecycle: source,
         checkpoint:
           source === "waiting" ? (event === "wait-resumed" ? target : "planning") : source,
-        publicationState: ["merged", "closed-unmerged", "cancelled"].includes(event)
+        publicationState: ["merged", "closed-unmerged", "cancelled", "ci-repair-ended"].includes(
+          event,
+        )
           ? ("open" as const)
           : ("none" as const),
         wait:
