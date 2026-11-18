@@ -56,6 +56,14 @@ const taskExecutionEventSchema = z.discriminatedUnion("type", [
     type: z.literal("external-pull-request-reconciled"),
   }),
   eventIdentitySchema.extend({ type: z.literal("ci-failed") }),
+  eventIdentitySchema.extend({
+    type: z.literal("ci-repair-ended"),
+    reason: z.enum(["no-change", "finished-early", "attempt-limit"]),
+    contentIdentity: z
+      .string()
+      .regex(/^sha256:[0-9a-f]{64}$/u)
+      .optional(),
+  }),
   eventIdentitySchema.extend({ type: z.literal("feedback-received") }),
   eventIdentitySchema.extend({ type: z.literal("feedback-ci-failed") }),
   eventIdentitySchema.extend({
@@ -114,6 +122,7 @@ const phaseTransitions: Record<
     to: "done",
   },
   "ci-failed": { from: "ci", to: "implementation" },
+  "ci-repair-ended": { from: ["ci", "validation"], to: "human-feedback" },
   "feedback-received": { from: "human-feedback", to: "implementation" },
   "feedback-ci-failed": { from: "human-feedback", to: "ci" },
   "feedback-replies-published": { from: "human-feedback", to: "ci" },
@@ -191,8 +200,44 @@ export function transitionTaskExecutionRecord(
     );
   }
 
+  if (event.type === "ci-repair-ended") {
+    const ci = record.ciRepair;
+    const operation = ci?.activePrimaryOperation;
+    const primary = operation && record.primaryOperations?.[operation.operationId];
+    if (
+      !record.pullRequest ||
+      ci?.status !== "active" ||
+      ci.headSha !== record.pullRequest.headSha ||
+      (event.reason !== "no-change" && (record.phase !== "ci" || operation !== undefined)) ||
+      (event.reason === "no-change" &&
+        (!operation ||
+          !event.contentIdentity ||
+          operation.sourceIdentity !== event.contentIdentity ||
+          operation.pass !== record.retryCounters.ci ||
+          operation.operationId !== `${ci.cycleId}:pass:${operation.pass}` ||
+          primary?.status !== "completed" ||
+          primary.activity !== "ci-correction" ||
+          (primary.role !== undefined && primary.role !== "primary") ||
+          (primary.resultArtifact === undefined && primary.result?.exitCode !== 0)))
+    )
+      throw new TaskExecutionTransitionError(
+        "CI repair completion lacks its owned PR or completed unchanged correction",
+      );
+  }
+
   const nextRecord = parseTaskExecutionRecord({
     ...record,
+    ...(event.type === "ci-repair-ended"
+      ? {
+          ciRepair: {
+            ...record.ciRepair!,
+            status: event.reason === "attempt-limit" ? "exhausted" : "stopped",
+            activePrimaryOperation: undefined,
+            stopReason: event.reason === "attempt-limit" ? undefined : event.reason,
+          },
+          ...(event.reason === "no-change" ? { reviewRepair: undefined } : {}),
+        }
+      : {}),
     phase: destinationPhase,
     ...(destinationPhase !== "human-feedback" && record.feedbackRemediation?.status === "active"
       ? { feedbackRemediation: undefined }

@@ -4,9 +4,15 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
 import type { CiCheckEvaluation } from "../src/github/evaluate-ci-checks.js";
-import { runTaskSessionCiRepairs } from "../src/task-session/run-task-session-ci-repairs.js";
+import {
+  runTaskSessionCiRepairs,
+  type RunTaskSessionCiRepairsOptions,
+} from "../src/task-session/run-task-session-ci-repairs.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import { ciRepairEventId } from "../src/task-session/ci-repair-event-id.js";
+import { createPublicationFixture } from "./support/initial-publication-fixture.js";
+import { transitionTaskExecutionRecord } from "../src/task-session/task-execution-transition.js";
+import { registerProcessSecrets } from "../src/process/process-runtime.js";
 
 let root: string;
 afterEach(() => {
@@ -70,7 +76,26 @@ function fixture() {
     expectedPrimarySessionId: "session",
     headSha: sha,
     collectDiagnostics: vi.fn(async () => []),
-    repairPrimarySession: vi.fn(async () => undefined),
+    repairPrimarySession: vi.fn(
+      async (_diagnostics: unknown, _pass: number, _session: string, operationId: string) => {
+        const current = store.read("card")!;
+        store.compareAndSwap("card", current.revision, {
+          ...current,
+          primaryOperations: {
+            ...current.primaryOperations,
+            [operationId]: {
+              id: operationId,
+              activity: "ci-correction",
+              status: "completed",
+              executions: 1,
+              result: { exitCode: 0, output: "completed", errorOutput: "" },
+              updatedAt: current.updatedAt,
+            },
+          },
+          revision: current.revision + 1,
+        });
+      },
+    ),
     rerunLocalGatesAndReview: vi.fn(async () => undefined),
     publishSamePullRequest: vi.fn(async () => "b".repeat(40)),
   };
@@ -78,6 +103,151 @@ function fixture() {
 }
 
 describe("runTaskSessionCiRepairs", () => {
+  it.each([false, true])(
+    "finishes a successful unchanged CI correction under canonical ownership without replay (recover retained completion=%s)",
+    async (recoverCompletion) => {
+      root = fs.mkdtempSync(path.join(os.tmpdir(), "canonical-ci-no-change-"));
+      const f = createPublicationFixture(root);
+      const sha = await f.git.getHeadSha(f.worktreePath);
+      const rerun = vi.fn(async () => undefined);
+      const publish = vi.fn(async () => sha);
+      await f.authority.run(async () => {
+        const store = new TaskExecutionStore(f.project.contextRoot, f.project);
+        const current = store.read("card")!;
+        const event = (
+          record: typeof current,
+          type: "publication-completed" | "ci-failed" | "implementation-completed",
+        ) => {
+          const base = {
+            eventId: `${record.operationKey}:${type}:${record.revision}`,
+            projectId: f.project.id,
+            cardId: "card",
+            operationKey: record.operationKey,
+            occurredAt: new Date(
+              Math.max(Date.now(), Date.parse(record.updatedAt) + 1),
+            ).toISOString(),
+          };
+          return type === "publication-completed"
+            ? {
+                ...base,
+                type,
+                pullRequest: {
+                  number: 1,
+                  url: "https://github.com/owner/repo/pull/1",
+                  headSha: sha,
+                },
+              }
+            : { ...base, type };
+        };
+        store.compareAndSwap(
+          "card",
+          current.revision,
+          transitionTaskExecutionRecord(current, event(current, "publication-completed")),
+        );
+        let primaryCalls = 0;
+        const options: RunTaskSessionCiRepairsOptions = {
+          store,
+          projectId: f.project.id,
+          cardId: "card",
+          operationKey: "operation",
+          expectedPrimarySessionId: "primary",
+          headSha: sha,
+          getSourceIdentity: async () => `sha256:${"a".repeat(64)}`,
+          observeChecks: async () => ({
+            status: "failed",
+            expectedHeadSha: sha,
+            expectedCheckNames: ["Frontend E2E"],
+            failures: [
+              {
+                source: "check-run",
+                id: 1,
+                name: "Frontend E2E",
+                headSha: sha,
+                status: "completed",
+                conclusion: "failure",
+                url: null,
+              },
+            ],
+          }),
+          collectDiagnostics: async () => [],
+          repairPrimarySession: async (_diagnostics, _pass, _session, operationId) => {
+            primaryCalls += 1;
+            let record = store.read("card")!;
+            record = store.compareAndSwap(
+              "card",
+              record.revision,
+              transitionTaskExecutionRecord(record, event(record, "ci-failed")),
+            );
+            record = store.compareAndSwap("card", record.revision, {
+              ...record,
+              primaryOperations: {
+                [operationId]: {
+                  id: operationId,
+                  activity: "ci-correction",
+                  role: "primary",
+                  status: "completed",
+                  executions: 1,
+                  resultArtifact: store.writePrimaryResultArtifact(operationId, {
+                    exitCode: 0,
+                    output: "No changes\nCI_REPAIR_FINISHED_EARLY",
+                    errorOutput: "",
+                  }),
+                  updatedAt: record.updatedAt,
+                },
+              },
+              reviewRepair: {
+                cycleId: "operation:ci-review:operation:ci",
+                status: "active",
+                maxAttempts: 1,
+              },
+              revision: record.revision + 1,
+            });
+            store.compareAndSwap(
+              "card",
+              record.revision,
+              transitionTaskExecutionRecord(record, event(record, "implementation-completed")),
+            );
+            if (recoverCompletion) throw new Error("Simulated older completion-transition failure");
+            return { finishEarly: true };
+          },
+          rerunLocalGatesAndReview: rerun,
+          publishSamePullRequest: publish,
+        };
+        if (recoverCompletion) {
+          await expect(runTaskSessionCiRepairs(options)).rejects.toThrow(
+            "CI repair did not complete",
+          );
+          expect(store.read("card")?.phase).toBe("validation");
+        }
+        const result = await runTaskSessionCiRepairs({
+          ...options,
+          store: new TaskExecutionStore(f.project.contextRoot, f.project, f.authority),
+          resumeReviewRepair: recoverCompletion,
+          // A CI rerun may already be green while the old completion is retained.
+          ...(recoverCompletion
+            ? {
+                observeChecks: async () => ({
+                  status: "passed" as const,
+                  expectedHeadSha: sha,
+                  expectedCheckNames: ["Frontend E2E"],
+                }),
+              }
+            : {}),
+        });
+        expect(result).toMatchObject({ status: "stopped", reason: "no-change", attempts: 1 });
+        expect(store.read("card")).toMatchObject({
+          phase: "human-feedback",
+          ciRepair: { status: "stopped", stopReason: "no-change" },
+          pullRequest: { headSha: sha },
+        });
+        expect(f.store.read()?.lifecycle).toBe("human-review");
+        expect(primaryCalls).toBe(1);
+      });
+      expect(rerun).not.toHaveBeenCalled();
+      expect(publish).not.toHaveBeenCalled();
+    },
+  );
+
   it("gives a verified same-head human retry a new queue identity and episode without changing its primary session", async () => {
     const f = fixture();
     const record = f.store.read("card")!;
@@ -111,6 +281,30 @@ describe("runTaskSessionCiRepairs", () => {
       "session",
       expect.stringContaining("explicit-retry"),
     );
+  });
+
+  it("reports a bounded redacted cause when a correction cannot complete", async () => {
+    const f = fixture();
+    const secret = "ci-cause-private-value";
+    registerProcessSecrets([secret]);
+    const cause = new Error(`State transition failed ${secret} ${"details ".repeat(1000)}`);
+    try {
+      await runTaskSessionCiRepairs({
+        ...f.base,
+        observeChecks: async (sha) => f.evaluation(sha, "failed"),
+        repairPrimarySession: async () => {
+          throw cause;
+        },
+      });
+      expect.fail("Expected the correction failure to be reported");
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      const failure = error as Error;
+      expect(failure.cause).toBe(cause);
+      expect(failure.message).toContain("State transition failed [REDACTED]");
+      expect(failure.message).not.toContain(secret);
+      expect(failure.message.length).toBeLessThan(1000);
+    }
   });
   it("ends unchanged correction without quality reruns, artificial commits or another pass", async () => {
     const f = fixture();

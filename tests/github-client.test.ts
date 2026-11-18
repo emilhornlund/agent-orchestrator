@@ -633,6 +633,72 @@ describe("GitHubClient", () => {
     expect(result[0]?.diagnostic).toContain("Resource not accessible");
   });
 
+  it.each(["available", "stale", "denied"] as const)(
+    "collects verified-head Actions job logs with explicit fallback (%s)",
+    async (outcome) => {
+      const headSha = "a".repeat(40);
+      const secret = "private-actions-log-secret";
+      registerProcessSecrets([secret]);
+      const run = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
+        const endpoint = args.at(-1)!;
+        if (endpoint.includes("/annotations?"))
+          return JSON.stringify([
+            [
+              {
+                annotation_level: "failure",
+                path: ".github",
+                start_line: 1,
+                message: "Process completed with exit code 1",
+              },
+            ],
+          ]);
+        if (endpoint.endsWith("/actions/jobs/34"))
+          return JSON.stringify({
+            id: 34,
+            run_id: 12,
+            head_sha: outcome === "stale" ? "b".repeat(40) : headSha,
+            status: "completed",
+            conclusion: "failure",
+            check_run_url: "https://api.github.com/repos/owner/repo/check-runs/42",
+          });
+        if (endpoint.endsWith("/actions/jobs/34/logs")) {
+          if (outcome === "denied") throw new Error("HTTP 403: Actions read permission required");
+          return `${"setup noise\n".repeat(1000)}1) [chromium] › GameJoinAvatar.spec.ts\nError: locator.fill timed out ${secret}\nwaiting for Game PIN\nat GameJoinAvatar.spec.ts:197\n${"Post job cleanup.\n".repeat(1000)}`;
+        }
+        throw new Error(`Unexpected diagnostics endpoint ${endpoint}`);
+      });
+      const result = await new GitHubClient(run).getCiCheckRunDiagnostics({
+        cwd: "/repo",
+        repository: "owner/repo",
+        headSha,
+        checks: [
+          {
+            source: "check-run",
+            id: 42,
+            name: "Frontend E2E",
+            headSha,
+            status: "completed",
+            conclusion: "failure",
+            url: "https://github.com/owner/repo/actions/runs/12/job/34",
+          },
+        ],
+        project: { id: "p", repository: { github: "owner/repo" } } as ProjectConfig,
+      });
+      expect(result[0]?.diagnostic).not.toContain(secret);
+      if (outcome === "available") {
+        expect(result[0]?.diagnostic).toContain("GameJoinAvatar.spec.ts:197");
+        expect(result[0]?.diagnostic).toContain("[REDACTED]");
+        expect(result[0]?.diagnostic).toContain("Process completed with exit code 1");
+        expect(result[0]?.diagnostic.length).toBeLessThanOrEqual(14_000);
+      } else {
+        expect(result[0]?.diagnostic).toContain("Actions job log unavailable");
+        expect(result[0]?.diagnostic).toContain("Process completed with exit code 1");
+        if (outcome === "stale")
+          expect(run.mock.calls.some(([, args]) => args.at(-1)?.endsWith("/logs"))).toBe(false);
+      }
+    },
+  );
+
   it("rejects stale heads and reports malformed annotation payloads as unavailable", async () => {
     const headSha = "a".repeat(40);
     const project = {

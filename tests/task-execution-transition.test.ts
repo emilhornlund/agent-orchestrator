@@ -67,6 +67,69 @@ function createEvent(
 }
 
 describe("transitionTaskExecutionRecord", () => {
+  it("requires the completed owned primary and unchanged source to end CI without publication", () => {
+    const identity = `sha256:${"a".repeat(64)}`;
+    const cycleId = "operation-one:ci";
+    const operationId = `${cycleId}:pass:1`;
+    const record: TaskExecutionRecord = {
+      ...createRecord("ci"),
+      retryCounters: { ...createRecord("ci").retryCounters, ci: 1 },
+      ciRepair: {
+        cycleId,
+        status: "active",
+        headSha: "a".repeat(40),
+        activePrimaryOperation: { operationId, pass: 1, sourceIdentity: identity },
+      },
+      primaryOperations: {
+        [operationId]: {
+          id: operationId,
+          activity: "ci-correction",
+          role: "primary",
+          status: "completed",
+          executions: 1,
+          updatedAt: timestamp,
+          result: { exitCode: 0, output: "CI_REPAIR_FINISHED_EARLY", errorOutput: "" },
+        },
+      },
+    };
+    const event = createEvent("ci-repair-ended", {
+      reason: "no-change",
+      contentIdentity: identity,
+    });
+    expect(transitionTaskExecutionRecord(record, event)).toMatchObject({
+      phase: "human-feedback",
+      ciRepair: { status: "stopped", stopReason: "no-change" },
+    });
+    expect(() =>
+      transitionTaskExecutionRecord(record, {
+        ...event,
+        type: "ci-repair-ended",
+        reason: "no-change",
+        contentIdentity: `sha256:${"b".repeat(64)}`,
+      }),
+    ).toThrow("completed unchanged correction");
+    expect(() =>
+      transitionTaskExecutionRecord({ ...record, primaryOperations: {} }, event),
+    ).toThrow("completed unchanged correction");
+    expect(() =>
+      transitionTaskExecutionRecord(
+        {
+          ...record,
+          primaryOperations: {
+            [operationId]: { ...record.primaryOperations![operationId]!, role: "advisory" },
+          },
+        },
+        event,
+      ),
+    ).toThrow("completed unchanged correction");
+    expect(() =>
+      transitionTaskExecutionRecord(
+        { ...record, phase: "validation" },
+        createEvent("ci-repair-ended", { reason: "finished-early" }),
+      ),
+    ).toThrow("owned PR");
+  });
+
   it("preserves changed feedback-remediation ownership across correction phases", () => {
     const changedFeedback = {
       operationId: "feedback:requested-change",

@@ -68,14 +68,21 @@ projects:
       REDIS_PORT: KLURIGO_TEST_REDIS_PORT
       MONGODB_HOST: KLURIGO_TEST_MONGODB_HOST
       MONGODB_PORT: KLURIGO_TEST_MONGODB_PORT
+      MONGODB_URI: KLURIGO_TEST_MONGODB_URI
+      REDIS_URL: KLURIGO_TEST_REDIS_URL
     # ...the project's remaining configuration...
 ```
 
-Define the four source variables in the service's protected environment or Compose `environment`:
-for example, `KLURIGO_TEST_REDIS_HOST=test-redis`. Only Klurigo receives these variables, under the
+Define the source variables in the service's protected environment or Compose `environment`: for
+example, `KLURIGO_TEST_REDIS_HOST=test-redis`. Only Klurigo receives these variables, under the
 names expected by its application. Another project may map the same child name to a different
 source, or omit it entirely. Omitting `taskEnvironment` (or using `{}`) preserves the minimal
 default.
+
+In Klurigo, the Nest application uses the host/port settings, while standalone E2E reset/seed hooks
+use `MONGODB_URI` and `REDIS_URL`. Supply both forms for browser E2E validation. The MongoDB URI
+must target the disposable test database, and the Redis base URL must omit its database suffix
+because the E2E helper appends `REDIS_DB` (default `1`).
 
 The mapping applies to that project's setup, validation/coverage, OpenCode sessions and tool
 descendants, including corrections, PR maintenance and future dispatches after restart. Source

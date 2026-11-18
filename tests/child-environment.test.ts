@@ -155,16 +155,18 @@ describe("child process environment manifests", () => {
       taskEnvironmentSecretValues(
         {
           DATABASE_URL: "PROJECT_DATABASE",
+          MONGODB_URI: "PROJECT_MONGO",
           APP_VALUE: "PROJECT_SECRET",
           REDIS_PORT: "REDIS_PORT",
         },
         {
           PROJECT_DATABASE: "mongodb://user:pass@db",
+          PROJECT_MONGO: "mongodb://user:pass@mongo/test",
           PROJECT_SECRET: "task-secret",
           REDIS_PORT: "6379",
         },
       ),
-    ).toEqual(["mongodb://user:pass@db", "task-secret"]);
+    ).toEqual(["mongodb://user:pass@db", "mongodb://user:pass@mongo/test", "task-secret"]);
   });
 
   it("supports lowercase proxy settings without weakening reserved-name checks", () => {

@@ -63,6 +63,38 @@ const event: TaskMutationEvent = {
 };
 
 describe("CI review recovery eligibility", () => {
+  it("routes a failed no-change completion back to its completed CI owner without authorizing primary replay", () => {
+    const candidate = {
+      ...record,
+      phase: "validation" as const,
+      ciRepair: {
+        ...record.ciRepair!,
+        activePrimaryOperation: {
+          ...record.ciRepair!.activePrimaryOperation!,
+          sourceIdentity: `sha256:${"a".repeat(64)}`,
+        },
+      },
+      reviewRepair: { ...record.reviewRepair!, activePrimaryOperation: undefined },
+      primaryOperations: {
+        [ciOperation]: {
+          ...record.primaryOperations![ciOperation]!,
+          result: { exitCode: 0, output: "CI_REPAIR_FINISHED_EARLY", errorOutput: "" },
+        },
+      },
+    };
+    const failed = { ...event, status: "failed" as const };
+    expect(canResumeCiReviewRepair(candidate, failed)).toBe(true);
+    expect(
+      canResumeCiReviewRepair(
+        { ...candidate, primaryOperations: record.primaryOperations },
+        failed,
+      ),
+    ).toBe(false);
+    expect(canResumeCiReviewRepair({ ...candidate, ciRepair: record.ciRepair }, failed)).toBe(
+      false,
+    );
+    expect(canResumeCiReviewRepair({ ...candidate, phase: "implementation" }, failed)).toBe(false);
+  });
   it.each(["implementation", "validation", "review"] as const)(
     "selects the owned %s checkpoint after CI primary completion",
     (phase) => {
