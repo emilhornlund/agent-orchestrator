@@ -3,6 +3,18 @@ import { redactSecrets } from "./redact-secrets.js";
 export const MAX_EXTERNAL_DIAGNOSTIC_LENGTH = 2_000;
 export const EXTERNAL_DIAGNOSTIC_TRUNCATION_MARKER = "... [truncated]";
 
+/** A fresh execution artifact is evidence of the same unresolved failure, not
+ * a new notification event. Keep semantic text/head identities intact. */
+export function diagnosticEventIdentityText(value: string): string {
+  return value
+    .replace(
+      /process-executions\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\//giu,
+      "process-executions/<execution>/",
+    )
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
 /** Redacts external text before applying the shared concise-diagnostic bound. */
 export function presentExternalDiagnostic(
   value: string,

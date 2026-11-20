@@ -716,6 +716,15 @@ const taskExecutionRecordSchema = z
     externalRecovery: externalRecoveryState.optional(),
     expectedBranch: nonBlankIdentifier.optional(),
     pullRequest: pullRequestSchema.optional(),
+    terminalInterruption: z
+      .strictObject({
+        state: z.enum(["MERGED", "CLOSED"]),
+        pullRequestUrl: z.url(),
+        headSha: gitSha,
+        previousPhase: z.enum(taskExecutionPhases),
+        artifact: primaryOperationSchema.shape.resultArtifact.unwrap(),
+      })
+      .optional(),
     operationKey: nonBlankIdentifier,
     lastEvent: z
       .strictObject({

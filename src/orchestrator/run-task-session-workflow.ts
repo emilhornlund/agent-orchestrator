@@ -675,7 +675,7 @@ async function completeMergedTaskSession(options: {
     }
     let terminalProjection: TaskExecutionRecord;
     if (latest.phase !== "done") {
-      if (latest.phase === "attention-required" || latest.pullRequest?.url !== pullRequest.url) {
+      if (latest.pullRequest?.url !== pullRequest.url) {
         throw new Error(
           `Cannot complete merged task ${card.id} without its active persisted PR identity`,
         );
@@ -714,6 +714,9 @@ async function completeMergedTaskSession(options: {
       });
     else taskStore.compareAndSwap(card.id, latest.revision, terminalProjection);
     queue.complete(terminalEventId);
+    logger
+      .child({ projectId: project.id, cardId: card.id })
+      .event("Merged task Done state verified and persisted");
     return "completed";
   } catch (error) {
     if (queue.ownsActive(terminalEventId)) queue.fail(terminalEventId);
@@ -1891,8 +1894,7 @@ async function runTaskSessionWorkflowAttempt(
   if (
     canonicalCardId &&
     canonicalTask?.pullRequest !== undefined &&
-    canonicalTask.phase !== "done" &&
-    canonicalTask.phase !== "attention-required"
+    canonicalTask.phase !== "done"
   ) {
     const currentCard =
       humanReviewCards.find((candidate) => candidate.id === canonicalCardId) ??
@@ -1905,6 +1907,7 @@ async function runTaskSessionWorkflowAttempt(
       humanReviewCards.push(currentCard);
     if (
       canonicalTask.recoveryWait !== undefined ||
+      canonicalTask.phase === "attention-required" ||
       canonicalTask.feedbackCardMove !== undefined ||
       currentCard.idList !== project.trello.reviewListId
     )

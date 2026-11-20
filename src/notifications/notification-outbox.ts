@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { sanitizeControlledText } from "../security/redact-secrets.js";
+import { diagnosticEventIdentityText } from "../security/bounded-diagnostic.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import type { EmailMessage, EmailNotifier } from "./email-notifier.js";
 import { RunStore } from "../task-session/run-store.js";
@@ -439,7 +440,14 @@ export class NotificationOutbox {
     }
     // Bounded pass, no retry loop. Dispatch is ambiguous durably BEFORE transport.
     let actionable = 0;
-    for (const candidate of this.records()
+    const records = this.records();
+    const attentionEvidence = records.filter(
+      (entry) =>
+        entry.event === "attentionRequired" &&
+        ["confirmed", "ambiguous"].includes(entry.dispatches.at(-1)?.outcome ?? ""),
+    );
+    const handledAttention = new Set<string>();
+    for (const candidate of records
       .filter(
         (entry) =>
           entry.dispatches.at(-1)?.outcome !== "confirmed" &&
@@ -450,6 +458,25 @@ export class NotificationOutbox {
       )) {
       const record = this.read(path.join(this.directory, `${candidate.id}.json`));
       const last = record.dispatches.at(-1);
+      const attentionKey =
+        record.event === "attentionRequired"
+          ? `${record.targetHash ?? "unbound"}:${diagnosticEventIdentityText(record.eventKey)}`
+          : undefined;
+      if (
+        attentionKey &&
+        (handledAttention.has(attentionKey) ||
+          attentionEvidence.some(
+            (entry) =>
+              entry.id !== record.id &&
+              entry.targetHash === record.targetHash &&
+              diagnosticEventIdentityText(entry.eventKey) ===
+                diagnosticEventIdentityText(record.eventKey) &&
+              (entry.dispatches.at(-1)?.outcome === "confirmed" ||
+                (entry.dispatches.at(-1)?.outcome === "ambiguous" &&
+                  last?.outcome !== "ambiguous")),
+          ))
+      )
+        continue; // Retain the alias's actual delivery state; do not invent a receipt or resend it.
       if (record.targetHash !== null && record.targetHash !== hash(notifier.deliveryTarget ?? "")) {
         report(
           `Notification ${record.id}: configured transport/recipient identity changed; preserved without dispatch`,
@@ -459,6 +486,7 @@ export class NotificationOutbox {
       if (last?.outcome === "confirmed") continue;
       if (record.retryAt && Date.parse(record.retryAt) > this.clock()) continue;
       if (actionable++ >= 100) break;
+      if (attentionKey) handledAttention.add(attentionKey);
       this.assertHeld();
       if (record.trigger) {
         record.retryAt = new Date(this.clock() + NOTIFICATION_RECHECK_MS).toISOString();
@@ -500,6 +528,8 @@ export class NotificationOutbox {
         if (observed === "confirmed" || observed === "known-not-delivered") {
           last.outcome = observed;
           last.evidence = "Provider correlation lookup";
+          if (observed === "confirmed" && record.event === "attentionRequired")
+            attentionEvidence.push(record);
         } else {
           report(
             `Notification ${record.id}: SMTP acceptance uncertain; no automatic resend; inspect provider using ${record.messageId}`,
@@ -516,6 +546,7 @@ export class NotificationOutbox {
       });
       record.retryAt = new Date(this.clock() + NOTIFICATION_RECHECK_MS).toISOString();
       this.write(record);
+      if (record.event === "attentionRequired") attentionEvidence.push(record);
       try {
         const receipt = await notifier.send({
           ...record.message,
