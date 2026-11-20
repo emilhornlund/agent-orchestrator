@@ -362,7 +362,9 @@ Whitespace and new per-execution `process-executions/<UUID>/` references do not 
 events; the first retained payload keeps its concrete diagnostics. Already-confirmed legacy event
 obligations are reused after upgrade. Changed semantic failure text, task attempts and commit SHAs
 carried in the event identity remain distinct, and ambiguous SMTP acceptance still forbids blind
-resending.
+resending. Pending legacy aliases are coalesced during delivery too: a confirmed or ambiguous send
+cannot be bypassed by sending the same alert under another execution-specific ID. Each alias keeps
+its actual delivery state; no receipt is fabricated for an email that was not sent.
 
 The expected remote branch is deleted only for a verified merged PR and only after it is known to
 belong to the owned task. The local worktree cleanup is restricted to the expected path and branch
