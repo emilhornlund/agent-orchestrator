@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { hasInterruptedRepairs, retireTerminalRepairs } from "./terminal-repair-state.js";
 
 import {
   parseTaskExecutionRecord,
@@ -114,6 +115,7 @@ const phaseTransitions: Record<
       "publication",
       "ci",
       "human-feedback",
+      "attention-required",
     ],
     to: "done",
   },
@@ -173,8 +175,9 @@ export function transitionTaskExecutionRecord(
     isTerminalPhase(record.phase) &&
     !(
       record.phase === "attention-required" &&
-      event.type === "external-pull-request-reconciled" &&
-      record.externalRecovery !== undefined
+      ((event.type === "external-pull-request-reconciled" &&
+        record.externalRecovery !== undefined) ||
+        (event.type === "pull-request-merged" && record.pullRequest !== undefined))
     )
   ) {
     throw new TaskExecutionTransitionError(`Cannot transition from terminal phase ${record.phase}`);
@@ -225,8 +228,21 @@ export function transitionTaskExecutionRecord(
       );
   }
 
+  if (
+    destinationPhase === "done" &&
+    hasInterruptedRepairs(record) &&
+    ((event.type !== "pull-request-merged" && event.type !== "external-pull-request-reconciled") ||
+      record.terminalInterruption?.state !== "MERGED" ||
+      record.terminalInterruption.pullRequestUrl !== record.pullRequest?.url)
+  )
+    throw new TaskExecutionTransitionError(
+      "Terminal repair retirement requires its retained interrupted task snapshot",
+    );
   const nextRecord = parseTaskExecutionRecord({
-    ...record,
+    ...(destinationPhase === "done" ? retireTerminalRepairs(record) : record),
+    ...(destinationPhase === "done"
+      ? { recoveryWait: undefined, recoveryAttentionReason: undefined }
+      : {}),
     ...(event.type === "ci-repair-ended"
       ? {
           ciRepair: {

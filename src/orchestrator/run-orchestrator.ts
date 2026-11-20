@@ -67,6 +67,8 @@ import { hasPendingSessionCreation } from "../task-session/reconcile-session-cre
 import { isConclusiveOperationResolution } from "../task-session/run-record.js";
 import { isRetryableGitHubError } from "../github/github-client.js";
 import { isShutdownCancellation } from "../runtime/shutdown-cancellation.js";
+import { diagnosticEventIdentityText } from "../security/bounded-diagnostic.js";
+import { sanitizeControlledText } from "../security/redact-secrets.js";
 import { getLegacyPublishedGitHubReadRecoveryPhase } from "../task-session/reconcile-task-session.js";
 import { canRecheckReviewedPublication } from "../task-session/uncommitted-publication-recovery.js";
 
@@ -194,7 +196,7 @@ function failureNotificationIdentity(
     reconciliationOperation: reconciliationOperation ?? null,
     cardIds: [...new Set(cardIds)].sort(),
     category,
-    reason: reason.replace(/\s+/g, " ").trim() || "No reason provided",
+    reason: diagnosticEventIdentityText(sanitizeControlledText(reason)) || "No reason provided",
     handlingOutcome: handlingOutcome ?? null,
   });
 }
@@ -1405,9 +1407,15 @@ async function runProjectWorkerLoop(
           ? humanReviewCardKey(cardIds)
           : undefined;
 
-      if (suppressUnchangedHumanReviewFailure) {
+      const suppressUnchangedFailure =
+        suppressUnchangedHumanReviewFailure ||
+        currentFailureIdentity === suppressedFailureIdentity ||
+        currentFailureBaseIdentity === restoredFailureIdentity;
+      if (suppressUnchangedFailure) {
         projectLog.info(
-          "Human Review reconciliation failure diagnostic suppressed for unchanged failure",
+          suppressUnchangedHumanReviewFailure
+            ? "Human Review reconciliation failure diagnostic suppressed for unchanged failure"
+            : "Failure diagnostic suppressed for unchanged unresolved failure",
         );
       } else {
         projectLog.error(
@@ -1467,12 +1475,7 @@ async function runProjectWorkerLoop(
         }
         suppressedFailureIdentity = undefined;
         restoredFailureIdentity = undefined;
-      } else if (
-        humanReviewFailureKey !== undefined
-          ? suppressUnchangedHumanReviewFailure
-          : currentFailureIdentity === suppressedFailureIdentity ||
-            currentFailureBaseIdentity === restoredFailureIdentity
-      ) {
+      } else if (suppressUnchangedFailure) {
         projectLog.info(
           "Attention-required notification suppressed for unchanged unresolved failure",
         );

@@ -340,6 +340,30 @@ cleanup. On restart, polling rechecks PR identity/state and resumes the matching
 terminal transitions do not merge again or duplicate destination moves/comments. If ownership, PR
 metadata, or a Trello move is uncertain, the queue and recovery information remain in place.
 
+A merge can supersede an interrupted CI, validation, review or feedback repair. Once stopped
+execution and pending-effect proofs are established, terminal preparation retains the complete task
+record in an immutable artifact referenced by `terminalInterruption.artifact`. Only then does the
+Done projection retire live repair scheduling fields; completed quality evidence, operation history,
+attempt budgets and unshipped files are preserved. A human merge does not turn failed checks into
+passes, and unknown running processes still block release.
+
+This also recovers older attempts that moved Trello to Done but could not persist completion with
+`Active review repair is not valid during the done phase`. On the next startup/poll, the same owned
+merged PR is revalidated even if its card is already Done or its task was escalated to attention.
+Old valid process-stop proofs remain usable; the interrupted-state snapshot is added before terminal
+finalization. Keep the existing state/coordination/worktree volumes and the card in Done. No Ready
+move, state deletion, repair replay or new commit is required. The project is released only after
+the persisted Done outcome and destination readback are verified; success logs
+`Merged task Done state verified and persisted`. A corrupt retained snapshot is preserved as a real
+recovery blocker rather than discarded.
+
+Repeated unchanged failures share one attention-notification identity across polls and restarts.
+Whitespace and new per-execution `process-executions/<UUID>/` references do not create new alert
+events; the first retained payload keeps its concrete diagnostics. Already-confirmed legacy event
+obligations are reused after upgrade. Changed semantic failure text, task attempts and commit SHAs
+carried in the event identity remain distinct, and ambiguous SMTP acceptance still forbids blind
+resending.
+
 The expected remote branch is deleted only for a verified merged PR and only after it is known to
 belong to the owned task. The local worktree cleanup is restricted to the expected path and branch
 and refuses symlinks, dirty trees, active rebases, conflicts, or unknown paths. It also preserves

@@ -67,6 +67,42 @@ function createEvent(
 }
 
 describe("transitionTaskExecutionRecord", () => {
+  it.each(["implementation", "validation", "review", "ci", "attention-required"] as const)(
+    "retires interrupted repairs on verified human merge from %s without fabricating passed checks",
+    (phase) => {
+      const record: TaskExecutionRecord = {
+        ...createRecord("ci"),
+        phase,
+        reviewRepair: { cycleId: "operation-one:ci-review", status: "active", maxAttempts: 3 },
+        ciRepair: { cycleId: "operation-one:ci", status: "active", headSha: "a".repeat(40) },
+        ...(phase === "validation"
+          ? { validationRepair: { cycleId: "operation-one:validation", status: "active" as const } }
+          : {}),
+        terminalInterruption: {
+          state: "MERGED",
+          pullRequestUrl: "https://github.com/owner/repository/pull/42",
+          headSha: "a".repeat(40),
+          previousPhase: phase,
+          artifact: { reference: `sha256:${"b".repeat(64)}`, bytes: 10 },
+        },
+      };
+      const completed = transitionTaskExecutionRecord(record, createEvent("pull-request-merged"));
+      expect(completed.phase).toBe("done");
+      expect(completed.reviewRepair).toBeUndefined();
+      expect(completed.ciRepair).toBeUndefined();
+      expect(completed.validationRepair).toBeUndefined();
+      expect(completed.terminalInterruption).toEqual(record.terminalInterruption);
+      expect(completed.retryCounters).toEqual(record.retryCounters);
+      expect(record.reviewRepair?.status).toBe("active");
+      expect(() =>
+        transitionTaskExecutionRecord(
+          { ...record, terminalInterruption: undefined },
+          createEvent("pull-request-merged"),
+        ),
+      ).toThrow("retained interrupted task snapshot");
+    },
+  );
+
   it("requires the completed owned primary and unchanged source to end CI without publication", () => {
     const identity = `sha256:${"a".repeat(64)}`;
     const cycleId = "operation-one:ci";

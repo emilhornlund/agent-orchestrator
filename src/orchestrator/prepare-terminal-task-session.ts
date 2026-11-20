@@ -16,6 +16,7 @@ import {
   terminalStopProofValid,
 } from "../task-session/terminal-pr-fence.js";
 import type { TaskExecutionStore } from "../task-session/task-execution-store.js";
+import { parseTaskExecutionRecord } from "../task-session/task-execution-record.js";
 import type { TaskMutationQueue } from "../task-session/task-mutation-queue.js";
 import { logger } from "../logging/logger.js";
 import { isConclusiveOperationResolution } from "../task-session/run-record.js";
@@ -172,6 +173,75 @@ export async function prepareTerminalTaskSession(options: {
       preserveArtifacts: fence?.preserveArtifacts ?? preserve,
     };
   };
+  const retainTerminalTaskState = () => {
+    const current = taskStore.read(cardId)!;
+    const retained = current.terminalInterruption;
+    if (retained) {
+      if (retained.pullRequestUrl !== pullRequest.url)
+        throw new Error("Retained terminal task snapshot belongs to a different PR outcome");
+      const snapshot = taskStore.readPrimaryResultArtifact({
+        reference: retained.artifact.reference as `sha256:${string}`,
+        bytes: retained.artifact.bytes,
+        ...(retained.artifact.path === undefined ? {} : { path: retained.artifact.path }),
+      });
+      if (
+        !snapshot ||
+        typeof snapshot !== "object" ||
+        !("kind" in snapshot) ||
+        snapshot.kind !== "terminal-task-state" ||
+        !("cardId" in snapshot) ||
+        snapshot.cardId !== cardId ||
+        !("projectId" in snapshot) ||
+        snapshot.projectId !== project.id ||
+        !("pullRequestUrl" in snapshot) ||
+        snapshot.pullRequestUrl !== retained.pullRequestUrl ||
+        !("state" in snapshot) ||
+        snapshot.state !== retained.state ||
+        !("headSha" in snapshot) ||
+        snapshot.headSha !== retained.headSha ||
+        !("task" in snapshot)
+      )
+        throw new Error("Retained terminal task snapshot has invalid ownership");
+      const previous = parseTaskExecutionRecord(snapshot.task);
+      if (
+        previous.phase !== retained.previousPhase ||
+        previous.projectId !== project.id ||
+        previous.cardId !== cardId ||
+        previous.operationKey !== current.operationKey ||
+        previous.expectedBranch !== current.expectedBranch ||
+        previous.pullRequest?.url !== pullRequest.url
+      )
+        throw new Error("Retained terminal task snapshot does not match the interrupted task");
+      if (retained.state === pullRequest.state && retained.headSha === pullRequest.headRefOid)
+        return;
+      // A newer verified human outcome retains the earlier snapshot by nesting
+      // its reference in the newly captured task, rather than dropping history.
+    }
+    const artifact = taskStore.writePrimaryResultArtifact(
+      `terminal-state-${cardId}-${current.revision}`,
+      {
+        kind: "terminal-task-state",
+        projectId: project.id,
+        cardId,
+        state: pullRequest.state,
+        pullRequestUrl: pullRequest.url,
+        headSha: pullRequest.headRefOid,
+        task: current,
+      },
+    );
+    taskStore.compareAndSwap(cardId, current.revision, {
+      ...current,
+      terminalInterruption: {
+        state: pullRequest.state as "MERGED" | "CLOSED",
+        pullRequestUrl: pullRequest.url,
+        headSha: pullRequest.headRefOid!,
+        previousPhase: current.phase,
+        artifact,
+      },
+      revision: current.revision + 1,
+      updatedAt: new Date(Math.max(Date.now(), Date.parse(current.updatedAt) + 1)).toISOString(),
+    });
+  };
   if (authority && otherTaskWriterIsActive(authority)) return waiting();
   if (
     authority &&
@@ -185,6 +255,7 @@ export async function prepareTerminalTaskSession(options: {
     const preserveArtifacts = await inspectArtifacts();
     if (fence!.preserveArtifacts !== preserveArtifacts)
       markTerminalWritersStopped(authority, fence!.proofArtifact!, preserveArtifacts);
+    retainTerminalTaskState();
     queue.cancelAfterTerminal(cardId);
     reportedTerminalWaits.delete(waitKey);
     return {
@@ -315,6 +386,7 @@ export async function prepareTerminalTaskSession(options: {
   }
   if (authority && proof) {
     markTerminalWritersStopped(authority, proof.id, preserveArtifacts);
+    retainTerminalTaskState();
     queue.cancelAfterTerminal(cardId);
   } else {
     const pending = queue.getActive();
@@ -330,6 +402,7 @@ export async function prepareTerminalTaskSession(options: {
         ["feedback", "ci-repair", "pr-maintenance"].includes(entry.kind)
       )
         queue.retireSupersededObservation(entry.eventId);
+    retainTerminalTaskState();
   }
   reportedTerminalWaits.delete(waitKey);
   return {

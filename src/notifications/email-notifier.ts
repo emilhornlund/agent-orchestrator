@@ -1,6 +1,7 @@
 import type { Logger } from "../logging/logger.js";
 import { logger } from "../logging/logger.js";
 import { createHash } from "node:crypto";
+import { diagnosticEventIdentityText } from "../security/bounded-diagnostic.js";
 import { workflowMutationIdentity } from "../task-session/workflow-mutation.js";
 import {
   refinementMutationSnapshotKey,
@@ -215,7 +216,11 @@ export function enqueueNotification(
     if (outbox) {
       const authority = ProjectRunAuthority.current(projectId);
       const attempt = authority?.store.attemptId ?? "project";
-      const eventKey = `${projectId}:${attempt}:${event}:${identity}`;
+      const rawEventKey = `${projectId}:${attempt}:${event}:${identity}`;
+      const eventKey =
+        event === "attentionRequired"
+          ? diagnosticEventIdentityText(sanitizeControlledText(rawEventKey))
+          : rawEventKey;
       if (!authority) {
         outbox.enqueue(eventKey, message, event, notifier.deliveryTarget, trigger);
         return outbox;
@@ -264,8 +269,21 @@ export function enqueueNotification(
         notifier.deliveryTarget,
         trigger,
       );
-      const key = `notification-event-${candidate.id}`;
+      // Reuse pre-normalization obligations too, so an upgrade/restart does not
+      // resend an already confirmed attention email for the same condition.
+      const retainedAttention =
+        event === "attentionRequired"
+          ? authority
+              .list("notification-event-", notificationObligationSchema.parse)
+              .find(
+                (entry) =>
+                  entry.value.event === event &&
+                  diagnosticEventIdentityText(entry.value.eventKey) === candidate.eventKey,
+              )
+          : undefined;
+      const key = retainedAttention?.key ?? `notification-event-${candidate.id}`;
       const durable =
+        retainedAttention?.value ??
         authority.read(key, notificationObligationSchema.parse) ??
         authority.mutate(
           key,
