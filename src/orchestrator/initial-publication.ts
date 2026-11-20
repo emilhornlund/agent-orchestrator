@@ -79,6 +79,8 @@ const checkpointSchema = z.strictObject({
   completed: z.boolean(),
   noOutput: z.strictObject({ parent: gitSha, tree: gitSha }).optional(),
   startedAt: z.string().datetime(),
+  waitingSince: z.string().datetime().optional(),
+  waitingProgress: z.string().optional(),
   attentionNotified: z.boolean(),
   waitingReason: z.enum(["recheck", "dependency-or-conflict"]).nullable(),
   diagnostic: z.string().max(2000).nullable(),
@@ -1296,7 +1298,27 @@ export async function resumeInitialPublication(options: {
   } catch (error) {
     authority.assertHeld();
     // Do not copy arbitrary exception/process text into durable payloads or logs.
-    const attention = Date.now() - Date.parse(checkpoint.startedAt) >= 5 * 60_000;
+    // Publication can legitimately take minutes while preparing a commit or PR
+    // description. Escalate a sustained lack of verified progress, not its total
+    // elapsed duration or the first scheduled independent readback. Persist the
+    // baseline so restarting neither renews nor prematurely exhausts the wait.
+    const waitingProgress = JSON.stringify({
+      completed: authority.store
+        .read()!
+        .pendingOperations.filter(
+          (operation) => operation.id.startsWith("initial:") && operation.status === "completed",
+        )
+        .map((operation) => operation.id)
+        .sort(),
+      commitSha: checkpoint.commitSha ?? null,
+      descriptionPending: checkpoint.descriptionPending,
+      messagePrepared: checkpoint.message !== undefined,
+    });
+    const waitingSince =
+      checkpoint.waitingProgress === waitingProgress && checkpoint.waitingSince !== undefined
+        ? checkpoint.waitingSince
+        : now();
+    const attention = Date.now() - Date.parse(waitingSince) >= 5 * 60_000;
     const waitingReason =
       error instanceof PublicationWaitingError ? "recheck" : "dependency-or-conflict";
     const diagnostic =
@@ -1305,12 +1327,20 @@ export async function resumeInitialPublication(options: {
         : error instanceof PublicationWaitingError
           ? "Awaiting due independent readback"
           : "Publication dependency/evidence unavailable; inspect process artifacts and journal";
-    if (checkpoint.waitingReason !== waitingReason)
-      logger
-        .child({ projectId: project.id, cardId: checkpoint.cardId })
-        .warn(
-          `Initial publication waiting (${waitingReason}); next controlled check in ${PUBLICATION_RECHECK_MS}ms. Inspect journal payloads, observations and process artifacts; no uncertain effect will be resent.`,
+    if (
+      checkpoint.waitingReason !== waitingReason ||
+      checkpoint.waitingProgress !== waitingProgress
+    ) {
+      const cardLog = logger.child({ projectId: project.id, cardId: checkpoint.cardId });
+      if (waitingReason === "recheck")
+        cardLog.event(
+          "Initial publication verification pending; next controlled check in 15 seconds",
         );
+      else
+        cardLog.warn(
+          "Initial publication blocked by a dependency or conflicting evidence; state preserved; next controlled check in 15 seconds",
+        );
+    }
     if (attention) {
       const details = {
         project,
@@ -1331,6 +1361,8 @@ export async function resumeInitialPublication(options: {
       ...checkpoint,
       retryAt: next(),
       attention,
+      waitingSince,
+      waitingProgress,
       waitingReason,
       diagnostic,
       attentionNotified: checkpoint.attentionNotified || attention,

@@ -166,7 +166,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
         controller.abort();
         throw error;
       });
-      const events = vi.spyOn(Logger.prototype, "event").mockImplementation(() => undefined);
+      const events = vi.spyOn(Logger.prototype, "debug").mockImplementation(() => undefined);
       try {
         await expect(
           withProcessCancellationSignal(controller.signal, () => cycle.run()),
@@ -538,10 +538,11 @@ describe("runTaskSessionReviewWithRepairs", () => {
     expect(result.review.verdict).toBe("pass");
   });
 
-  it("logs bounded structured finding transitions for successful review cycles", async () => {
+  it("retains structured finding transitions in file-only diagnostics with concise console progress", async () => {
     const f = fixture();
     const events: string[] = [];
-    vi.spyOn(Logger.prototype, "event").mockImplementation((message) => {
+    const consoleEvents = vi.spyOn(Logger.prototype, "event");
+    vi.spyOn(Logger.prototype, "debug").mockImplementation((message) => {
       events.push(message);
     });
     const op = f.run(["fail", "pass"]);
@@ -564,6 +565,10 @@ describe("runTaskSessionReviewWithRepairs", () => {
     });
     expect(events.some((message) => message.includes('"event":"cycle-passed"'))).toBe(true);
     expect(events.join(" ")).not.toContain("Fix requirement");
+    const summaries = consoleEvents.mock.calls.map(([message]) => message);
+    expect(summaries).toContain("Review repair attempt 1 started");
+    expect(summaries.some((message) => message.startsWith("Review cycle completed"))).toBe(true);
+    expect(summaries.join(" ")).not.toMatch(/review-cycle|sha256:|\{|finding-/u);
   });
 
   it.each(["skipped", "failed", "uncertain"] as const)(
@@ -599,7 +604,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
         updatedAt: "2026-10-24T09:00:01.000Z",
       });
       const events: string[] = [];
-      vi.spyOn(Logger.prototype, "event").mockImplementation((message) => {
+      vi.spyOn(Logger.prototype, "debug").mockImplementation((message) => {
         events.push(message);
       });
       await f.run(["pass"]).run();
@@ -611,7 +616,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
   it("logs exhausted findings and restores useful diagnostics from persisted state", async () => {
     const f = fixture();
     const events: string[] = [];
-    vi.spyOn(Logger.prototype, "event").mockImplementation((message) => {
+    vi.spyOn(Logger.prototype, "debug").mockImplementation((message) => {
       events.push(message);
     });
     const op = f.run(["fail"], 0);
@@ -631,7 +636,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
   it("categorizes remediation execution and validation failures distinctly", async () => {
     const f = fixture();
     const events: string[] = [];
-    vi.spyOn(Logger.prototype, "event").mockImplementation((message) => {
+    vi.spyOn(Logger.prototype, "debug").mockImplementation((message) => {
       events.push(message);
     });
     const options = {
@@ -686,7 +691,7 @@ describe("runTaskSessionReviewWithRepairs", () => {
   it("logs review execution and result-validation failures as review failures", async () => {
     const f = fixture();
     const events: string[] = [];
-    vi.spyOn(Logger.prototype, "event").mockImplementation((message) => {
+    vi.spyOn(Logger.prototype, "debug").mockImplementation((message) => {
       events.push(message);
     });
 
