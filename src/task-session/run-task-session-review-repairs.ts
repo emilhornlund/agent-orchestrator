@@ -206,9 +206,27 @@ function logReviewDiagnostic(
   event: string,
   fields: Record<string, unknown>,
 ): void {
-  logger
-    .child({ projectId: options.projectId, cardId: options.cardId })
-    .event(`review-cycle ${JSON.stringify({ event, ...fields })}`);
+  const cardLog = logger.child({ projectId: options.projectId, cardId: options.cardId });
+  // Detailed identities and finding transitions remain available for diagnosis,
+  // without printing the bookkeeping payload on the operator console.
+  cardLog.debug(`review-cycle ${JSON.stringify({ event, ...fields })}`);
+  const summaries: Record<string, string> = {
+    "cycle-passed": "Review cycle completed",
+    "cycle-recovered": "Review cycle restored from saved results",
+    "cycle-exhausted": "Review repair limit reached; continuing toward publication",
+    "cycle-stopped": `Review repairs stopped (${fields.stopReason}); continuing toward publication`,
+    "remediation-started": `Review repair attempt ${fields.remediationAttempt} started`,
+    "remediation-completed": `Review repair attempt ${fields.remediationAttempt} completed`,
+    "cycle-cancelled": `Review cycle interrupted during ${fields.stage ?? fields.category}; state preserved`,
+    "cycle-failed": `Review cycle failed during ${fields.stage ?? fields.category}; state preserved`,
+  };
+  const summary = summaries[event];
+  if (summary === undefined) return;
+  const quality =
+    fields.validation === undefined
+      ? ""
+      : `; validation ${fields.validation}; coverage ${fields.coverage}`;
+  cardLog.event(`${summary}${quality}`);
 }
 
 function qualityDiagnostic(record: TaskExecutionRecord): {

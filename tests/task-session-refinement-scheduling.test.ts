@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Config, ProjectConfig } from "../src/config/config.js";
 import { GitClient } from "../src/git/git-client.js";
-import { logger } from "../src/logging/logger.js";
+import { Logger, logger } from "../src/logging/logger.js";
 import {
   acquireProjectOwnership,
   provisionCoordinationNamespace,
@@ -37,6 +37,7 @@ import type { RefinementHistoryAction } from "../src/refinement/refinement-mutat
 let root: string;
 const leases: ProjectOwnershipLease[] = [];
 afterEach(async () => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   await Promise.all(leases.splice(0).map((lease) => lease.release()));
   if (root !== undefined) fs.rmSync(root, { recursive: true, force: true });
@@ -295,8 +296,17 @@ describe("task-session refinement scheduling", () => {
     const githubRun = vi.fn();
     const github = new GitHubClient(githubRun);
     let setupExecutions = 0;
+    const events = vi.spyOn(Logger.prototype, "event");
     const setupCommandRunner = new CommandRunner();
     const commands = new CommandRunner(async (options) => {
+      expect(events).toHaveBeenCalledWith(
+        "Repository setup: capturing pre-execution worktree inventory",
+      );
+      expect(events).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /^Repository setup started \(attempt \d\/3; timeout 1 minutes\); process log: /u,
+        ),
+      );
       setupExecutions += 1;
       return setupCommandRunner.run(options);
     });

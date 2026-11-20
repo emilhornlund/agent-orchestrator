@@ -5,6 +5,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { pollProject } from "../src/orchestrator/poll-project.js";
+import type { EmailNotifier } from "../src/notifications/email-notifier.js";
 import { runOrchestrator } from "../src/orchestrator/run-orchestrator.js";
 import type { Config } from "../src/config/config.js";
 import { GitHubClient } from "../src/github/github-client.js";
@@ -227,6 +228,7 @@ async function poll(
       throw new Error("Publication recovery must not invoke AI");
     },
   },
+  emailNotifier?: EmailNotifier,
 ) {
   if (tick) vi.setSystemTime(Date.now() + PUBLICATION_RECHECK_MS + 1);
   await pollProject(
@@ -237,7 +239,7 @@ async function poll(
     {} as never,
     f.project,
     new AbortController().signal,
-    undefined,
+    emailNotifier,
     undefined,
     undefined,
     f.authority,
@@ -2038,21 +2040,51 @@ describe("initial publication production checkpoint with independent simulated s
     ).toContain("pr-read");
   });
 
+  it("does not send attention mail for slow publication that keeps making verified progress", async () => {
+    const f = fixture();
+    await begin(f);
+    const notifier = { send: vi.fn(async () => undefined) };
+    // Even the first independent readback after slow commit preparation must
+    // not inherit the elapsed duration of the whole publication as a blockage.
+    vi.setSystemTime(Date.now() + 20 * 60_000);
+    await poll(f, true, undefined, notifier);
+    expect(f.store.read()!.compatibility["initial-publication-v1"]).toMatchObject({
+      attention: false,
+      attentionNotified: false,
+    });
+    const restarted = reopenPublicationFixture(f.root, "slow-publication");
+    for (let count = 0; count < 12 && task(restarted)?.phase !== "ci"; count++) {
+      vi.setSystemTime(Date.now() + 6 * 60_000);
+      await poll(restarted, true, undefined, notifier);
+      expect(restarted.store.read()!.compatibility["initial-publication-v1"]).toMatchObject({
+        attention: false,
+        attentionNotified: false,
+      });
+    }
+    expect(task(restarted)?.phase).toBe("ci");
+    expect(restarted.services.read().prs).toHaveLength(1);
+    expect(notifier.send.mock.calls).toHaveLength(1); // Human Review only.
+  });
+
   it.each(["before-create", "accepted-response-lost"] as const)(
     "automatically resumes a prolonged GitHub outage (%s), without an absorbing attention state",
     async (fault) => {
       const f = fixture();
       await begin(f);
-      const attentionAt = Date.now() + 5 * 60_000;
+      const notifier = { send: vi.fn(async () => undefined) };
       if (fault === "before-create") f.services.change({ githubOutage: true });
       else {
         f.services.change({ loseCreationResponse: true });
         await through(f, "push");
         f.services.change({ githubOutage: true });
       }
-      await poll(f);
+      await poll(f, true, undefined, notifier);
+      const waiting = f.store.read()!.compatibility["initial-publication-v1"] as {
+        waitingSince: string;
+      };
+      const attentionAt = Date.parse(waiting.waitingSince) + 5 * 60_000;
       const beforePacedPolls = f.services.entries();
-      await poll(f, false);
+      await poll(f, false, undefined, notifier);
       await poll(f, false);
       expect(f.services.entries()).toEqual(beforePacedPolls);
 
@@ -2064,13 +2096,17 @@ describe("initial publication production checkpoint with independent simulated s
         attention: false,
         attentionNotified: false,
       });
+      const waitingRestart = reopenPublicationFixture(f.root, "waiting-restart");
       vi.setSystemTime(attentionAt);
-      await poll(f, false);
-      expect(f.store.read()!.compatibility["initial-publication-v1"]).toMatchObject({
+      await poll(waitingRestart, false, undefined, notifier);
+      expect(waitingRestart.store.read()!.compatibility["initial-publication-v1"]).toMatchObject({
         attention: true,
         attentionNotified: true,
       });
-      expect(task(f)?.phase).toBe("publication");
+      expect(notifier.send).toHaveBeenCalledTimes(1);
+      await poll(waitingRestart, true, undefined, notifier);
+      expect(notifier.send).toHaveBeenCalledTimes(1);
+      expect(task(waitingRestart)?.phase).toBe("publication");
       expect(f.store.read()!.lifecycle).toBe("publication");
       expect(f.isolated.git(f.worktreePath, "rev-list", "--count", "main..HEAD")).toBe(
         fault === "before-create" ? "0" : "1",

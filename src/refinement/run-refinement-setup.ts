@@ -312,6 +312,7 @@ export async function runRefinementSetup(options: {
 
   while (state.attempts.length < maxSetupExecutions) {
     signal.throwIfAborted();
+    cardLog.event("Repository setup: capturing pre-execution worktree inventory");
     const before = await captureSetupEffects(git, worktreePath, signal);
     const beforeRef = authority.store.writeArtifact(before, "application/json").id;
     const attempt: z.infer<typeof setupAttemptSchema> = {
@@ -329,6 +330,9 @@ export async function runRefinementSetup(options: {
     let result: CommandRunResult | undefined;
     let error: unknown;
     let executionId: string | undefined;
+    cardLog.event(
+      `Repository setup started (attempt ${state.attempts.length}/${maxSetupExecutions}; timeout ${project.opencode.timeoutMinutes} minutes); process log: ${getSessionLogPath(project.id, cardId)}`,
+    );
     try {
       result = await runRepositorySetup(commands, {
         taskEnvironment: project.taskEnvironment,
@@ -357,6 +361,7 @@ export async function runRefinementSetup(options: {
     let afterRef: string;
     let passed: boolean;
     let stopped: boolean;
+    cardLog.event("Repository setup process returned; capturing effects and verifying outcome");
     try {
       const after = await captureSetupEffects(git, worktreePath, signal, true);
       afterRef = authority.store.writeArtifact(after, "application/json").id;

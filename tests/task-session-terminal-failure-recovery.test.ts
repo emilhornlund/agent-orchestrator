@@ -27,6 +27,7 @@ import { ProjectRunAuthority } from "../src/task-session/project-run-authority.j
 
 let root: string | undefined;
 afterEach(() => {
+  vi.restoreAllMocks();
   if (root !== undefined) fs.rmSync(root, { recursive: true, force: true });
   root = undefined;
 });
@@ -159,6 +160,7 @@ describe("terminal failure recovery", () => {
       };
     });
     const taskStore = new TaskExecutionStore(contextRoot, project);
+    const events = vi.spyOn(Logger.prototype, "event");
 
     await expect(
       runTaskSessionWorkflow({
@@ -177,9 +179,17 @@ describe("terminal failure recovery", () => {
         openCode: new OpenCodeClient(runOpenCode),
         commands: new CommandRunner(vi.fn()),
         signal: new AbortController().signal,
-        prepareAttachmentContext: async () => undefined,
+        prepareAttachmentContext: async () => {
+          expect(events).toHaveBeenCalledWith("Task attachment preparation started");
+          expect(events).not.toHaveBeenCalledWith("Task attachment preparation completed");
+          expect(runOpenCode).not.toHaveBeenCalled();
+          return undefined;
+        },
       }),
     ).rejects.toBeInstanceOf(ProcessEvidenceError);
+
+    expect(events).toHaveBeenCalledWith("Task attachment preparation completed");
+    events.mockRestore();
 
     const record = taskStore.read(cardId);
     expect(record).toMatchObject({
