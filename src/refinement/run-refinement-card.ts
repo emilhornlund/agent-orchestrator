@@ -120,8 +120,10 @@ export async function runRefinementCardWorkflow(options: {
       }
     }
     cardContextPreparationFailed = true;
+    cardLog.event("Task attachment preparation started");
     const attachmentContext = await options.prepareAttachmentContext(card, cardLog);
     cardContextPreparationFailed = false;
+    cardLog.event("Task attachment preparation completed");
 
     cardLog.event("Starting OpenCode refinement...");
     await runRefinementOperation({

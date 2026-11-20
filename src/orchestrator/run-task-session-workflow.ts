@@ -5017,6 +5017,7 @@ async function runTaskSessionWorkflowAttempt(
         retry += 1
       ) {
         const attemptRecord = recordBeforeSetup;
+        cardLog.event("Repository setup: capturing pre-execution worktree inventory");
         const before = taskStore.writeSetupArtifact(
           `setup-before-${activeCard.id}-${recordBeforeSetup.revision}`,
           JSON.parse(
@@ -5040,6 +5041,9 @@ async function runTaskSessionWorkflowAttempt(
         let setupResult: Awaited<ReturnType<typeof runRepositorySetup>> | undefined;
         let setupError: unknown;
         const setupArtifactDirectory = taskStore.processExecutionDirectory(activeCard.id);
+        cardLog.event(
+          `Repository setup started (attempt ${(attemptRecord.setup?.attempts ?? 0) + 1}/${OPERATION_RECOVERY_MAX_EXECUTIONS}; timeout ${project.opencode.timeoutMinutes} minutes); process log: ${getSessionLogPath(project.id, activeCard.id)}`,
+        );
         try {
           setupResult = await runRepositorySetup(commands, {
             taskEnvironment: project.taskEnvironment,
@@ -5071,6 +5075,7 @@ async function runTaskSessionWorkflowAttempt(
         } catch (error) {
           setupError = error;
         }
+        cardLog.event("Repository setup process returned; capturing effects and verifying outcome");
         const after = taskStore.writeSetupArtifact(
           `setup-after-${activeCard.id}-${attemptRecord.revision}`,
           JSON.parse(
@@ -5151,6 +5156,9 @@ async function runTaskSessionWorkflowAttempt(
           });
         }
         recordBeforeSetup = taskStore.read(activeCard.id);
+        cardLog.event(
+          `Repository setup outcome persisted: ${recordBeforeSetup?.setup?.status ?? "unavailable"}`,
+        );
         if (
           signal.aborted &&
           (recordBeforeSetup?.setup?.status === "pending" ||
@@ -5163,7 +5171,9 @@ async function runTaskSessionWorkflowAttempt(
           throw setupError;
       }
     }
+    cardLog.event("Task attachment preparation started");
     const attachmentContext = await options.prepareAttachmentContext(activeCard);
+    cardLog.event("Task attachment preparation completed");
     const sessionLogPath = getSessionLogPath(project.id, activeCard.id);
     const commonRunOptions = {
       taskEnvironment: project.taskEnvironment,
