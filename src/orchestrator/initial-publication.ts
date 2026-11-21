@@ -371,6 +371,7 @@ export async function resumeInitialPublication(options: {
   emailNotifier?: EmailNotifier;
   opencode?: OpenCodeClient;
 }): Promise<boolean> {
+  const passStarted = performance.now();
   const authority = ProjectRunAuthority.current(options.project.id);
   if (!authority) return false;
   let checkpoint = authority.read(key, checkpointSchema.parse);
@@ -378,7 +379,9 @@ export async function resumeInitialPublication(options: {
   authorityFor(options.project);
   if (checkpoint.baseBranch !== options.project.repository.defaultBranch)
     throw new Error("Publication base branch differs from the original checkpoint");
-  if (checkpoint.retryAt && Date.now() < Date.parse(checkpoint.retryAt)) return true;
+  const resumedAt = Date.now();
+  const scheduledRetryAt = checkpoint.retryAt;
+  if (scheduledRetryAt && resumedAt < Date.parse(scheduledRetryAt)) return true;
   const { project, git, github, trello } = options;
   const run = authority.store.read()!;
   const finishNoOutput = async (): Promise<void> => {
@@ -497,7 +500,11 @@ export async function resumeInitialPublication(options: {
     throw new Error("Publication checkpoint has no matching queue owner");
   if (!publicationQueue.claimForRecovery(publicationEvent.eventId)) return true;
   const cwd = runTaskResources(run).path;
+  const cardLog = logger.child({ projectId: project.id, cardId: checkpoint.cardId });
+  const setupCheckStarted = performance.now();
   await validateSetupDisposition(checkpoint, run, options.project, git, cwd);
+  const setupCheckMs = Math.round(performance.now() - setupCheckStarted);
+  let sourceCheckMs = 0;
   const now = () => new Date().toISOString();
   const next = () => new Date(Date.now() + PUBLICATION_RECHECK_MS).toISOString();
   const assertExecution = () => {
@@ -567,9 +574,13 @@ export async function resumeInitialPublication(options: {
     )
       throw new PublicationWaitingError();
     // Never dispatch if an authoritative prerequisite read is unavailable.
+    const readbackStarted = performance.now();
+    const isReadback = operation.mutation.dispatches.length > 0;
+    let readbackOutcome = "unavailable";
     let actual: { id: string; fields: unknown } | null;
     try {
       actual = await observe();
+      readbackOutcome = actual ? "verified" : "absent";
     } catch (error) {
       if (error instanceof ObservedPrTerminalError) throw error;
       if (operation.mutation.dispatches.length && !mutationProvenNotDelivered(operation.mutation))
@@ -583,6 +594,19 @@ export async function resumeInitialPublication(options: {
           attentionRequired: true,
         });
       throw error;
+    } finally {
+      if (isReadback)
+        cardLog.event(
+          `Initial publication ${id} readback: ${readbackOutcome}; ${JSON.stringify({
+            retryAt: scheduledRetryAt,
+            resumedAt: new Date(resumedAt).toISOString(),
+            retryLagMs: scheduledRetryAt === null ? null : resumedAt - Date.parse(scheduledRetryAt),
+            beforeReadbackMs: Math.round(readbackStarted - passStarted),
+            setupCheckMs,
+            sourceCheckMs,
+            readbackMs: Math.round(performance.now() - readbackStarted),
+          })}`,
+        );
     }
     if (
       operation.mutation.dispatches.length === 0 ||
@@ -707,7 +731,10 @@ export async function resumeInitialPublication(options: {
     );
     if (!inWorking && !(inReview && entry("initial:move")?.mutation?.dispatches.length))
       throw new PublicationSafetyError("Publication card moved unexpectedly");
-    if ((await getTaskSessionSourceSnapshotIdentity(git, cwd)) !== checkpoint.sourceIdentity)
+    const sourceCheckStarted = performance.now();
+    const currentSourceIdentity = await getTaskSessionSourceSnapshotIdentity(git, cwd);
+    sourceCheckMs = Math.round(performance.now() - sourceCheckStarted);
+    if (currentSourceIdentity !== checkpoint.sourceIdentity)
       throw new PublicationSafetyError("Publication source differs from the verified checkpoint");
     if (!checkpoint.commitSha) {
       const commitEntry = entry("initial:commit");
@@ -1331,7 +1358,6 @@ export async function resumeInitialPublication(options: {
       checkpoint.waitingReason !== waitingReason ||
       checkpoint.waitingProgress !== waitingProgress
     ) {
-      const cardLog = logger.child({ projectId: project.id, cardId: checkpoint.cardId });
       if (waitingReason === "recheck")
         cardLog.event(
           "Initial publication verification pending; next controlled check in 15 seconds",

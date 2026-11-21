@@ -6665,6 +6665,7 @@ async function runTaskSessionWorkflowAttempt(
     let commitMessage: string | undefined;
     let setupDisposition: PersistedSetupDisposition | undefined;
     if (recoveredTrustedCommit === null) {
+      cardLog.event("Preparing initial publication: checking worktree and commit scope");
       const commitOptions = commitMessageRunOptions(
         project,
         signal,
@@ -6801,9 +6802,38 @@ async function runTaskSessionWorkflowAttempt(
 
     let preparedEvidence = initialEvidence;
     const verifyPreparedContent = async () => {
-      const freshValidation = await runTaskSessionValidation(validationOptions);
-      const freshCoverage = await runTaskSessionCoverage(validationOptions);
-      const freshIdentity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
+      signal.throwIfAborted();
+      let freshIdentity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
+      let freshValidation = currentValidation;
+      let freshCoverage = currentCoverage;
+      // Reuse observations from the live validation/review sequence only. Restored
+      // observations do not attest to the current runtime's task environment.
+      const canReuseQuality =
+        recoveryRecord === null &&
+        phaseRecord.phase === "validation" &&
+        decideValidatedHumanReviewPublication({
+          currentContentIdentity: freshIdentity,
+          validation: currentValidation,
+          coverage: currentCoverage,
+          review: null,
+          ...(project.repository.validationCommand === undefined
+            ? {}
+            : { validationCommand: project.repository.validationCommand }),
+          ...(project.repository.coverageCommand === undefined
+            ? {}
+            : { coverageCommand: project.repository.coverageCommand }),
+        }).allowed;
+      if (canReuseQuality) {
+        cardLog.event("Initial publication reused matching local quality evidence");
+      } else {
+        cardLog.event("Publication quality checks started: matching live evidence unavailable");
+        freshValidation = await runTaskSessionValidation(validationOptions);
+        freshCoverage = await runTaskSessionCoverage(validationOptions);
+        freshIdentity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
+        cardLog.event(
+          `Publication quality checks completed: validation ${freshValidation.status}; coverage ${freshCoverage.status}`,
+        );
+      }
       let current = taskStore.read(activeCard.id);
       if (current === null)
         throw new Error("Task record disappeared during publication preparation");
