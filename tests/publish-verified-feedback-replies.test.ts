@@ -7,6 +7,7 @@ import type { CiCheckEvaluation } from "../src/github/evaluate-ci-checks.js";
 import { FeedbackLedgerStore } from "../src/task-session/feedback-ledger-store.js";
 import { publishVerifiedFeedbackReplies } from "../src/task-session/publish-verified-feedback-replies.js";
 import type { FeedbackVerificationResult } from "../src/task-session/feedback-verification.js";
+import { reconcileFeedbackRound } from "../src/task-session/reconcile-feedback-round.js";
 
 let root: string;
 afterEach(() => {
@@ -71,6 +72,64 @@ function fixture() {
 }
 
 describe("publishVerifiedFeedbackReplies", () => {
+  it.each(["outdated", "edited", "resolved"] as const)(
+    "acknowledges a verified outdated inline request only when the original thread is unchanged and unresolved (%s)",
+    async (mode) => {
+      const f = fixture();
+      const ledger = f.store.read("card")!;
+      const original = {
+        ...ledger.entries[0]!,
+        isOutdated: false,
+        isResolved: false,
+        sourceRevision: "f".repeat(64),
+        requestRevision: 1,
+        status: "verified" as const,
+        resolution: "verified-fixed" as const,
+        verificationEvidence: ["src/fix.ts", "tests/fix.test.ts"],
+        remediationCommitSha: f.head,
+      };
+      f.store.compareAndSwap("card", ledger.revision, {
+        ...ledger,
+        revision: ledger.revision + 1,
+        entries: [original],
+      });
+      const refreshed = reconcileFeedbackRound({
+        store: f.store,
+        projectId: "project",
+        cardId: "card",
+        previousHeadSha: "e".repeat(40),
+        observedHeadSha: f.head,
+        newlyObservedFeedback: [
+          {
+            ...original,
+            isOutdated: true,
+            isResolved: mode === "resolved",
+            body: mode === "edited" ? "Fix something else." : original.body,
+            actionability: "not-actionable",
+            status: "pending",
+            verificationEvidence: [],
+          },
+        ],
+      });
+      expect(refreshed.remainingActionableFeedbackIds).toEqual([]);
+      const sendReply = vi.fn(async () => "reply-verified");
+      const options = {
+        ...f.base,
+        reconcileReply: async () => ({ status: "absent" as const }),
+        sendReply,
+      };
+      await publishVerifiedFeedbackReplies(options);
+      await publishVerifiedFeedbackReplies(options);
+      expect(sendReply).toHaveBeenCalledTimes(mode === "outdated" ? 1 : 0);
+      if (mode === "outdated")
+        expect(sendReply).toHaveBeenCalledWith(
+          expect.objectContaining({ threadId: original.threadId, isResolved: false }),
+          expect.stringContaining(`Verified in published commit ${f.head}`),
+          expect.any(String),
+        );
+    },
+  );
+
   it.each(["unresolved", "uncertain"] as const)(
     "publishes truthful %s replies without converting them into verified fixes",
     async (status) => {

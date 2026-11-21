@@ -46,7 +46,7 @@ export function publicationQualityFacts(
   input: VerifiedPublicationDecisionInput,
   options: {
     planAvailable?: boolean;
-    diagnosticLog?: string;
+    diagnosticLogReference?: string;
   } = {},
 ): string[] {
   const facts = [
@@ -66,10 +66,10 @@ export function publicationQualityFacts(
         ),
   );
   facts.push(line(`Source snapshot: ${input.currentContentIdentity}.`));
-  if (options.diagnosticLog)
+  if (options.diagnosticLogReference)
     facts.push(
       line(
-        `Diagnostics: ${options.diagnosticLog}; complete stdout/stderr are retained separately.`,
+        `Operator diagnostics: ${options.diagnosticLogReference} under the runtime storage root; complete stdout/stderr are retained separately.`,
       ),
     );
   return facts;

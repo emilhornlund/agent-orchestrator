@@ -1,7 +1,7 @@
 import type { ProjectConfig } from "../config/config.js";
 import type { CiCheckEvaluation } from "../github/evaluate-ci-checks.js";
 import { FeedbackLedgerStore } from "./feedback-ledger-store.js";
-import type { FeedbackLedgerEntry } from "./feedback-ledger.js";
+import { canReplyToFeedback, type FeedbackLedgerEntry } from "./feedback-ledger.js";
 import type { FeedbackVerificationResult, FeedbackDisposition } from "./feedback-verification.js";
 
 export type FeedbackReplyReconciliation =
@@ -186,12 +186,7 @@ export async function publishVerifiedFeedbackReplies(
   }
 
   for (const entry of ledger.entries) {
-    if (
-      entry.actionability !== "actionable" ||
-      entry.status === "published" ||
-      entry.isCurrent === false
-    )
-      continue;
+    if (entry.status === "published" || !canReplyToFeedback(entry, ledger.history)) continue;
     const feedbackId = `${entry.kind}:${entry.id}`;
     const disposition = dispositions.get(feedbackId);
     if (disposition === undefined) {

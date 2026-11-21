@@ -119,63 +119,78 @@ afterEach(() => {
 });
 
 describe("publishCard", () => {
-  it("refreshes fallback evidence on the same PR, preserves human text, and drafts failed checks even after passing review", async () => {
-    let body = "";
-    let published = false;
-    const github = {
-      findPullRequest: vi.fn(async () =>
-        published ? { url: "https://github.com/example/repository/pull/123" } : null,
-      ),
-      createPullRequest: vi.fn(async (options: { body: string }) => {
-        body = options.body;
-        published = true;
-        return { url: "https://github.com/example/repository/pull/123" };
-      }),
-      getPullRequestDescription: vi.fn(async () => body),
-      editPullRequestDescription: vi.fn(async (options: { body: string }) => {
-        body = options.body;
-      }),
-      ensurePullRequestDraft: vi.fn(),
-    } as unknown as GitHubClient;
-    const options = {
-      emailNotifier: { send: vi.fn() } as unknown as EmailNotifier,
-      github,
-      trello: {
-        moveCard: vi.fn(),
-        addComment: vi.fn(),
-      } as unknown as TrelloClient,
-      git: createPublicationGit({
-        getChangedFiles: vi.fn().mockResolvedValue("src/task.ts"),
-      }),
-      project: createProject(),
-      card: createCard(),
-      worktreePath: "/worktree",
-      branch: "agent/card-1",
-      commitSha: "abc123",
-      reviewResult: "Passed",
-      remediationResult: "Not required",
-      verifiedDescriptionFacts: () => ["Validation passed on initial content"],
-    };
-    await publishCard(options);
-    body = `Human release notes\n${body}\nHuman checklist`;
-    await publishCard({
-      ...options,
-      qualityNeedsDraft: true,
-      verifiedDescriptionFacts: () => ["Validation failed on current content (exit 1)"],
-    });
-    expect(github.createPullRequest).toHaveBeenCalledOnce();
-    expect(github.ensurePullRequestDraft).toHaveBeenCalledOnce();
-    expect(body).toContain("Human release notes");
-    expect(body).toContain("Human checklist");
-    expect(body).toContain("Changed file: src/task.ts");
-    expect(body).toContain("Validation failed on current content (exit 1)");
-    expect(body).not.toContain("Validation passed on initial content");
-    expect(options.emailNotifier.send).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        text: expect.stringContaining("Validation failed on current content (exit 1)"),
-      }),
-    );
-  });
+  it.each([true, false])(
+    "refreshes evidence, preserves human text and replaces CI from a previous head (%s)",
+    async (newHead) => {
+      let body = "";
+      let published = false;
+      const originalHead = "a".repeat(40);
+      const correctionHead = newHead ? "b".repeat(40) : originalHead;
+      const getHeadSha = vi.fn().mockResolvedValue(originalHead);
+      const github = {
+        findPullRequest: vi.fn(async () =>
+          published ? { url: "https://github.com/example/repository/pull/123" } : null,
+        ),
+        createPullRequest: vi.fn(async (options: { body: string }) => {
+          body = options.body;
+          published = true;
+          return { url: "https://github.com/example/repository/pull/123" };
+        }),
+        getPullRequestDescription: vi.fn(async () => body),
+        editPullRequestDescription: vi.fn(async (options: { body: string }) => {
+          body = options.body;
+        }),
+        ensurePullRequestDraft: vi.fn(),
+      } as unknown as GitHubClient;
+      const options = {
+        emailNotifier: { send: vi.fn() } as unknown as EmailNotifier,
+        github,
+        trello: {
+          moveCard: vi.fn(),
+          addComment: vi.fn(),
+        } as unknown as TrelloClient,
+        git: createPublicationGit({
+          getChangedFiles: vi.fn().mockResolvedValue("src/task.ts"),
+          getHeadSha,
+        }),
+        project: createProject(),
+        card: createCard(),
+        worktreePath: "/worktree",
+        branch: "agent/card-1",
+        commitSha: originalHead,
+        reviewResult: "Passed",
+        remediationResult: "Not required",
+        verifiedDescriptionFacts: () => ["Validation passed on initial content"],
+      };
+      await publishCard(options);
+      body = `Human release notes\n${body}\n<!-- agent-orchestrator-outcome:start -->\n## Current automation outcome\nRevision: ${originalHead}\n- Expected checks passed: Validate.\n<!-- agent-orchestrator-outcome:end -->\nHuman checklist`;
+      getHeadSha.mockResolvedValue(correctionHead);
+      await publishCard({
+        ...options,
+        commitSha: correctionHead,
+        qualityNeedsDraft: true,
+        verifiedDescriptionFacts: () => ["Validation failed on current content (exit 1)"],
+      });
+      expect(github.createPullRequest).toHaveBeenCalledOnce();
+      expect(github.ensurePullRequestDraft).toHaveBeenCalledOnce();
+      expect(body).toContain("Human release notes");
+      expect(body).toContain("Human checklist");
+      expect(body).toContain("Changed file: src/task.ts");
+      expect(body).toContain("Validation failed on current content (exit 1)");
+      expect(body).not.toContain("Validation passed on initial content");
+      expect(body).toContain(`Revision: ${correctionHead}`);
+      if (newHead) {
+        expect(body).not.toContain(`Revision: ${originalHead}`);
+        expect(body).not.toContain("Expected checks passed");
+        expect(body).toContain("CI results for this revision have not yet been observed");
+      } else expect(body).toContain("Expected checks passed: Validate.");
+      expect(options.emailNotifier.send).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          text: expect.stringContaining("Validation failed on current content (exit 1)"),
+        }),
+      );
+    },
+  );
 
   it("does not force draft solely for dismissed non-material review findings", async () => {
     const trello = {

@@ -12,7 +12,11 @@ import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import { runTaskResources } from "../src/task-session/task-resources.js";
 import { pollProject } from "../src/orchestrator/poll-project.js";
 import { CommandRunner, type CommandRunOptions } from "../src/process/command-runner.js";
-import { beginProcessEvidence, registerProcessSecrets } from "../src/process/process-runtime.js";
+import {
+  beginProcessEvidence,
+  ProcessExecutionError,
+  registerProcessSecrets,
+} from "../src/process/process-runtime.js";
 import {
   refinementRecoveryKey,
   refinementRecoverySchema,
@@ -200,6 +204,79 @@ it("paces internal recovery across reopened stores and confirms Failed after thr
   );
   expect(f.sink.filter((message) => message.includes("Event: Attention Required"))).toHaveLength(1);
 });
+
+it.each(["paced", "legacy", "unknown-child"] as const)(
+  "only resumes a stopped pre-claim source fetch after safe restart reconciliation (%s)",
+  async (mode) => {
+    const f = await fixture();
+    const attempt = f.authority.store.attemptId;
+    const directory = path.join(
+      f.pinned.storageRoot,
+      "artifacts",
+      f.project.id,
+      f.card.id,
+      attempt,
+      "process-executions",
+    );
+    const fetch = vi.spyOn(f.git, "fetch").mockImplementation(async () => {
+      const evidence = beginProcessEvidence(
+        `git -c credential.helper= fetch origin ${f.project.repository.defaultBranch}`,
+        f.project.repository.path,
+        [],
+        directory,
+      );
+      evidence.finish("nonzero", { exitCode: 128, treeStopped: true });
+      throw new ProcessExecutionError("Git", evidence.executionId, "nonzero", 128);
+    });
+    const moves: string[] = [];
+    vi.stubGlobal("fetch", (url: URL, init?: RequestInit) => {
+      if (init?.method === "PUT") {
+        const body = JSON.parse(String(init.body)) as { idList?: string };
+        if (body.idList) moves.push(body.idList);
+      }
+      return f.fetch(url, init);
+    });
+    await f.poll();
+    expect(f.card.idList).toBe(f.project.trello.readyListId);
+    expect(f.state()).toMatchObject({ kind: "reconciliation", internalFailures: 0, rechecks: 1 });
+    expect(moves).toEqual([]);
+    if (mode === "legacy") {
+      // A pre-fix service leaves the queue failed and records only the process evidence.
+      f.currentAuthority().remove(refinementRecoveryKey);
+      f.currentAuthority().run(() => {
+        const queue = new TaskMutationQueue(f.pinned.storageRoot, f.project);
+        const event = queue.claimForRecovery(queue.getActive()!.eventId)!;
+        queue.fail(event.eventId);
+      });
+    }
+    await f.reopen();
+    if (mode === "unknown-child") {
+      beginProcessEvidence("git worktree add", f.project.repository.path, [], directory);
+      f.due();
+      await expect(f.poll()).rejects.toThrow("preserve state and pause writes");
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(moves).toEqual([]);
+      expect(f.engineer).not.toHaveBeenCalled();
+      return;
+    }
+    await f.poll();
+    if (mode === "paced") {
+      expect(fetch).toHaveBeenCalledOnce();
+      f.due();
+      await f.poll();
+    }
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(f.state()).toMatchObject({ internalFailures: 0, rechecks: mode === "paced" ? 2 : 1 });
+    expect(f.engineer).not.toHaveBeenCalled();
+    fetch.mockRestore();
+    f.due();
+    await f.poll();
+    expect(f.currentAuthority().store.attemptId).toBe(attempt);
+    expect(f.card.idList).toBe(f.project.trello.backlogListId);
+    expect(f.engineer).toHaveBeenCalledOnce();
+    expect(moves).toEqual([f.project.trello.workingListId, f.project.trello.backlogListId]);
+  },
+);
 
 it.each(["safety", "trello-outage"] as const)(
   "retains %s as a controlled wait, then resumes without charging internal failures",

@@ -29,12 +29,14 @@ it("renders concise observed checks and artifact references instead of raw resul
       coverage: { ...result, command: "", status: "skipped", exitCode: null },
       review: null,
     },
-    { planAvailable: false, diagnosticLog: "/runtime/history/task/session.log" },
+    { planAvailable: false, diagnosticLogReference: "history/sessions/project/session.log" },
   );
   expect(facts).toContain("Validation: passed; command: yarn validate; exit code 0.");
   expect(facts.some((fact) => fact.includes("Not configured; skipped"))).toBe(true);
   expect(facts.some((fact) => fact.includes("not represented as passed"))).toBe(true);
-  expect(facts.join("\n")).toContain("/runtime/history/task/session.log");
+  expect(facts.join("\n")).toContain(
+    "history/sessions/project/session.log under the runtime storage root",
+  );
   expect(facts.join("\n")).not.toMatch(/RAW_DIAGNOSTIC_CANARY|"diagnostic"|"startedAt"/u);
   expect(facts.join("\n")).not.toContain("\u001b");
   expect(facts.every((fact) => fact.length <= 480 && !fact.includes("\n"))).toBe(true);

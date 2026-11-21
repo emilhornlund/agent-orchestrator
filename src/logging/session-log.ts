@@ -12,17 +12,27 @@ function sanitizePathPart(value: string): string {
   });
 }
 
-export function getSessionLogPath(projectId: string, cardId: string): string {
+function sessionLogLocation(projectId: string, cardId: string) {
   const authority = ProjectRunAuthority.current(projectId);
   const record = authority?.store.read();
   const root = record?.cardId === cardId ? record.pinned.storageRoot : getLoggerRuntimeRoot();
-  return path.join(
-    root ? path.resolve(root) : path.join(process.cwd(), "logs"),
+  const reference = path.posix.join(
     "history",
     "sessions",
     sanitizePathPart(projectId),
     `${sanitizePathPart(cardId)}${record?.cardId === cardId ? `-${sanitizePathPart(record.attemptId)}` : ""}.log`,
   );
+  return { root, reference };
+}
+
+/** Storage-relative reference for external diagnostics; never exposes the host root. */
+export function getSessionLogReference(projectId: string, cardId: string): string {
+  return sessionLogLocation(projectId, cardId).reference;
+}
+
+export function getSessionLogPath(projectId: string, cardId: string): string {
+  const { root, reference } = sessionLogLocation(projectId, cardId);
+  return path.join(root ? path.resolve(root) : path.join(process.cwd(), "logs"), reference);
 }
 
 /** Explicit maintenance helper; terminal workflow handlers must not call it. */

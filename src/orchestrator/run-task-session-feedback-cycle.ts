@@ -3,7 +3,7 @@ import type { ProjectConfig } from "../config/config.js";
 import type { CardAttachmentPromptContext } from "../context/card-attachment-prompt.js";
 import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
-import { getSessionLogPath } from "../logging/session-log.js";
+import { getSessionLogPath, getSessionLogReference } from "../logging/session-log.js";
 import { logger } from "../logging/logger.js";
 import type { EmailNotifier } from "../notifications/email-notifier.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
@@ -22,7 +22,7 @@ import { publishVerifiedFeedbackReplies } from "../task-session/publish-verified
 import type { FeedbackVerificationResult } from "../task-session/feedback-verification.js";
 import { reconcileFeedbackRound } from "../task-session/reconcile-feedback-round.js";
 import { FeedbackLedgerStore } from "../task-session/feedback-ledger-store.js";
-import type { FeedbackLedgerEntry } from "../task-session/feedback-ledger.js";
+import { canReplyToFeedback, type FeedbackLedgerEntry } from "../task-session/feedback-ledger.js";
 import { TaskExecutionStore } from "../task-session/task-execution-store.js";
 import { TaskMutationQueue } from "../task-session/task-mutation-queue.js";
 import type { TaskExecutionRecord } from "../task-session/task-execution-record.js";
@@ -285,11 +285,12 @@ export function feedbackOperationId(
 export function feedbackReplyOperationId(
   headSha: string,
   entries: readonly FeedbackLedgerEntry[],
+  history?: readonly FeedbackLedgerEntry[],
 ): string {
   const ids = entries
     .filter(
       (entry) =>
-        entry.actionability === "actionable" &&
+        canReplyToFeedback(entry, history) &&
         ["verified", "escalated", "published"].includes(entry.status) &&
         entry.remediationCommitSha === headSha,
     )
@@ -567,15 +568,18 @@ export async function runTaskSessionFeedbackCycle(
     (resumingReply ||
       ledgerBeforeSync.entries.some(
         (entry) =>
-          entry.isCurrent !== false &&
-          entry.actionability === "actionable" &&
+          canReplyToFeedback(entry, ledgerBeforeSync.history) &&
           ["verified", "escalated"].includes(entry.status) &&
           entry.remediationCommitSha === observation.headSha,
       ))
   ) {
     const replyOperationId = resumingReply
       ? activeReply.eventId
-      : feedbackReplyOperationId(observation.headSha, ledgerBeforeSync.entries);
+      : feedbackReplyOperationId(
+          observation.headSha,
+          ledgerBeforeSync.entries,
+          ledgerBeforeSync.history,
+        );
     if (!resumingReply) {
       options.mutationQueue.enqueue({
         projectId: project.id,
@@ -602,7 +606,7 @@ export async function runTaskSessionFeedbackCycle(
         dispositions: ledgerBeforeSync.entries
           .filter(
             (entry) =>
-              entry.actionability === "actionable" &&
+              canReplyToFeedback(entry, ledgerBeforeSync.history) &&
               ["verified", "escalated", "published"].includes(entry.status) &&
               entry.remediationCommitSha === observation.headSha,
           )
@@ -1355,7 +1359,7 @@ export async function runTaskSessionFeedbackCycle(
       verifiedDescriptionFacts: () => [
         ...publicationQualityFacts(preparedEvidence, {
           planAvailable: storedPlan !== null,
-          diagnosticLog: getSessionLogPath(project.id, card.id),
+          diagnosticLogReference: getSessionLogReference(project.id, card.id),
         }),
         ...feedbackDispositionFacts(verification.dispositions),
         "Remediation outcome: available corrections delivered to human review; failed/skipped checks and unresolved findings remain disclosed.",

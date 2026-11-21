@@ -1898,6 +1898,7 @@ describe("task lifecycle through pollProject", () => {
       expect(record?.phase).toBe("human-feedback");
       const firstPr = prs.get(firstBranch);
       expect(firstPr).toBeDefined();
+      expect(firstPr!.body).not.toContain(contextRoot);
       if (targetMerge) {
         const published = record!.pullRequest!.headSha!;
         firstPr!.reviewDecision = "APPROVED";
@@ -1920,6 +1921,7 @@ describe("task lifecycle through pollProject", () => {
         ]);
         expect(firstPr!.body).toContain("Human release instructions: retain this text.");
         expect(firstPr!.body).toContain("Current automation outcome");
+        expect(firstPr!.body).not.toContain(contextRoot);
         expect(firstPr!.body).toContain("Human note added during maintenance review.");
         expect(firstPr!.body).not.toContain("Agent Orchestrator status:");
         expect(firstPr!.isDraft).toBe(true);

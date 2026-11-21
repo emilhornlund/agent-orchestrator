@@ -28,7 +28,7 @@ import type {
 } from "../github/github-client.js";
 import { establishCiCheckExpectations } from "../github/ci-check-expectations.js";
 import { evaluateCiChecks } from "../github/evaluate-ci-checks.js";
-import { getSessionLogPath } from "../logging/session-log.js";
+import { getSessionLogPath, getSessionLogReference } from "../logging/session-log.js";
 import type { EmailNotifier } from "../notifications/email-notifier.js";
 import {
   buildFailedEmail,
@@ -128,6 +128,7 @@ import {
 } from "./run-task-session-feedback-cycle.js";
 import { inspectPrimaryOperationEvidence } from "../task-session/inspect-primary-operation.js";
 import { FeedbackLedgerStore } from "../task-session/feedback-ledger-store.js";
+import { canReplyToFeedback } from "../task-session/feedback-ledger.js";
 import {
   canResumeFailedFeedbackReview,
   canResumeFeedbackReviewRepair,
@@ -200,8 +201,10 @@ import {
 } from "../refinement/refinement-completion.js";
 import { runRefinementOperation } from "../refinement/refinement-operation.js";
 import {
+  canRetryUnclaimedRefinement,
   refinementRecoveryDue,
   withRefinementRecovery,
+  withRefinementSourceFetchRecovery,
   RefinementRecoveryDeferredError,
 } from "../refinement/refinement-recovery.js";
 import {
@@ -2312,16 +2315,16 @@ async function runTaskSessionWorkflowAttempt(
           ) ?? [];
       const selectedFeedbackId =
         pending.length === 0 ? null : feedbackOperationId(observation.headSha, pending);
-      const currentFeedback = feedbackLedgerStore.read(card.id)?.entries ?? [];
+      const feedbackLedger = feedbackLedgerStore.read(card.id);
+      const currentFeedback = feedbackLedger?.entries ?? [];
       const repliesPending = currentFeedback.some(
         (entry) =>
-          entry.isCurrent !== false &&
-          entry.actionability === "actionable" &&
+          canReplyToFeedback(entry, feedbackLedger?.history) &&
           ["verified", "escalated"].includes(entry.status) &&
           entry.remediationCommitSha === observation.headSha,
       );
       const replyEventId = repliesPending
-        ? feedbackReplyOperationId(observation.headSha, currentFeedback)
+        ? feedbackReplyOperationId(observation.headSha, currentFeedback, feedbackLedger?.history)
         : null;
       const ciEventId = getCiRepairEventId(record, observation.headSha);
       const maintenanceEventId = `pr-maintenance:${card.id}:${observation.headSha}`;
@@ -3181,7 +3184,7 @@ async function runTaskSessionWorkflowAttempt(
               verifiedDescriptionFacts: () => [
                 ...publicationQualityFacts(preparedGate, {
                   planAvailable: planStore.read(card.id) !== null,
-                  diagnosticLog: getSessionLogPath(project.id, card.id),
+                  diagnosticLogReference: getSessionLogReference(project.id, card.id),
                 }),
               ],
               signal,
@@ -4154,7 +4157,13 @@ async function runTaskSessionWorkflowAttempt(
       }
       return;
     }
-    if (currentCard.idList !== project.trello.workingListId)
+    if (
+      currentCard.idList !== project.trello.workingListId &&
+      !(
+        currentCard.idList === project.trello.readyListId &&
+        canRetryUnclaimedRefinement(refinementAuthority, project)
+      )
+    )
       throw new RefinementSetupAmbiguousError(
         "Active refinement was moved unexpectedly; preserve state and pause writes",
       );
@@ -4900,7 +4909,14 @@ async function runTaskSessionWorkflowAttempt(
       if (processRefinement === undefined) {
         throw new Error("Unified scheduler has no refinement operation");
       }
-      const worktree = await prepareWorktree(git, project, card.id);
+      const worktree = await withRefinementSourceFetchRecovery({
+        project,
+        card,
+        worktreePath: taskResources(project, card.id).path,
+        signal,
+        ...(emailNotifier ? { emailNotifier } : {}),
+        execute: () => prepareWorktree(git, project, card.id),
+      });
       cardLog.event("Worktree prepared");
       const stillReady = await getCardsForDiscovery(
         trello,
@@ -6103,7 +6119,7 @@ async function runTaskSessionWorkflowAttempt(
         verifiedDescriptionFacts: () => [
           ...publicationQualityFacts(preparedEvidence, {
             planAvailable: planStore.read(activeCard.id) !== null,
-            diagnosticLog: getSessionLogPath(project.id, activeCard.id),
+            diagnosticLogReference: getSessionLogReference(project.id, activeCard.id),
           }),
           reason === "review-unavailable"
             ? `AI implementation review unavailable: ${unavailableDiagnostic}`
@@ -7077,7 +7093,7 @@ async function runTaskSessionWorkflowAttempt(
         verifiedDescriptionFacts: () => [
           ...publicationQualityFacts(preparedEvidence, {
             planAvailable: planStore.read(activeCard.id) !== null,
-            diagnosticLog: getSessionLogPath(project.id, activeCard.id),
+            diagnosticLogReference: getSessionLogReference(project.id, activeCard.id),
           }),
         ],
         signal,
@@ -7131,7 +7147,7 @@ async function runTaskSessionWorkflowAttempt(
         verifiedDescriptionFacts: () => [
           ...publicationQualityFacts(preparedEvidence, {
             planAvailable: planStore.read(activeCard.id) !== null,
-            diagnosticLog: getSessionLogPath(project.id, activeCard.id),
+            diagnosticLogReference: getSessionLogReference(project.id, activeCard.id),
           }),
         ],
         signal,
@@ -7229,7 +7245,10 @@ async function runTaskSessionWorkflowAttempt(
         return;
       }
     }
-    if (error instanceof TaskSessionImplementationWaitingError) {
+    if (
+      error instanceof TaskSessionImplementationWaitingError ||
+      error instanceof RefinementRecoveryDeferredError
+    ) {
       if (mutation && queue.ownsActive(mutation.eventId))
         queue.releaseForRecovery(mutation.eventId);
       return;
