@@ -149,6 +149,25 @@ Start dates are compared as absolute instants using `Date.parse`, including time
 start-date rule applies only while claiming cards from `Ready for Agent`; it does not reorder cards
 or affect cards already in another workflow list.
 
+### Ready queue ordering example
+
+All card names and timestamps in this example are fictional. At a normal scan at
+`2030-04-12T09:00:00Z`, a project is free to claim a task and its `Ready for Agent` list contains,
+from top to bottom:
+
+1. **Lantern** — labelled `Feature`, with start instant `2030-04-12T10:00:00Z` (still in the
+   future).
+2. **Pebble** — unlabelled, with no start date.
+3. **Willow** — labelled `Improvement`, with no start date (eligible now).
+
+The scan selects the third card, **Willow**. **Lantern** is skipped without being claimed or
+modified and does not block it; **Pebble** is ignored.
+
+At `2030-04-12T10:00:00Z`, **Lantern** becomes eligible. Reaching that instant neither reorders the
+Trello cards nor claims the card immediately. If it remains at the top of `Ready for Agent` and the
+project is free to claim another task, the next normal poll (for example, at `2030-04-12T10:01:00Z`)
+selects **Lantern** ahead of any lower eligible card.
+
 ## Refinement
 
 Invalid structured refinement results receive at most three complete analyses. The allowance and
