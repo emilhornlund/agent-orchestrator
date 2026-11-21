@@ -37,6 +37,7 @@ import { decideValidatedHumanReviewPublication } from "../task-session/verified-
 import { getTaskSessionSourceSnapshotIdentity } from "../task-session/source-snapshot.js";
 import { FeedbackLedgerStore } from "../task-session/feedback-ledger-store.js";
 import { updateMaintenanceStatus } from "./maintenance-status.js";
+import { resetStalePrAutomationOutcome } from "./refresh-pr-automation-outcome.js";
 import { verifyExistingPrOpen } from "./verify-existing-pr-open.js";
 
 import { toFailureError } from "./failure-diagnostic.js";
@@ -783,12 +784,16 @@ export async function publishCard({
             pullRequestUrl: pullRequest.url,
             project,
           });
-          const enrichedBody = enrichPullRequestDescription(
+          const enriched = enrichPullRequestDescription(
             currentBody,
             generatedBody,
             card,
             project.repository.gitIdentity.name,
           );
+          const enrichedBody =
+            enriched === null
+              ? null
+              : resetStalePrAutomationOutcome(enriched, publishedCommitSha, card.url);
           if (enrichedBody !== null && enrichedBody !== currentBody) {
             await github.editPullRequestDescription({
               cwd: worktreePath,
@@ -827,7 +832,8 @@ export async function publishCard({
             decideValidatedHumanReviewPublication(readinessEvidence).allowed &&
             readinessEvidence.currentContentIdentity ===
               (await getTaskSessionSourceSnapshotIdentity(git, worktreePath)) &&
-            enrichedBody !== null
+            enrichedBody !== null &&
+            enrichedBody === enriched
           ) {
             await github.ensurePullRequestReady({
               cwd: worktreePath,
