@@ -8,7 +8,7 @@ import { refreshPrAutomationOutcome } from "./refresh-pr-automation-outcome.js";
 import { decideValidatedHumanReviewPublication } from "../task-session/verified-publication-decision.js";
 import { restorePersistedTaskSessionQualityEvidence } from "../task-session/run-task-session-validation.js";
 import { publicationQualityFacts, ciOutcomeFacts } from "./publication-quality-summary.js";
-import { getSessionLogPath } from "../logging/session-log.js";
+import { getSessionLogReference } from "../logging/session-log.js";
 import {
   implementationReviewResultSchema,
   hasUndisposedReviewConcerns,
@@ -151,12 +151,12 @@ export async function refreshTaskSessionCiOutcome(options: {
       ...(maintenance
         ? [
             `Target synchronization merged ${maintenance.targetBaseHead} into ${maintenance.expectedRemoteHead} without rewriting published commits.`,
-            `Maintenance quality: ${maintenance.qualityVerification?.status ?? "unavailable"}; diagnostics: ${getSessionLogPath(project.id, card.id)}.`,
+            `Maintenance quality: ${maintenance.qualityVerification?.status ?? "unavailable"}; operator diagnostics: ${getSessionLogReference(project.id, card.id)} under the runtime storage root.`,
           ]
         : [
             ...(localEvidence
               ? publicationQualityFacts(localEvidence, {
-                  diagnosticLog: getSessionLogPath(project.id, card.id),
+                  diagnosticLogReference: getSessionLogReference(project.id, card.id),
                 })
               : ["Recorded local quality evidence: unavailable; not represented as passed."]),
           ]),

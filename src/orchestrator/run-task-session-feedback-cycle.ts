@@ -3,7 +3,7 @@ import type { ProjectConfig } from "../config/config.js";
 import type { CardAttachmentPromptContext } from "../context/card-attachment-prompt.js";
 import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
-import { getSessionLogPath } from "../logging/session-log.js";
+import { getSessionLogPath, getSessionLogReference } from "../logging/session-log.js";
 import { logger } from "../logging/logger.js";
 import type { EmailNotifier } from "../notifications/email-notifier.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
@@ -1355,7 +1355,7 @@ export async function runTaskSessionFeedbackCycle(
       verifiedDescriptionFacts: () => [
         ...publicationQualityFacts(preparedEvidence, {
           planAvailable: storedPlan !== null,
-          diagnosticLog: getSessionLogPath(project.id, card.id),
+          diagnosticLogReference: getSessionLogReference(project.id, card.id),
         }),
         ...feedbackDispositionFacts(verification.dispositions),
         "Remediation outcome: available corrections delivered to human review; failed/skipped checks and unresolved findings remain disclosed.",

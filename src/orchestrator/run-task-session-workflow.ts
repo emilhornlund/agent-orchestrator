@@ -28,7 +28,7 @@ import type {
 } from "../github/github-client.js";
 import { establishCiCheckExpectations } from "../github/ci-check-expectations.js";
 import { evaluateCiChecks } from "../github/evaluate-ci-checks.js";
-import { getSessionLogPath } from "../logging/session-log.js";
+import { getSessionLogPath, getSessionLogReference } from "../logging/session-log.js";
 import type { EmailNotifier } from "../notifications/email-notifier.js";
 import {
   buildFailedEmail,
@@ -3183,7 +3183,7 @@ async function runTaskSessionWorkflowAttempt(
               verifiedDescriptionFacts: () => [
                 ...publicationQualityFacts(preparedGate, {
                   planAvailable: planStore.read(card.id) !== null,
-                  diagnosticLog: getSessionLogPath(project.id, card.id),
+                  diagnosticLogReference: getSessionLogReference(project.id, card.id),
                 }),
               ],
               signal,
@@ -6118,7 +6118,7 @@ async function runTaskSessionWorkflowAttempt(
         verifiedDescriptionFacts: () => [
           ...publicationQualityFacts(preparedEvidence, {
             planAvailable: planStore.read(activeCard.id) !== null,
-            diagnosticLog: getSessionLogPath(project.id, activeCard.id),
+            diagnosticLogReference: getSessionLogReference(project.id, activeCard.id),
           }),
           reason === "review-unavailable"
             ? `AI implementation review unavailable: ${unavailableDiagnostic}`
@@ -7092,7 +7092,7 @@ async function runTaskSessionWorkflowAttempt(
         verifiedDescriptionFacts: () => [
           ...publicationQualityFacts(preparedEvidence, {
             planAvailable: planStore.read(activeCard.id) !== null,
-            diagnosticLog: getSessionLogPath(project.id, activeCard.id),
+            diagnosticLogReference: getSessionLogReference(project.id, activeCard.id),
           }),
         ],
         signal,
@@ -7146,7 +7146,7 @@ async function runTaskSessionWorkflowAttempt(
         verifiedDescriptionFacts: () => [
           ...publicationQualityFacts(preparedEvidence, {
             planAvailable: planStore.read(activeCard.id) !== null,
-            diagnosticLog: getSessionLogPath(project.id, activeCard.id),
+            diagnosticLogReference: getSessionLogReference(project.id, activeCard.id),
           }),
         ],
         signal,
