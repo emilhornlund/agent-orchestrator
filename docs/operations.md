@@ -23,6 +23,11 @@ yarn doctor -c /secure/config.yaml
 yarn doctor -j -c "/secure/config files/production.yaml"
 ```
 
+- A local doctor check can confirm configuration validity or installed tool versions without
+  contacting live services.
+- A startup check can require live resources, such as access to configured Trello lists and the
+  configured GitHub repository; see the [workflow guidance](workflow.md).
+
 `-c PATH` is equivalent to `--config PATH` and selects only the diagnostic configuration file;
 `yarn dev` and `node dist/main.js` still load `config.yaml` from the service working directory.
 Passing doctor confirms local configuration/tool compatibility only, not live service readiness:
