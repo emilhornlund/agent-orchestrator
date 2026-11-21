@@ -142,12 +142,7 @@ it("paces pre-claim Git fetch failures across restarts and resumes without spend
   const f = await fixture();
   const fetch = vi.spyOn(f.git, "fetch").mockImplementation(async () => {
     const command = `git -c credential.helper= fetch origin ${f.project.repository.defaultBranch}`;
-    const evidence = beginProcessEvidence(
-      command,
-      f.project.repository.path,
-      [],
-      f.store().processExecutionDirectory(f.card.id)!,
-    );
+    const evidence = beginProcessEvidence(command, f.project.repository.path);
     evidence.finish("nonzero", { exitCode: 128, treeStopped: true });
     throw new ProcessExecutionError("Git", evidence.executionId, "nonzero", 128);
   });

@@ -274,9 +274,10 @@ export async function withImplementationPreparationRecovery(options: {
     // A source fetch happens before the task checkpoint exists. Its verified
     // failure is an unavailable Git prerequisite, not an implementation crash.
     // Keep the same attempt and use the persisted paced wait across restarts.
+    // Unlike explicit setup evidence, Git uses the task-scoped default layout.
     const process =
       beforeClaim && error instanceof ProcessExecutionError
-        ? store.readProcessExecution(cardId, error.executionId)
+        ? store.readProcessExecution(cardId, error.executionId, "process-executions")
         : null;
     const fetchUnavailable =
       process !== null &&
