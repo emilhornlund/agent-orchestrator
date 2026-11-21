@@ -30,6 +30,11 @@ authentication, remote resources, isolation namespaces, coordination provisionin
 permissions remain unverified. See the [README doctor guidance](../README.md#running) for full usage
 and report details.
 
+If startup reports that another local service owns a project, identify the reported owner PID and
+confirm it belongs to that service. Gracefully stop that instance before starting a replacement, and
+preserve the lock and runtime state. See
+[Restart and task ownership](recovery.md#restart-and-task-ownership) for recovery guidance.
+
 The supplied `Containerfile` builds the same production entry point, installs the required tools and
 runs as the non-root `node` user. Build it with either:
 
