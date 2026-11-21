@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { pollProject } from "../src/orchestrator/poll-project.js";
 import type { EmailNotifier } from "../src/notifications/email-notifier.js";
 import { runOrchestrator } from "../src/orchestrator/run-orchestrator.js";
+import { Logger } from "../src/logging/logger.js";
 import type { Config } from "../src/config/config.js";
 import { GitHubClient } from "../src/github/github-client.js";
 import { reconcileWorkflowMutations } from "../src/orchestrator/reconcile-workflow-mutations.js";
@@ -266,6 +267,35 @@ function task(f: ReturnType<typeof reopenPublicationFixture>) {
 }
 
 describe("setup-aware initial publication commit scope", () => {
+  it("reports actual retry lag and work durations for a verified publication write", async () => {
+    const f = fixture();
+    await begin(f);
+    await poll(f);
+    const retryAt = operation(f, "commit")?.mutation?.nextRecheckAt;
+    expect(retryAt).toEqual(expect.any(String));
+    vi.setSystemTime(Date.parse(retryAt!) + 8_000);
+    const resumedAt = new Date().toISOString();
+    const events = vi.spyOn(Logger.prototype, "event");
+    try {
+      await poll(f, false);
+      const prefix = "Initial publication initial:commit readback: verified; ";
+      const message = events.mock.calls.find(([text]) => text.startsWith(prefix))?.[0];
+      expect(message).toBeDefined();
+      expect(JSON.parse(message!.slice(prefix.length))).toEqual({
+        retryAt,
+        resumedAt,
+        retryLagMs: 8_000,
+        beforeReadbackMs: expect.any(Number),
+        setupCheckMs: expect.any(Number),
+        sourceCheckMs: expect.any(Number),
+        readbackMs: expect.any(Number),
+      });
+      expect(operation(f, "commit")?.status).toBe("completed");
+    } finally {
+      events.mockRestore();
+    }
+  });
+
   it("reconciles a lost draft-promotion acknowledgment without resending after restart", async () => {
     const f = fixture();
     await begin(f, "feat: initial draft", undefined, true);

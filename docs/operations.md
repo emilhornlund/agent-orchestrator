@@ -682,6 +682,13 @@ attempt's `artifacts/<project>/<card>/<attempt>/process-executions/` tree. Valid
 reported by an agent are concise diagnostics with a session-log reference; the complete redacted
 stdout and stderr remain in that per-card log instead of being dumped to the service log.
 
+Initial publication logs whether it reuses matching validation and coverage results from the live
+workflow or runs fresh checks. Readback events (`Initial publication initial:<step> readback`)
+include the scheduled retry time, actual resume time, and retry lag. `beforeReadbackMs` measures the
+work in that pass before the step-specific read, including time in the setup scope and source
+fingerprint checks. `readbackMs` measures the step-specific read itself. Compare these durations
+before changing the poll interval.
+
 Credential redaction retains quoted escape boundaries in serialized tool output, including nested
 planning JSON and values split across stream chunks. Intentional review or requested-changes
 cancellation is logged as cancellation with its checkpoint preserved; a genuine concurrent failure

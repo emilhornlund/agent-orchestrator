@@ -362,7 +362,7 @@ describe("task lifecycle through pollProject", () => {
       };
       let git = new GitClient(runGit);
       let changedPreparedSource = false;
-      if (preparedReview !== undefined) {
+      if (preparedReview !== undefined || preparedValidationFailure) {
         const compareAndSwap = TaskExecutionStore.prototype.compareAndSwap;
         vi.spyOn(TaskExecutionStore.prototype, "compareAndSwap").mockImplementation(function (
           this: TaskExecutionStore,
@@ -1680,6 +1680,12 @@ describe("task lifecycle through pollProject", () => {
         for (let pass = 0; pass < 8 && !prs.has(firstBranch); pass++) await poll();
         const preparedPr = prs.get(firstBranch);
         expect(preparedPr).toBeDefined();
+        expect(
+          observedCommands.filter((command) => command === project.repository.validationCommand),
+        ).toHaveLength(2);
+        expect(
+          observedCommands.filter((command) => command === project.repository.coverageCommand),
+        ).toHaveLength(2);
         expect(reviewerRounds).toBe(2);
         expect(publicationQualityAtCreate).toHaveLength(1);
         const persistedPublicationQuality = publicationQualityAtCreate[0] as {
@@ -1929,6 +1935,12 @@ describe("task lifecycle through pollProject", () => {
       );
       const progressMessages = progress.mock.calls.map(([message]) => message);
       if (publishedReadRecovery) {
+        expect(
+          observedCommands.filter((command) => command === project.repository.validationCommand),
+        ).toHaveLength(1);
+        expect(
+          observedCommands.filter((command) => command === project.repository.coverageCommand),
+        ).toHaveLength(1);
         const owner = authorities.get("first")!;
         const taskStore = new TaskExecutionStore(contextRoot, project, owner);
         const before = taskStore.read("first")!;
