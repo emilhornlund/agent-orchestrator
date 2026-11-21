@@ -30,6 +30,16 @@ authentication, remote resources, isolation namespaces, coordination provisionin
 permissions remain unverified. See the [README doctor guidance](../README.md#running) for full usage
 and report details.
 
+If startup reports that another local service owns a project:
+
+1. Inspect the reported owner PID and confirm its running command and checkout or service context
+   match the expected instance before signaling it.
+2. If the PID is absent or its identity does not match, the lock pathname alone does not prove a
+   live owner: do not signal a process or remove the lock; follow
+   [Restart and task ownership](recovery.md#restart-and-task-ownership).
+3. Only if step 1 verified the process identity, gracefully stop that instance before starting a
+   replacement, and preserve the lock and runtime state.
+
 The supplied `Containerfile` builds the same production entry point, installs the required tools and
 runs as the non-root `node` user. Build it with either:
 
