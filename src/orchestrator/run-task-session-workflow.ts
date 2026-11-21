@@ -200,8 +200,10 @@ import {
 } from "../refinement/refinement-completion.js";
 import { runRefinementOperation } from "../refinement/refinement-operation.js";
 import {
+  canRetryUnclaimedRefinement,
   refinementRecoveryDue,
   withRefinementRecovery,
+  withRefinementSourceFetchRecovery,
   RefinementRecoveryDeferredError,
 } from "../refinement/refinement-recovery.js";
 import {
@@ -4154,7 +4156,13 @@ async function runTaskSessionWorkflowAttempt(
       }
       return;
     }
-    if (currentCard.idList !== project.trello.workingListId)
+    if (
+      currentCard.idList !== project.trello.workingListId &&
+      !(
+        currentCard.idList === project.trello.readyListId &&
+        canRetryUnclaimedRefinement(refinementAuthority, project)
+      )
+    )
       throw new RefinementSetupAmbiguousError(
         "Active refinement was moved unexpectedly; preserve state and pause writes",
       );
@@ -4900,7 +4908,14 @@ async function runTaskSessionWorkflowAttempt(
       if (processRefinement === undefined) {
         throw new Error("Unified scheduler has no refinement operation");
       }
-      const worktree = await prepareWorktree(git, project, card.id);
+      const worktree = await withRefinementSourceFetchRecovery({
+        project,
+        card,
+        worktreePath: taskResources(project, card.id).path,
+        signal,
+        ...(emailNotifier ? { emailNotifier } : {}),
+        execute: () => prepareWorktree(git, project, card.id),
+      });
       cardLog.event("Worktree prepared");
       const stillReady = await getCardsForDiscovery(
         trello,
@@ -7229,7 +7244,10 @@ async function runTaskSessionWorkflowAttempt(
         return;
       }
     }
-    if (error instanceof TaskSessionImplementationWaitingError) {
+    if (
+      error instanceof TaskSessionImplementationWaitingError ||
+      error instanceof RefinementRecoveryDeferredError
+    ) {
       if (mutation && queue.ownsActive(mutation.eventId))
         queue.releaseForRecovery(mutation.eventId);
       return;

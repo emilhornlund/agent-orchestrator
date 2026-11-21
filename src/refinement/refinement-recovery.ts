@@ -1,14 +1,26 @@
+import fs from "node:fs";
+import path from "node:path";
 import { z } from "zod";
 import type { ProjectConfig } from "../config/config.js";
 import { logger } from "../logging/logger.js";
 import { getSessionLogPath } from "../logging/session-log.js";
 import { notifyAttentionRequired, type EmailNotifier } from "../notifications/email-notifier.js";
+import {
+  isVerifiedStoppedExecution,
+  isVerifiedSuccessfulExecution,
+  ProcessExecutionError,
+} from "../process/process-runtime.js";
 import { presentExternalDiagnostic } from "../security/bounded-diagnostic.js";
 import { sanitizeControlledText } from "../security/redact-secrets.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { isConclusiveOperationResolution } from "../task-session/run-record.js";
+import { TaskExecutionStore } from "../task-session/task-execution-store.js";
 import { isRetryableTrelloError, type TrelloCard } from "../trello/trello-client.js";
-import { recordRefinementAnalysisFailure } from "./refinement-input.js";
+import {
+  recordRefinementAnalysisFailure,
+  refinementInputKey,
+  refinementInputSchema,
+} from "./refinement-input.js";
 import { refinementMutationSnapshotKey } from "./refinement-mutation-snapshot.js";
 import { refinementAnalysisIsStopped } from "./run-refinement.js";
 import {
@@ -49,6 +61,94 @@ export function refinementRecoveryDue(authority: ProjectRunAuthority | undefined
   return !recovery || Date.now() >= Date.parse(recovery.nextCheckAt);
 }
 
+function isUnclaimedRefinement(authority: ProjectRunAuthority): boolean {
+  const run = authority.store.read();
+  return (
+    run?.taskKind === "refinement" &&
+    run.lifecycle === "refinement" &&
+    run.publicationState === "none" &&
+    Object.keys(run.sessions).length === 0 &&
+    run.pendingOperations.every(
+      (operation) => operation.kind !== "trello-move" && isConclusiveOperationResolution(operation),
+    ) &&
+    authority.read(refinementInputKey, refinementInputSchema.parse) === null
+  );
+}
+
+function isStoppedSourceFetch(evidence: unknown, executionId: string, project: ProjectConfig) {
+  const fetch = `fetch origin ${project.repository.defaultBranch}`;
+  return [`git ${fetch}`, `git -c credential.helper= ${fetch}`].some((command) =>
+    isVerifiedStoppedExecution(evidence, { executionId, command, cwd: project.repository.path }),
+  );
+}
+
+/** Adopt older pre-claim failures as well, but do not replay a claim or an unknown writer. */
+export function canRetryUnclaimedRefinement(
+  authority: ProjectRunAuthority,
+  project: ProjectConfig,
+): boolean {
+  if (!isUnclaimedRefinement(authority)) return false;
+  const cardId = authority.cardId!;
+  const store = new TaskExecutionStore(authority.store.storageRoot, project, authority);
+  const directory = path.join(store.processExecutionDirectory(cardId)!, "process-executions");
+  if (!fs.lstatSync(directory, { throwIfNoEntry: false })?.isDirectory()) return false;
+  let stoppedFetch = false;
+  for (const executionId of fs.readdirSync(directory)) {
+    const evidence = store.readProcessExecution(cardId, executionId, "process-executions");
+    if (isStoppedSourceFetch(evidence, executionId, project)) stoppedFetch = true;
+    else if (
+      !evidence ||
+      typeof evidence !== "object" ||
+      !("command" in evidence) ||
+      typeof evidence.command !== "string" ||
+      !("cwd" in evidence) ||
+      typeof evidence.cwd !== "string" ||
+      !isVerifiedSuccessfulExecution(evidence, {
+        executionId,
+        command: evidence.command,
+        cwd: evidence.cwd,
+      })
+    )
+      return false;
+  }
+  return stoppedFetch;
+}
+
+export async function withRefinementSourceFetchRecovery<T>(
+  options: Parameters<typeof withRefinementRecovery<T>>[0],
+): Promise<T> {
+  return withRefinementRecovery({
+    ...options,
+    execute: async () => {
+      try {
+        return await options.execute();
+      } catch (error) {
+        const { project, card, signal } = options;
+        const authority = ProjectRunAuthority.current(project.id);
+        if (
+          !signal.aborted &&
+          authority?.cardId === card.id &&
+          error instanceof ProcessExecutionError &&
+          canRetryUnclaimedRefinement(authority, project)
+        ) {
+          const store = new TaskExecutionStore(authority.store.storageRoot, project, authority);
+          if (
+            isStoppedSourceFetch(
+              store.readProcessExecution(card.id, error.executionId, "process-executions"),
+              error.executionId,
+              project,
+            )
+          )
+            throw new RefinementSetupAmbiguousError("Refinement source fetch did not complete", {
+              cause: error,
+            });
+        }
+        throw error;
+      }
+    },
+  });
+}
+
 /** No terminal failure while a child or a card write might still be in flight. */
 function canFinalizeInternalFailure(
   authority: ProjectRunAuthority,
@@ -71,14 +171,14 @@ function canFinalizeInternalFailure(
   }
 }
 
-export async function withRefinementRecovery(options: {
+export async function withRefinementRecovery<T>(options: {
   project: ProjectConfig;
   card: TrelloCard;
   worktreePath: string;
   signal: AbortSignal;
   emailNotifier?: EmailNotifier;
-  execute: () => Promise<void>;
-}): Promise<void> {
+  execute: () => Promise<T>;
+}): Promise<T> {
   const { project, card, worktreePath, signal } = options;
   const authority = ProjectRunAuthority.current(project.id);
   if (!authority) return options.execute();
@@ -105,8 +205,9 @@ export async function withRefinementRecovery(options: {
         "Internal refinement recovery is exhausted; waiting for verified stopped execution and unambiguous card effects",
         { cause: new Error(previous.reason) },
       );
-    await options.execute();
+    const result = await options.execute();
     if (previous && !signal.aborted) authority.remove(refinementRecoveryKey);
+    return result;
   } catch (error) {
     if (signal.aborted || !(error instanceof RefinementSetupAmbiguousError)) throw error;
     const internal =
