@@ -38,8 +38,6 @@ it.each([false, true])(
       errorOutput: "",
       output: JSON.stringify({
         version: 1,
-        projectId: project.id,
-        cardId: "card",
         assessments: [
           {
             feedbackId: "conversation-comment:1",
@@ -52,7 +50,6 @@ it.each([false, true])(
     }));
     const result = await classifyCurrentFeedback({
       project,
-      cardId: "card",
       incoming: [incoming],
       previous: [entry],
       worktreePath: "/tmp",
@@ -60,11 +57,12 @@ it.each([false, true])(
       signal: new AbortController().signal,
     });
     expect(result[0]?.requestRevision).toBe(changed ? 2 : 1);
-    expect(run).toHaveBeenCalledWith(expect.objectContaining({ readOnly: true }));
+    expect(run).toHaveBeenCalledWith(
+      expect.objectContaining({ readOnly: true, prompt: expect.not.stringContaining('"cardId"') }),
+    );
     run.mockClear();
     await classifyCurrentFeedback({
       project,
-      cardId: "card",
       incoming: result.map((item) => ({
         ...item,
         headSha: "b".repeat(40),
@@ -104,7 +102,6 @@ it.each(["wrong-source", "missing", "duplicate", "invented"])(
     await expect(
       classifyCurrentFeedback({
         project,
-        cardId: "card",
         incoming: [entry],
         previous: [],
         worktreePath: "/tmp",
@@ -114,8 +111,6 @@ it.each(["wrong-source", "missing", "duplicate", "invented"])(
           errorOutput: "",
           output: JSON.stringify({
             version: 1,
-            projectId: project.id,
-            cardId: "card",
             assessments,
           }),
         })),
