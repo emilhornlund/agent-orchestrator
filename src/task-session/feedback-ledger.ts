@@ -102,6 +102,46 @@ const feedbackLedgerSchema = z
 export type FeedbackLedgerEntry = z.infer<typeof feedbackEntrySchema>;
 export type FeedbackLedger = z.infer<typeof feedbackLedgerSchema>;
 
+/** An edit to the code can make a thread outdated before its verified reply is sent. */
+export function canReplyToFeedback(
+  entry: FeedbackLedgerEntry,
+  history: readonly FeedbackLedgerEntry[] = [],
+): boolean {
+  if (entry.isCurrent === false || entry.isResolved === true || entry.status === "closed")
+    return false;
+  if (entry.actionability === "actionable" && entry.isOutdated !== true) return true;
+  return (
+    entry.kind === "inline-comment" &&
+    entry.isOutdated === true &&
+    entry.isResolved === false &&
+    entry.threadId !== undefined &&
+    entry.sourceRevision !== undefined &&
+    entry.remediationCommitSha !== undefined &&
+    entry.status === "verified" &&
+    entry.resolution === "verified-fixed" &&
+    entry.verificationEvidence.length > 0 &&
+    history.some(
+      (original) =>
+        original.kind === entry.kind &&
+        original.id === entry.id &&
+        original.threadId === entry.threadId &&
+        original.author === entry.author &&
+        original.body === entry.body &&
+        original.path === entry.path &&
+        original.originalLine === entry.originalLine &&
+        original.commitSha === entry.commitSha &&
+        original.sourceRevision === entry.sourceRevision &&
+        original.requestRevision === entry.requestRevision &&
+        original.remediationCommitSha === entry.remediationCommitSha &&
+        original.status === "verified" &&
+        original.resolution === "verified-fixed" &&
+        original.actionability === "actionable" &&
+        original.isOutdated === false &&
+        original.isResolved === false,
+    )
+  );
+}
+
 export function parseFeedbackLedger(value: unknown): FeedbackLedger {
   return feedbackLedgerSchema.parse(value);
 }

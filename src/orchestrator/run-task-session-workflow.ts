@@ -128,6 +128,7 @@ import {
 } from "./run-task-session-feedback-cycle.js";
 import { inspectPrimaryOperationEvidence } from "../task-session/inspect-primary-operation.js";
 import { FeedbackLedgerStore } from "../task-session/feedback-ledger-store.js";
+import { canReplyToFeedback } from "../task-session/feedback-ledger.js";
 import {
   canResumeFailedFeedbackReview,
   canResumeFeedbackReviewRepair,
@@ -2314,16 +2315,16 @@ async function runTaskSessionWorkflowAttempt(
           ) ?? [];
       const selectedFeedbackId =
         pending.length === 0 ? null : feedbackOperationId(observation.headSha, pending);
-      const currentFeedback = feedbackLedgerStore.read(card.id)?.entries ?? [];
+      const feedbackLedger = feedbackLedgerStore.read(card.id);
+      const currentFeedback = feedbackLedger?.entries ?? [];
       const repliesPending = currentFeedback.some(
         (entry) =>
-          entry.isCurrent !== false &&
-          entry.actionability === "actionable" &&
+          canReplyToFeedback(entry, feedbackLedger?.history) &&
           ["verified", "escalated"].includes(entry.status) &&
           entry.remediationCommitSha === observation.headSha,
       );
       const replyEventId = repliesPending
-        ? feedbackReplyOperationId(observation.headSha, currentFeedback)
+        ? feedbackReplyOperationId(observation.headSha, currentFeedback, feedbackLedger?.history)
         : null;
       const ciEventId = getCiRepairEventId(record, observation.headSha);
       const maintenanceEventId = `pr-maintenance:${card.id}:${observation.headSha}`;

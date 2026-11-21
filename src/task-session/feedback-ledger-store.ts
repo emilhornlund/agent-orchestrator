@@ -235,6 +235,7 @@ export class FeedbackLedgerStore {
           previous.line !== incoming.line ||
           previous.originalLine !== incoming.originalLine ||
           previous.diffHunk !== incoming.diffHunk ||
+          (previous.isOutdated !== true && incoming.isOutdated === true) ||
           (incoming.requestRevision ?? 0) > (previous.requestRevision ?? 0) ||
           previous.isCurrent === false)
       )
