@@ -118,3 +118,34 @@ it.each(["wrong-source", "missing", "duplicate", "invented"])(
     ).rejects.toThrow("does not match");
   },
 );
+
+it("recovers once from the observed combined actionability token without weakening source validation", async () => {
+  const run = vi.fn(async () => ({
+    exitCode: 0,
+    errorOutput: "",
+    output: JSON.stringify({
+      version: 1,
+      assessments: [
+        {
+          feedbackId: "conversation-comment:1",
+          sourceRevision: feedbackSourceRevision(entry),
+          actionability: run.mock.calls.length === 1 ? "discussion/not-actionable" : "discussion",
+          substantiveChange: false,
+        },
+      ],
+    }),
+  }));
+  const result = await classifyCurrentFeedback({
+    project,
+    incoming: [entry],
+    previous: [],
+    worktreePath: "/tmp",
+    signal: new AbortController().signal,
+    openCode: new OpenCodeClient(run),
+  });
+  expect(run).toHaveBeenCalledTimes(2);
+  expect(run).toHaveBeenLastCalledWith(
+    expect.objectContaining({ prompt: expect.stringContaining('"discussion", "not-actionable"') }),
+  );
+  expect(result[0]?.actionability).toBe("discussion");
+});
