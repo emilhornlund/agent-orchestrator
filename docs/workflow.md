@@ -331,7 +331,7 @@ are also evaluated, and commit-status history uses the latest context result rat
 same-head success or failure.
 
 An uncertain overall CI result can coexist with an already visible failed check. Open the pull
-request's **Checks** tab to inspect the finished failed job and see which jobs are still running.
+request's **Checks** tab to open the failed job’s logs and see which jobs are still running.
 
 ## Human review
 
