@@ -15,6 +15,7 @@ import {
 } from "../task-session/implementation-review-result.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { FeedbackLedgerStore } from "../task-session/feedback-ledger-store.js";
+import { isOutstandingFeedback } from "../task-session/feedback-ledger.js";
 
 /** Repeatable presentation has no AI dispatch and can recover after a no-op or exhausted episode. */
 export async function refreshTaskSessionCiOutcome(options: {
@@ -98,16 +99,7 @@ export async function refreshTaskSessionCiOutcome(options: {
   const feedback = authority
     ? new FeedbackLedgerStore(authority.store.storageRoot, project, authority).read(card.id)
     : null;
-  const unresolvedHumanRequests =
-    feedback?.entries.some(
-      (entry) =>
-        entry.actionability === "unclassified" ||
-        (entry.actionability === "actionable" &&
-          entry.status !== "closed" &&
-          (entry.unresolvedReason !== undefined ||
-            entry.verificationEvidence.length === 0 ||
-            !["verified", "published"].includes(entry.status))),
-    ) ?? false;
+  const unresolvedHumanRequests = feedback?.entries.some(isOutstandingFeedback) ?? false;
   await refreshPrAutomationOutcome({
     github,
     project,

@@ -20,7 +20,7 @@ import { mutationProvenNotDelivered } from "../task-session/durable-mutation.js"
 import { ProcessExecutionError } from "../process/process-runtime.js";
 import { TrelloRequestError } from "../trello/trello-client.js";
 import { TaskExecutionStore } from "../task-session/task-execution-store.js";
-import { captureSetupEffects, assertSetupInventoryIdentity } from "../process/run-setup.js";
+import { captureSetupPath, assertSetupInventoryIdentity } from "../process/run-setup.js";
 import {
   getSetupTrackedDelta,
   resolveSetupCommitScope,
@@ -110,7 +110,6 @@ async function validateSetupDisposition(
   checkpoint: Checkpoint,
   run: NonNullable<ReturnType<ProjectRunAuthority["store"]["read"]>>,
   project: ProjectConfig,
-  git: GitClient,
   cwd: string,
 ): Promise<void> {
   const disposition = checkpoint.setupDisposition;
@@ -175,8 +174,6 @@ async function validateSetupDisposition(
     throw new PublicationSafetyError(
       "Setup scope proof context differs from durable relevance evidence",
     );
-  const live = JSON.parse((await captureSetupEffects(git, cwd)).toString("utf8")) as unknown;
-  assertSetupInventoryIdentity(live, cwd, checkpoint.branch);
   const candidatePaths = getSetupTrackedDelta(
     before as SetupInventory,
     after as SetupInventory,
@@ -185,10 +182,9 @@ async function validateSetupDisposition(
   const recordedByPath = new Map(
     (artifact.current as SetupInventory).files.map((file) => [file.path, file]),
   );
-  const liveByPath = new Map((live as SetupInventory).files.map((file) => [file.path, file]));
   for (const filePath of candidatePaths) {
     const expected = recordedByPath.get(filePath);
-    const actual = liveByPath.get(filePath);
+    const actual = captureSetupPath(cwd, filePath);
     if (
       (expected === undefined && actual !== undefined) ||
       (expected !== undefined &&
@@ -198,7 +194,6 @@ async function validateSetupDisposition(
         `Setup relevance evidence is stale for ${filePath}; refusing to stage or commit`,
       );
   }
-  void git;
 }
 
 async function assertSetupPreservation(
@@ -207,7 +202,7 @@ async function assertSetupPreservation(
   checkpoint: Checkpoint,
 ): Promise<void> {
   const excluded = checkpoint.setupDisposition?.exclude ?? [];
-  await assertSetupExcludedIdentities(git, cwd, checkpoint);
+  assertSetupExcludedIdentities(cwd, checkpoint);
   const changed = (await git.getUnstagedChangedPaths(cwd)).sort();
   const expected = excluded.map((entry) => entry.path).sort();
   if (
@@ -219,18 +214,11 @@ async function assertSetupPreservation(
     );
 }
 
-async function assertSetupExcludedIdentities(
-  git: GitClient,
-  cwd: string,
-  checkpoint: Checkpoint,
-): Promise<void> {
+function assertSetupExcludedIdentities(cwd: string, checkpoint: Checkpoint): void {
   const excluded = checkpoint.setupDisposition?.exclude ?? [];
   if (excluded.length === 0) return;
-  const inventory = JSON.parse((await captureSetupEffects(git, cwd)).toString("utf8")) as unknown;
-  assertSetupInventoryIdentity(inventory, cwd, checkpoint.branch);
-  const currentByPath = new Map(inventory.files.map((file) => [file.path, file]));
   for (const entry of excluded) {
-    const current = currentByPath.get(entry.path);
+    const current = captureSetupPath(cwd, entry.path);
     if (
       (entry.identity === "absent" && current !== undefined) ||
       (entry.identity !== "absent" && (!current || setupFileIdentity(current) !== entry.identity))
@@ -502,7 +490,7 @@ export async function resumeInitialPublication(options: {
   const cwd = runTaskResources(run).path;
   const cardLog = logger.child({ projectId: project.id, cardId: checkpoint.cardId });
   const setupCheckStarted = performance.now();
-  await validateSetupDisposition(checkpoint, run, options.project, git, cwd);
+  await validateSetupDisposition(checkpoint, run, options.project, cwd);
   const setupCheckMs = Math.round(performance.now() - setupCheckStarted);
   let sourceCheckMs = 0;
   const now = () => new Date().toISOString();
@@ -806,8 +794,7 @@ export async function resumeInitialPublication(options: {
           cwd,
           checkpoint.setupDisposition?.exclude.map((item) => item.path) ?? [],
         );
-        await validateSetupDisposition(checkpoint, run, project, git, cwd);
-        await assertSetupExcludedIdentities(git, cwd, checkpoint);
+        await validateSetupDisposition(checkpoint, run, project, cwd);
         payload = {
           parent: gitSha.parse(await git.getHeadSha(cwd)),
           tree: gitSha.parse(await git.getIndexTreeSha(cwd)),
@@ -854,8 +841,7 @@ export async function resumeInitialPublication(options: {
         async () => {
           const head = await git.getHeadSha(cwd);
           if (head === payload.parent) {
-            await validateSetupDisposition(checkpoint!, run, project, git, cwd);
-            await assertSetupExcludedIdentities(git, cwd, checkpoint!);
+            await validateSetupDisposition(checkpoint!, run, project, cwd);
             if (
               (await git.getIndexTreeSha(cwd)) !== payload.tree ||
               (await git.getUnstagedChangedPaths(cwd)).some(

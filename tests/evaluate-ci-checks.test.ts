@@ -66,6 +66,23 @@ function evaluate(
 }
 
 describe("evaluateCiChecks", () => {
+  it("reports a known current-head failure while the workflow's expected set is incomplete", () => {
+    const failed = checkRun("Backend E2E", "completed", "failure");
+    const incomplete: CiCheckExpectationDecision = {
+      status: "uncertain",
+      diagnostic: "Workflow still in progress",
+      expectedCheckNames: ["Backend E2E", "Frontend E2E"],
+    };
+    expect(
+      evaluate([], [failed, checkRun("Frontend E2E", "in_progress")], incomplete),
+    ).toMatchObject({
+      status: "uncertain",
+      diagnostic: "Workflow still in progress",
+      failures: [failed],
+      pendingChecks: ["Frontend E2E"],
+    });
+    expect(evaluate([], [failed], incomplete, "b".repeat(40))).not.toHaveProperty("failures");
+  });
   it.each(["failure", "queued"])(
     "does not ignore a newly registered %s check absent from a static contract",
     (state) => {

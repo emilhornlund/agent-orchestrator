@@ -22,7 +22,12 @@ import { publishVerifiedFeedbackReplies } from "../task-session/publish-verified
 import type { FeedbackVerificationResult } from "../task-session/feedback-verification.js";
 import { reconcileFeedbackRound } from "../task-session/reconcile-feedback-round.js";
 import { FeedbackLedgerStore } from "../task-session/feedback-ledger-store.js";
-import { canReplyToFeedback, type FeedbackLedgerEntry } from "../task-session/feedback-ledger.js";
+import {
+  canReplyToFeedback,
+  isOutstandingFeedback,
+  type FeedbackLedgerEntry,
+} from "../task-session/feedback-ledger.js";
+import { verifyExistingPrOpen } from "./verify-existing-pr-open.js";
 import { TaskExecutionStore } from "../task-session/task-execution-store.js";
 import { TaskMutationQueue } from "../task-session/task-mutation-queue.js";
 import type { TaskExecutionRecord } from "../task-session/task-execution-record.js";
@@ -175,6 +180,7 @@ function toFeedbackEntries(observation: ObservedTaskSessionReviewCard): Feedback
         createdAt: review.submittedAt,
         updatedAt: null,
         body: review.body,
+        ...(review.supersessionOnly === true ? { supersessionOnly: true } : {}),
         ...(review.commitSha === undefined ? {} : { commitSha: review.commitSha }),
         headSha: observation.headSha,
         actionability: "unclassified",
@@ -249,6 +255,7 @@ export async function refreshCurrentTaskFeedback(options: {
   const previous = options.ledgerStore.read(options.cardId);
   const incoming = await classifyCurrentFeedback({
     ...options,
+    pullRequestUrl: options.observation.pullRequestUrl,
     incoming: toFeedbackEntries(options.observation),
     previous: previous?.entries ?? [],
   });
@@ -378,22 +385,66 @@ export async function runTaskSessionFeedbackCycle(
     throw new Error("Feedback round task record does not match the current owned PR head");
   }
   const recoveringReview = record.phase === "review" && !resumingReviewRepair;
+  const refreshFeedbackFromGitHub = async () => {
+    const lookup = {
+      cwd: project.repository.path,
+      repository: project.repository.github,
+      headBranch: record.expectedBranch!,
+      baseBranch: project.repository.defaultBranch,
+      project,
+    };
+    const [requestedChanges, conversationComments] = await Promise.all([
+      github.findChangesRequestedPullRequest(lookup, true),
+      github.getPullRequestConversationComments({
+        ...lookup,
+        pullRequestUrl: observation.pullRequestUrl,
+      }),
+    ]);
+    await verifyExistingPrOpen({
+      project,
+      github,
+      cardId: card.id,
+      branch: lookup.headBranch,
+      pullRequestUrl: observation.pullRequestUrl,
+      expectedHeadSha: observation.headSha,
+    });
+    if (
+      requestedChanges &&
+      (requestedChanges.url !== observation.pullRequestUrl ||
+        requestedChanges.headSha !== observation.headSha)
+    )
+      throw new Error("Current feedback does not belong to the owned PR revision");
+    await refreshCurrentTaskFeedback({
+      project,
+      cardId: card.id,
+      ledgerStore,
+      openCode,
+      worktreePath,
+      signal,
+      observation: { ...observation, requestedChanges, conversationComments },
+    });
+  };
   const finishNoOp = async (): Promise<boolean> => {
     const current = taskStore.read(card.id);
     const correction = current?.feedbackRemediation;
     if (!current || correction?.status !== "no-op") return false;
     const ledger = ledgerStore.read(card.id);
     if (!ledger) throw new Error("No-op feedback ledger is unavailable");
+    const alreadyCompleted =
+      options.mutationQueue.get(correction.operationId)?.status === "completed";
     const ids = new Set(
-      correction.feedbackIds ??
-        ledger.entries
-          .filter((entry) => entry.status === "pending" && entry.actionability === "actionable")
-          .map((entry) => `${entry.kind}:${entry.id}`),
+      alreadyCompleted
+        ? []
+        : (correction.feedbackIds ??
+            ledger.entries
+              .filter((entry) => entry.status === "pending" && entry.actionability === "actionable")
+              .map((entry) => `${entry.kind}:${entry.id}`)),
     );
     const attempted = ledger.entries.filter((entry) => ids.has(`${entry.kind}:${entry.id}`));
     if (
-      attempted.length !== ids.size ||
-      feedbackOperationId(correction.headSha, attempted) !== correction.operationId
+      !alreadyCompleted &&
+      (attempted.length !== ids.size ||
+        feedbackOperationId(correction.headSha, attempted) !== correction.operationId)
     )
       throw new Error(
         "Original no-op feedback context cannot be established; preserve the ledger and primary operation for reconciliation",
@@ -437,37 +488,30 @@ export async function runTaskSessionFeedbackCycle(
     // Presentation may reconcile independently while the open PR retains ownership.
     if (options.mutationQueue.ownsActive(correction.operationId))
       options.mutationQueue.complete(correction.operationId);
-    await refreshCurrentTaskFeedback({
-      project,
-      cardId: card.id,
-      observation,
-      ledgerStore,
-      openCode,
-      worktreePath,
-      signal,
-    });
-    await github.ensurePullRequestDraft({
-      cwd: project.repository.path,
-      repository: project.repository.github,
-      pullRequestUrl: record.pullRequest!.url,
-      project,
-    });
+    await refreshFeedbackFromGitHub();
+    const outstanding = ledgerStore.read(card.id)?.entries.filter(isOutstandingFeedback) ?? [];
+    if (outstanding.length > 0)
+      await github.ensurePullRequestDraft({
+        cwd: project.repository.path,
+        repository: project.repository.github,
+        pullRequestUrl: record.pullRequest!.url,
+        project,
+      });
     const facts = [
       `Correction ${correction.operationId} made no repository changes; no new commit or fulfilled request is claimed.`,
       "No new validation, coverage or independent review was run by this no-op correction.",
       `Latest recorded quality evidence (with its original source identity): ${JSON.stringify(current.publicationQuality ?? { status: "unavailable" })}`,
-      `Current human feedback: ${JSON.stringify(
-        ledgerStore
-          .read(card.id)
-          ?.entries.filter(
-            (entry) => entry.isCurrent !== false && entry.actionability === "actionable",
-          )
-          .map((entry) => ({
-            id: `${entry.kind}:${entry.id}`,
-            status: entry.resolution ?? (entry.status === "pending" ? "pending" : "unresolved"),
-            reason: entry.unresolvedReason ?? "Awaiting fulfillment evidence",
-          })) ?? [],
-      )}`,
+      `Outstanding human feedback: ${
+        outstanding.length === 0
+          ? "none"
+          : JSON.stringify(
+              outstanding.map((entry) => ({
+                id: `${entry.kind}:${entry.id}`,
+                status: entry.resolution ?? (entry.status === "pending" ? "pending" : "unresolved"),
+                reason: entry.unresolvedReason ?? "Awaiting fulfillment evidence",
+              })),
+            )
+      }`,
     ];
     const generated = await prepareInitialPublicationBody(
       {
@@ -478,7 +522,8 @@ export async function runTaskSessionFeedbackCycle(
         trello,
         git,
         github,
-        reviewResult: "Unresolved human feedback",
+        reviewResult:
+          outstanding.length === 0 ? "No outstanding human feedback" : "Unresolved human feedback",
         remediationResult: "No repository changes from the correction attempt",
         verifiedDescriptionFacts: () => facts,
       },
@@ -1220,6 +1265,7 @@ export async function runTaskSessionFeedbackCycle(
     const currentIdentity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
     if (quality === undefined)
       throw new Error("Feedback review completed without current quality evidence");
+    const liveQuality = quality;
     const qualityEvidence: VerifiedPublicationDecisionInput = {
       currentContentIdentity: currentIdentity,
       ...(project.repository.validationCommand === undefined
@@ -1398,30 +1444,45 @@ export async function runTaskSessionFeedbackCycle(
         };
       },
       verifyPreparedContent: async () => {
-        const validation = await runTaskSessionValidation({
-          project,
-          cardId: card.id,
-          expectedBranch: record.expectedBranch!,
-          operationKey: record.operationKey,
-          worktreePath,
-          taskRecordStore: taskStore,
-          git,
-          commands,
-          signal,
-          timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-        });
-        const coverage = await runTaskSessionCoverage({
-          project,
-          cardId: card.id,
-          expectedBranch: record.expectedBranch!,
-          operationKey: record.operationKey,
-          worktreePath,
-          taskRecordStore: taskStore,
-          git,
-          commands,
-          signal,
-          timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
-        });
+        signal.throwIfAborted();
+        const preparedIdentity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
+        const canReuseQuality =
+          !resumingReservedRound &&
+          decideValidatedHumanReviewPublication({
+            ...qualityEvidence,
+            currentContentIdentity: preparedIdentity,
+            review: null,
+          }).allowed;
+        if (canReuseQuality)
+          cardLog.event("Feedback publication reused matching local quality evidence");
+        const validation = canReuseQuality
+          ? liveQuality.validation
+          : await runTaskSessionValidation({
+              project,
+              cardId: card.id,
+              expectedBranch: record.expectedBranch!,
+              operationKey: record.operationKey,
+              worktreePath,
+              taskRecordStore: taskStore,
+              git,
+              commands,
+              signal,
+              timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+            });
+        const coverage = canReuseQuality
+          ? liveQuality.coverage
+          : await runTaskSessionCoverage({
+              project,
+              cardId: card.id,
+              expectedBranch: record.expectedBranch!,
+              operationKey: record.operationKey,
+              worktreePath,
+              taskRecordStore: taskStore,
+              git,
+              commands,
+              signal,
+              timeoutMilliseconds: project.opencode.timeoutMinutes * 60_000,
+            });
         const currentRecord = taskStore.read(card.id);
         if (currentRecord === null)
           throw new Error("Task state disappeared during feedback publication gate");

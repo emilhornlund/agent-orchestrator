@@ -24,6 +24,65 @@ const project = {
   id: "project",
   opencode: { review: {}, timeoutMinutes: 1 },
 } as ProjectConfig;
+
+it("applies a same-author withdrawal only to the linked review revision", async () => {
+  const pullRequestUrl = "https://github.com/owner/repo/pull/772";
+  const request = { ...entry, kind: "review" as const, sourceRevision: undefined };
+  const unrelated = { ...request, id: "2", author: "other" };
+  const withdrawal = {
+    ...request,
+    id: "3",
+    body: `I withdraw the request in my prior review (${pullRequestUrl}#pullrequestreview-1).`,
+    createdAt: "2026-10-02T00:00:00.000Z",
+  };
+  const run = vi.fn(async () => ({
+    exitCode: 0,
+    errorOutput: "",
+    output: JSON.stringify({
+      version: 1,
+      assessments: [
+        {
+          feedbackId: "review:3",
+          sourceRevision: feedbackSourceRevision(withdrawal),
+          actionability: "discussion",
+          substantiveChange: false,
+          supersededFeedbackIds: ["review:1"],
+        },
+      ],
+    }),
+  }));
+  const options = {
+    project,
+    pullRequestUrl,
+    worktreePath: "/tmp",
+    signal: new AbortController().signal,
+    openCode: new OpenCodeClient(run),
+  };
+  const incoming = [request, unrelated, withdrawal];
+  const current = await classifyCurrentFeedback({
+    ...options,
+    incoming,
+    previous: [request, unrelated],
+  });
+  expect(current.map(({ id }) => id)).toEqual(["2", "3"]);
+  const refreshed = await classifyCurrentFeedback({
+    ...options,
+    incoming,
+    previous: [request, ...current],
+  });
+  expect(refreshed.map(({ id }) => id)).toEqual(["2", "3"]);
+  expect(refreshed[1]?.supersedes).toEqual(current[1]?.supersedes);
+  expect(run).toHaveBeenCalledTimes(1);
+  expect(
+    (
+      await classifyCurrentFeedback({
+        ...options,
+        incoming: [request, unrelated],
+        previous: [request, ...current],
+      })
+    ).map(({ id }) => id),
+  ).toEqual(["1", "2"]);
+});
 it.each([false, true])(
   "validates substantive-change judgment (%s) without using timestamps or heads as new requests",
   async (changed) => {

@@ -17,6 +17,7 @@ export async function verifyExistingPrOpen(options: {
   cardId: string;
   branch: string;
   pullRequestUrl: string;
+  expectedHeadSha?: string;
 }): Promise<void> {
   const { project, github } = options;
   const authority = ProjectRunAuthority.current(project.id);
@@ -59,6 +60,7 @@ export async function verifyExistingPrOpen(options: {
   }
   const [owner, repository] = project.repository.github.split("/");
   if (
+    (options.expectedHeadSha !== undefined && pr.headRefOid !== options.expectedHeadSha) ||
     (pr.headRefName !== undefined && pr.headRefName !== options.branch) ||
     (pr.baseRefName !== undefined && pr.baseRefName !== project.repository.defaultBranch) ||
     (pr.headRepositoryOwner !== undefined &&

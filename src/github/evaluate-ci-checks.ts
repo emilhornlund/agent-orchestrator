@@ -28,6 +28,9 @@ export type CiCheckEvaluation =
       observedHeadSha: string;
       expectedCheckNames: string[];
       diagnostic: string;
+      failures?: CiCheckObservation[];
+      pendingChecks?: string[];
+      missingChecks?: string[];
     };
 
 interface CheckDisposition {
@@ -111,17 +114,7 @@ export function evaluateCiChecks(input: {
     };
   }
 
-  if (input.expectations.status !== "complete") {
-    return {
-      status: "uncertain",
-      expectedHeadSha: input.expectedHeadSha,
-      observedHeadSha: input.observedHeadSha,
-      expectedCheckNames: expectedNames,
-      diagnostic: input.expectations.diagnostic,
-    };
-  }
-
-  if (expectedNames.length === 0) {
+  if (input.expectations.status === "complete" && expectedNames.length === 0) {
     return {
       status: "uncertain",
       expectedHeadSha: input.expectedHeadSha,
@@ -202,18 +195,6 @@ export function evaluateCiChecks(input: {
     )
     .map(classify);
   const uncertainChecks = dispositions.filter(({ kind }) => kind === "uncertain");
-  if (uncertainChecks.length > 0) {
-    return {
-      status: "uncertain",
-      expectedHeadSha: input.expectedHeadSha,
-      observedHeadSha: input.observedHeadSha,
-      expectedCheckNames: expectedNames,
-      diagnostic: uncertainChecks
-        .map(({ diagnostic }) => diagnostic ?? "A CI result is inconclusive")
-        .join("; "),
-    };
-  }
-
   const missingChecks: string[] = [];
   const pendingChecks: string[] = [];
   const failures: CiCheckObservation[] = [];
@@ -227,6 +208,22 @@ export function evaluateCiChecks(input: {
     if (matching.some(({ kind }) => kind === "pending")) {
       pendingChecks.push(name);
     }
+  }
+
+  if (input.expectations.status !== "complete" || uncertainChecks.length > 0) {
+    return {
+      status: "uncertain",
+      expectedHeadSha: input.expectedHeadSha,
+      observedHeadSha: input.observedHeadSha,
+      expectedCheckNames: expectedNames,
+      diagnostic: [
+        ...(input.expectations.status === "complete" ? [] : [input.expectations.diagnostic]),
+        ...uncertainChecks.map(({ diagnostic }) => diagnostic ?? "A CI result is inconclusive"),
+      ].join("; "),
+      ...(failures.length === 0 ? {} : { failures }),
+      ...(pendingChecks.length === 0 ? {} : { pendingChecks }),
+      ...(missingChecks.length === 0 ? {} : { missingChecks }),
+    };
   }
 
   if (failures.length > 0) {

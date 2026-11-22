@@ -253,6 +253,7 @@ export interface PullRequestReview {
   submittedAt: string;
   inlineComments: InlineReviewComment[];
   source?: "current-head" | "carried-forward";
+  supersessionOnly?: boolean;
 }
 
 interface PullRequestReviewListItem {
@@ -3010,45 +3011,56 @@ export class GitHubClient {
         .filter((review) => ["CHANGES_REQUESTED", "APPROVED"].includes(review.state))
         .map((review) => [review.author, review.id]),
     );
-    const currentReviewFeedback = currentHeadReviews.map((review) => ({
-      id: review.id,
-      commitSha: review.commitId,
-      body:
+    const currentReviewFeedback = currentHeadReviews.map((review) => {
+      const historical =
         includeDiscussions &&
-        (review.state === "DISMISSED" ||
-          (review.state !== "COMMENTED" && latestByAuthor.get(review.author) !== review.id))
-          ? null
-          : review.body,
-      ...(includeDiscussions && review.commitId !== pullRequest.headRefOid
-        ? { source: "carried-forward" as const }
-        : {}),
-      author: review.author,
-      ...(review.authorIsBot === undefined ? {} : { authorIsBot: review.authorIsBot }),
-      submittedAt: review.submittedAt,
-      inlineComments: inlineComments
-        .filter((comment) => comment.reviewId === review.id)
-        .map((comment): InlineReviewComment => {
-          const threadId =
-            comment.id === undefined ? undefined : threadIdByCommentId.get(comment.id);
-          const threadState =
-            comment.id === undefined ? undefined : threadStateByCommentId.get(comment.id);
+        review.state !== "COMMENTED" &&
+        latestByAuthor.get(review.author) !== review.id;
+      // A later decision can override the earlier review's verdict without
+      // reviving a request that its body explicitly withdrew.
+      const supersessionOnly =
+        historical &&
+        review.state !== "DISMISSED" &&
+        review.body?.includes(`${pullRequest.url}#pullrequestreview-`) === true;
+      return {
+        id: review.id,
+        commitSha: review.commitId,
+        body:
+          includeDiscussions && (review.state === "DISMISSED" || (historical && !supersessionOnly))
+            ? null
+            : review.body,
+        ...(supersessionOnly ? { supersessionOnly: true } : {}),
+        ...(includeDiscussions && review.commitId !== pullRequest.headRefOid
+          ? { source: "carried-forward" as const }
+          : {}),
+        author: review.author,
+        ...(review.authorIsBot === undefined ? {} : { authorIsBot: review.authorIsBot }),
+        submittedAt: review.submittedAt,
+        inlineComments: inlineComments
+          .filter((comment) => comment.reviewId === review.id)
+          .map((comment): InlineReviewComment => {
+            const threadId =
+              comment.id === undefined ? undefined : threadIdByCommentId.get(comment.id);
+            const threadState =
+              comment.id === undefined ? undefined : threadStateByCommentId.get(comment.id);
 
-          return {
-            body: comment.body,
-            author: comment.author,
-            ...(comment.authorIsBot === undefined ? {} : { authorIsBot: comment.authorIsBot }),
-            ...(comment.id === undefined ? {} : { id: comment.id }),
-            ...(comment.reviewId === null ? {} : { reviewId: comment.reviewId }),
-            ...(comment.commitSha === undefined ? {} : { commitSha: comment.commitSha }),
-            ...(threadState === undefined ? {} : threadState),
-            ...(threadId === undefined ? {} : { threadId }),
-            ...(comment.path === undefined ? {} : { path: comment.path }),
-            ...(comment.line === undefined ? {} : { line: comment.line }),
-            ...(comment.originalLine === undefined ? {} : { originalLine: comment.originalLine }),
-            ...(comment.diffHunk === undefined ? {} : { diffHunk: comment.diffHunk }),
-          };
-        }),
-    }));
+            return {
+              body: comment.body,
+              author: comment.author,
+              ...(comment.authorIsBot === undefined ? {} : { authorIsBot: comment.authorIsBot }),
+              ...(comment.id === undefined ? {} : { id: comment.id }),
+              ...(comment.reviewId === null ? {} : { reviewId: comment.reviewId }),
+              ...(comment.commitSha === undefined ? {} : { commitSha: comment.commitSha }),
+              ...(threadState === undefined ? {} : threadState),
+              ...(threadId === undefined ? {} : { threadId }),
+              ...(comment.path === undefined ? {} : { path: comment.path }),
+              ...(comment.line === undefined ? {} : { line: comment.line }),
+              ...(comment.originalLine === undefined ? {} : { originalLine: comment.originalLine }),
+              ...(comment.diffHunk === undefined ? {} : { diffHunk: comment.diffHunk }),
+            };
+          }),
+      };
+    });
 
     const carriedReviewFeedback = (includeDiscussions ? [] : reviews)
       .filter((review) => review.commitId !== pullRequest.headRefOid)

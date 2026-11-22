@@ -21,11 +21,20 @@ const feedbackEntrySchema = z.strictObject({
   isResolved: z.boolean().optional(),
   isOutdated: z.boolean().optional(),
   isCurrent: z.boolean().optional(),
+  supersessionOnly: z.boolean().optional(),
   sourceRevision: z
     .string()
     .regex(/^[0-9a-f]{64}$/u)
     .optional(),
   requestRevision: z.number().int().nonnegative().safe().optional(),
+  supersedes: z
+    .array(
+      z.strictObject({
+        feedbackId: z.string().regex(/^review:\d+$/u),
+        sourceRevision: z.string().regex(/^[0-9a-f]{64}$/u),
+      }),
+    )
+    .optional(),
   actionability: z.enum(["unclassified", "actionable", "discussion", "not-actionable"]),
   status: z.enum(["pending", "verified", "escalated", "published", "closed"]),
   unresolvedReason: z.string().min(1).optional(),
@@ -101,6 +110,19 @@ const feedbackLedgerSchema = z
 
 export type FeedbackLedgerEntry = z.infer<typeof feedbackEntrySchema>;
 export type FeedbackLedger = z.infer<typeof feedbackLedgerSchema>;
+
+export function isOutstandingFeedback(entry: FeedbackLedgerEntry): boolean {
+  return (
+    entry.isCurrent !== false &&
+    entry.status !== "closed" &&
+    entry.isResolved !== true &&
+    (entry.actionability === "unclassified" ||
+      (entry.actionability === "actionable" &&
+        (entry.unresolvedReason !== undefined ||
+          entry.verificationEvidence.length === 0 ||
+          !["verified", "published"].includes(entry.status))))
+  );
+}
 
 /** An edit to the code can make a thread outdated before its verified reply is sent. */
 export function canReplyToFeedback(

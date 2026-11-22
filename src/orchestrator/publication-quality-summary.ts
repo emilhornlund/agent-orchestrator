@@ -100,7 +100,17 @@ export function ciOutcomeFacts(evaluation: CiCheckEvaluation): string[] {
     if (evaluation.pendingChecks.length)
       facts.push(`Pending checks: ${names(evaluation.pendingChecks)}.`);
     facts.push(line(`CI observation: ${evaluation.diagnostic}`));
-  } else facts.push(line(`CI uncertainty: ${evaluation.diagnostic}`));
+  } else {
+    facts.push(line(`CI uncertainty: ${evaluation.diagnostic}`));
+    if (evaluation.failures?.length)
+      facts.push(
+        `Observed failed checks: ${names(evaluation.failures.map((check) => (check.source === "check-run" ? check.name : check.context)))}.`,
+      );
+    if (evaluation.pendingChecks?.length)
+      facts.push(`Pending checks: ${names(evaluation.pendingChecks)}.`);
+    if (evaluation.missingChecks?.length)
+      facts.push(`Expected checks not yet observed: ${names(evaluation.missingChecks)}.`);
+  }
   return facts.map((fact) => line(fact));
 }
 
