@@ -330,6 +330,9 @@ inaccessible, malformed or incomplete discovery remains uncertain. Newly observe
 are also evaluated, and commit-status history uses the latest context result rather than stale
 same-head success or failure.
 
+An uncertain overall CI result can coexist with an already visible failed check. Open the pull
+request's **Checks** tab to open the failed job’s logs and see which jobs are still running.
+
 ## Human review
 
 Human review takes place on GitHub. The orchestrator never merges a pull request. Approval is an
