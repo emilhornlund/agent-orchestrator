@@ -148,3 +148,45 @@ it("retains Bot actor identity at the REST comment boundary", async () => {
     authorIsBot: true,
   });
 });
+
+it("retains an earlier linked withdrawal as context after a new review decision", async () => {
+  const url = "https://github.com/owner/repo/pull/1";
+  const review = (id: number, body: string, state: string) => ({
+    id,
+    body,
+    state,
+    commit_id: "head",
+    submitted_at: `2026-10-0${id}T00:00:00Z`,
+    user: { login: "human", type: "User" },
+  });
+  const withdrawal = `I withdraw ${url}#pullrequestreview-1 in full.`;
+  const run = vi
+    .fn<RunGitHubCommand>()
+    .mockResolvedValueOnce(
+      JSON.stringify([{ number: 1, url, reviewDecision: "CHANGES_REQUESTED", headRefOid: "head" }]),
+    )
+    .mockResolvedValueOnce(
+      JSON.stringify([
+        [
+          review(1, "Earlier diagnostic request", "COMMENTED"),
+          review(2, withdrawal, "APPROVED"),
+          review(3, "Unrelated new correction", "CHANGES_REQUESTED"),
+        ],
+      ]),
+    )
+    .mockResolvedValueOnce("[[]]");
+  const feedback = await new GitHubClient(run).findChangesRequestedPullRequest(
+    {
+      cwd: "/repo",
+      repository: "owner/repo",
+      headBranch: "agent/card",
+      baseBranch: "main",
+    },
+    true,
+  );
+  expect(feedback?.feedback.reviews).toMatchObject([
+    { id: 1, body: "Earlier diagnostic request" },
+    { id: 2, body: withdrawal, supersessionOnly: true },
+    { id: 3, body: "Unrelated new correction" },
+  ]);
+});

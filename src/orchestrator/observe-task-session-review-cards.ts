@@ -333,19 +333,13 @@ export async function observeTaskSessionReviewCards(
         ciEvaluation: {
           status: ciEvaluation.status,
           expectedCheckNames: expectationDecision.expectedCheckNames,
-          missingChecks:
-            ciEvaluation.status === "waiting" || ciEvaluation.status === "failed"
-              ? (ciEvaluation.missingChecks ?? [])
-              : [],
-          pendingChecks:
-            ciEvaluation.status === "waiting" || ciEvaluation.status === "failed"
-              ? (ciEvaluation.pendingChecks ?? [])
-              : [],
+          missingChecks: ciEvaluation.status !== "passed" ? (ciEvaluation.missingChecks ?? []) : [],
+          pendingChecks: ciEvaluation.status !== "passed" ? (ciEvaluation.pendingChecks ?? []) : [],
           failureCheckNames:
-            ciEvaluation.status === "failed"
+            ciEvaluation.status === "failed" || ciEvaluation.status === "uncertain"
               ? [
                   ...new Set(
-                    ciEvaluation.failures.map((check) =>
+                    (ciEvaluation.failures ?? []).map((check) =>
                       check.source === "check-run" ? check.name : check.context,
                     ),
                   ),

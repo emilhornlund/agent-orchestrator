@@ -7,6 +7,48 @@ import type { GitClient } from "../git/git-client.js";
 import { toFailureError } from "../orchestrator/failure-diagnostic.js";
 import { WorkflowError } from "../orchestrator/workflow-error.js";
 import type { TaskEnvironment } from "./child-environment.js";
+import type { SetupInventoryFile } from "./setup-commit-scope.js";
+
+function captureSetupFile(absolute: string, relative: string, stat: fs.Stats): SetupInventoryFile {
+  const mode = stat.mode & 0o7777;
+  if (stat.isSymbolicLink())
+    return { path: relative, kind: "symlink", mode, target: fs.readlinkSync(absolute) };
+  if (stat.isFile()) {
+    const content = fs.readFileSync(absolute);
+    return {
+      path: relative,
+      kind: "file",
+      mode,
+      bytes: content.byteLength,
+      sha256: createHash("sha256").update(content).digest("hex"),
+    };
+  }
+  return { path: relative, kind: "special", mode };
+}
+
+/** Read the same file identity as the inventory, without traversing unrelated directories. */
+export function captureSetupPath(root: string, relative: string): SetupInventoryFile | undefined {
+  const parts = relative.split("/");
+  if (
+    parts[0] === ".git" ||
+    path.isAbsolute(relative) ||
+    parts.some(
+      (part) =>
+        !part || part === "." || part === ".." || (path.sep === "\\" && part.includes("\\")),
+    )
+  )
+    throw new Error("Invalid setup inventory path");
+  let absolute = root;
+  for (const [index, part] of parts.entries()) {
+    absolute = path.join(absolute, part);
+    const stat = fs.lstatSync(absolute, { throwIfNoEntry: false });
+    if (!stat) return undefined;
+    if (index === parts.length - 1)
+      return stat.isDirectory() ? undefined : captureSetupFile(absolute, relative, stat);
+    // The full inventory records a symlink, never the files behind it.
+    if (!stat.isDirectory()) return undefined;
+  }
+}
 
 /** Content-addressed worktree inventory, including ignored and untracked files. */
 export async function captureSetupEffects(
@@ -24,43 +66,15 @@ export async function captureSetupEffects(
     if (!finishAfterAbort) signal?.throwIfAborted();
     return result;
   };
-  const files: {
-    path: string;
-    kind: string;
-    mode: number;
-    bytes?: number;
-    sha256?: string;
-    target?: string;
-  }[] = [];
+  const files: SetupInventoryFile[] = [];
   const walk = (directory: string): void => {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
       if (directory === root && entry.name === ".git") continue;
       const absolute = path.join(directory, entry.name);
       const relative = path.relative(root, absolute).split(path.sep).join("/");
       const stat = fs.lstatSync(absolute);
-      if (stat.isSymbolicLink()) {
-        files.push({
-          path: relative,
-          kind: "symlink",
-          mode: stat.mode & 0o7777,
-          target: fs.readlinkSync(absolute),
-        });
-      } else if (stat.isDirectory()) walk(absolute);
-      else if (stat.isFile()) {
-        const content = fs.readFileSync(absolute);
-        files.push({
-          path: relative,
-          kind: "file",
-          mode: stat.mode & 0o7777,
-          bytes: content.byteLength,
-          sha256: createHash("sha256").update(content).digest("hex"),
-        });
-      } else
-        files.push({
-          path: relative,
-          kind: "special",
-          mode: stat.mode & 0o7777,
-        });
+      if (stat.isDirectory()) walk(absolute);
+      else files.push(captureSetupFile(absolute, relative, stat));
     }
   };
   walk(root);

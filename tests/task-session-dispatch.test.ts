@@ -2221,8 +2221,9 @@ describe("task-session production dispatch", () => {
     );
     expect(recordStore.read(card.id)?.reviewObservation?.ciEvaluation).toMatchObject({
       status: "uncertain",
-      pendingChecks: [],
+      pendingChecks: ["Tests"],
       missingChecks: [],
+      failureCheckNames: ["Security"],
     });
     expect(recordStore.read(card.id)?.retryCounters.ci).toBe(0);
     expect(new TaskMutationQueue(project.contextRoot, project).list()).toEqual([]);

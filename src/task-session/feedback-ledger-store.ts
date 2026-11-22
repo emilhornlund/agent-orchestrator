@@ -226,7 +226,21 @@ export class FeedbackLedgerStore {
     const history = [...(current.history ?? [])];
     for (const incoming of entries) {
       const key = `${incoming.kind}:${incoming.id}`;
-      const previous = byKey.get(key);
+      const last = byKey.get(key);
+      // A request can reappear if the review that withdrew it is edited or deleted.
+      // Restore handling of the same revision, rather than retrying exhausted work.
+      const previous =
+        last?.isCurrent === false
+          ? [...history]
+              .reverse()
+              .find(
+                (entry) =>
+                  entry.kind === last.kind &&
+                  entry.id === last.id &&
+                  entry.sourceRevision === last.sourceRevision &&
+                  entry.isCurrent !== false,
+              )
+          : last;
       if (
         previous !== undefined &&
         (previous.body !== incoming.body ||
@@ -246,7 +260,8 @@ export class FeedbackLedgerStore {
           ? incoming
           : {
               ...incoming,
-              actionability: previous.actionability,
+              actionability:
+                incoming.supersessionOnly === true ? "discussion" : previous.actionability,
               status: previous.status,
               verificationEvidence: previous.verificationEvidence,
               resolution: previous.resolution,
