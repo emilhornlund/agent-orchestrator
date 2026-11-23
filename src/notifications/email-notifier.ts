@@ -66,6 +66,7 @@ export interface FailedNotificationDetails {
 }
 
 export interface AttentionRequiredNotificationDetails {
+  eventId?: string;
   project: ProjectConfig;
   category: string;
   reason: string;
@@ -326,7 +327,7 @@ export function prepareAttentionNotification(
     notifier,
     details.project.id,
     "attentionRequired",
-    `${details.category}:${details.reason}:${details.cardIds?.join(",") ?? ""}`,
+    details.eventId ?? `${details.category}:${details.reason}:${details.cardIds?.join(",") ?? ""}`,
     buildAttentionRequiredEmail(details),
   );
 }
@@ -412,7 +413,8 @@ export async function notifyAttentionRequired(
       notifier,
       details.project.id,
       "attentionRequired",
-      `${details.category}:${details.reason}:${details.cardIds?.join(",") ?? ""}`,
+      details.eventId ??
+        `${details.category}:${details.reason}:${details.cardIds?.join(",") ?? ""}`,
       buildAttentionRequiredEmail(details),
       projectLog,
     );

@@ -73,7 +73,11 @@ import {
   findPrimaryRecoveryError,
   persistPrimaryOperationRecovery,
 } from "../task-session/persist-primary-operation-recovery.js";
-import { classifyCurrentFeedback } from "../task-session/classify-current-feedback.js";
+import {
+  classifyCurrentFeedback,
+  FeedbackClassificationError,
+} from "../task-session/classify-current-feedback.js";
+import { feedbackClassificationCheckpoint } from "../task-session/feedback-classification-checkpoint.js";
 import { OPERATION_RECOVERY_MAX_EXECUTIONS } from "../task-session/operation-recovery-policy.js";
 import { updateMaintenanceStatus } from "./maintenance-status.js";
 import type { ManagedPullRequestStatus } from "../github/pull-request-status.js";
@@ -170,7 +174,7 @@ function toFeedbackEntries(observation: ObservedTaskSessionReviewCard): Feedback
     item.author !== null &&
     item.authorIsBot !== true &&
     !item.author.toLowerCase().endsWith("[bot]") &&
-    item.author !== observation.automationActor;
+    item.author.toLowerCase() !== observation.automationActor?.toLowerCase();
   for (const review of observation.requestedChanges?.feedback.reviews ?? []) {
     if (isHuman(review) && review.body !== null && review.body.trim().length > 0) {
       entries.push({
@@ -251,14 +255,35 @@ export async function refreshCurrentTaskFeedback(options: {
   openCode: OpenCodeClient;
   worktreePath: string;
   signal: AbortSignal;
-}): Promise<void> {
+  emailNotifier?: EmailNotifier;
+}): Promise<boolean> {
   const previous = options.ledgerStore.read(options.cardId);
-  const incoming = await classifyCurrentFeedback({
+  const checkpoint = feedbackClassificationCheckpoint({
     ...options,
     pullRequestUrl: options.observation.pullRequestUrl,
-    incoming: toFeedbackEntries(options.observation),
-    previous: previous?.entries ?? [],
   });
+  let incoming: FeedbackLedgerEntry[];
+  try {
+    checkpoint?.assertStopped();
+    incoming = await classifyCurrentFeedback({
+      ...options,
+      pullRequestUrl: options.observation.pullRequestUrl,
+      incoming: toFeedbackEntries(options.observation),
+      previous: previous?.entries ?? [],
+      ...(checkpoint === undefined
+        ? {}
+        : {
+            singleExecution: true,
+            beforeDispatch: checkpoint.reserve,
+            isExhausted: checkpoint.isExhausted,
+            onExecutionPrepared: checkpoint.bind,
+          }),
+    });
+  } catch (error) {
+    if (!checkpoint || !(error instanceof FeedbackClassificationError)) throw error;
+    await checkpoint.fail(error);
+    return false;
+  }
   if (previous === null) options.ledgerStore.create(options.cardId, incoming);
   else
     reconcileFeedbackRound({
@@ -269,6 +294,8 @@ export async function refreshCurrentTaskFeedback(options: {
       observedHeadSha: options.observation.headSha,
       newlyObservedFeedback: incoming,
     });
+  checkpoint?.complete();
+  return true;
 }
 
 export function feedbackOperationId(
@@ -414,7 +441,7 @@ export async function runTaskSessionFeedbackCycle(
         requestedChanges.headSha !== observation.headSha)
     )
       throw new Error("Current feedback does not belong to the owned PR revision");
-    await refreshCurrentTaskFeedback({
+    return refreshCurrentTaskFeedback({
       project,
       cardId: card.id,
       ledgerStore,
@@ -422,6 +449,7 @@ export async function runTaskSessionFeedbackCycle(
       worktreePath,
       signal,
       observation: { ...observation, requestedChanges, conversationComments },
+      ...(options.emailNotifier === undefined ? {} : { emailNotifier: options.emailNotifier }),
     });
   };
   const finishNoOp = async (): Promise<boolean> => {
@@ -488,7 +516,7 @@ export async function runTaskSessionFeedbackCycle(
     // Presentation may reconcile independently while the open PR retains ownership.
     if (options.mutationQueue.ownsActive(correction.operationId))
       options.mutationQueue.complete(correction.operationId);
-    await refreshFeedbackFromGitHub();
+    if (!(await refreshFeedbackFromGitHub())) return false;
     const outstanding = ledgerStore.read(card.id)?.entries.filter(isOutstandingFeedback) ?? [];
     if (outstanding.length > 0)
       await github.ensurePullRequestDraft({
@@ -592,8 +620,9 @@ export async function runTaskSessionFeedbackCycle(
     (record.feedbackRemediation?.status === "active" &&
       record.feedbackRemediation.feedbackIds !== undefined &&
       options.mutationQueue.getActive()?.eventId === record.feedbackRemediation.operationId);
-  if (!resumingReservedRound)
-    await refreshCurrentTaskFeedback({
+  if (
+    !resumingReservedRound &&
+    !(await refreshCurrentTaskFeedback({
       project,
       cardId: card.id,
       worktreePath,
@@ -601,7 +630,10 @@ export async function runTaskSessionFeedbackCycle(
       ledgerStore,
       openCode,
       signal,
-    });
+      ...(options.emailNotifier === undefined ? {} : { emailNotifier: options.emailNotifier }),
+    }))
+  )
+    return "idle";
   const ledgerBeforeSync = ledgerStore.read(card.id);
   const activeReply = options.mutationQueue.getActive();
   const resumingReply =

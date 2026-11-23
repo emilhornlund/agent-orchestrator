@@ -1,6 +1,12 @@
 import { expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
-import { OpenCodeClient } from "../src/opencode/opencode-client.js";
+import {
+  OpenCodeClient,
+  OpenCodeDefaultProviderResolutionError,
+  OpenCodeRunAbortedError,
+  OpenCodeTimeoutError,
+  type RunOpenCode,
+} from "../src/opencode/opencode-client.js";
 import {
   classifyCurrentFeedback,
   feedbackSourceRevision,
@@ -207,4 +213,78 @@ it("recovers once from the observed combined actionability token without weakeni
     expect.objectContaining({ prompt: expect.stringContaining('"discussion", "not-actionable"') }),
   );
   expect(result[0]?.actionability).toBe("discussion");
+});
+
+const executionId = "5125c222-01d9-4937-af6d-2a72e6a2c040";
+it.each<[string, RunOpenCode]>([
+  [
+    "nonzero",
+    async () => ({
+      exitCode: 7,
+      errorOutput: "private child output",
+      output: "",
+      processExecutionId: executionId,
+    }),
+  ],
+  [
+    "provider-unavailable",
+    async () => ({
+      exitCode: 0,
+      errorOutput: "",
+      output: "",
+      failureClassification: "dependency-outage",
+    }),
+  ],
+  [
+    "malformed",
+    async () => ({
+      exitCode: 0,
+      errorOutput: "",
+      output: "incomplete JSON",
+      processExecutionId: executionId,
+    }),
+  ],
+  [
+    "cancelled",
+    async () => {
+      throw new OpenCodeRunAbortedError();
+    },
+  ],
+  [
+    "timeout",
+    async () => {
+      throw new OpenCodeTimeoutError(200, executionId, true);
+    },
+  ],
+  [
+    "execution-uncertain",
+    async () => {
+      throw new OpenCodeTimeoutError(200, executionId);
+    },
+  ],
+  [
+    "configuration",
+    async () => {
+      throw new OpenCodeDefaultProviderResolutionError();
+    },
+  ],
+])("returns a typed %s failure without applying a partial result", async (classification, run) => {
+  const execute = vi.fn(run);
+  await expect(
+    classifyCurrentFeedback({
+      project,
+      incoming: [entry],
+      previous: [],
+      worktreePath: "/tmp",
+      openCode: new OpenCodeClient(execute),
+      signal: new AbortController().signal,
+      singleExecution: true,
+    }),
+  ).rejects.toMatchObject({
+    classification,
+    ...(classification === "nonzero"
+      ? { executionId, exitCode: 7, message: expect.not.stringContaining("private child output") }
+      : {}),
+  });
+  expect(execute).toHaveBeenCalledTimes(1);
 });

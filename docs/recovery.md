@@ -315,6 +315,37 @@ episode; continuing failure or a new SHA alone cannot.
 
 ## Feedback and replies
 
+### Retained published classification failure
+
+Keep the original named volumes and mount paths for coordination, context/artifacts, repository,
+worktree, and the service user's OpenCode home. Stop the previous service instance before acquiring
+the same project lease. Keep the card in its recorded `Human Review` list. The service can reopen an
+idle canonical attention checkpoint carrying the earlier classification-failure reason only after it
+verifies the original PR and exact head, trusted commit, local and remote branch, clean owned
+worktree, original session, prior process termination and absence of unresolved mutation ownership.
+An unverifiable prior execution is a blocker, not permission to replace the task.
+
+For Klurigo, the expected identity from the incident is project `klurigo`, card
+`6b02ade22e99a0a22377c6f9`, attempt `d0f480db-592d-4fa8-80e5-164ae843e695`,
+[PR #778](https://github.com/emilhornlund/klurigo/pull/778), and published head
+`b3b9d5e01371032ede5356f9c3dadd38c1f93971`. Read the exact branch and worktree from the pinned
+attempt. For a supported attention checkpoint, inspect it while the service is stopped:
+
+```sh
+node dist/operator/recover-published-feedback.js --project klurigo --card 6b02ade22e99a0a22377c6f9 --attempt d0f480db-592d-4fa8-80e5-164ae843e695 --inspect
+```
+
+`--resume` runs the same checks and, if they pass, reopens the original feedback checkpoint for the
+next service run. `--inspect` performs no GitHub, Trello or task workflow mutation. It acquires the
+same local coordination lease and records ordinary read diagnostics. The checkout entry point is
+`yarn recover:published-feedback` with the same arguments. Neither mode starts an agent or clears an
+unrelated attention reason, ambiguous writer, changed branch/head, or pending mutation. If the
+inspection refuses, preserve the retained evidence and investigate the specific mismatch. Do not
+move the card to Ready or create a second PR. On successful resumption the service re-reads the two
+inline requests and classifies them against the verified head before scheduling any correction in
+the existing primary session. It will not mark the requests fulfilled or resolve the threads as a
+side effect of recovery. This procedure has not been executed on the Klurigo production volumes.
+
 Review bodies, inline threads, and conversation comments are tracked by stable GitHub identity in
 the task ledger. New comments do not erase earlier still-applicable unresolved feedback. Actionable
 items are resumed in the primary session and independently verified against current content/head.

@@ -428,6 +428,12 @@ snapshots; deleted or superseded items are no longer active. Timestamp changes, 
 incidental edits do not renew an attempted request. A substantive changed request can start another
 cycle.
 
+Classification failure retains the original PR and feedback ledger. The versioned classification
+checkpoint records source revisions, process evidence, and the retry deadline. Recognized provider
+outages use paced rechecks; invalid output, genuine nonzero results and stopped timeouts have a
+finite per-snapshot allowance. An unknown process outcome prevents redispatch until stopped evidence
+is available. No classification failure counts as a successful empty result.
+
 If a feedback remediation produces no repository changes, it is not treated as resolved: the ledger
 retains the unresolved attempted item and the workflow does not publish a correction or claim
 success. Unchanged feedback does not restart that attempt, even after a new PR head. The task

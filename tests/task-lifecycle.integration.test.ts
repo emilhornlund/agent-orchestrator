@@ -21,8 +21,13 @@ import { withGitHubOperationProject } from "../src/github/github-operation-conte
 import type { GitHubClient } from "../src/github/github-client.js";
 import { OpenCodeClient, type OpenCodeRunOptions } from "../src/opencode/opencode-client.js";
 import { CommandRunner, type CommandRunOptions } from "../src/process/command-runner.js";
-import { configureProcessRuntime } from "../src/process/process-runtime.js";
+import { beginProcessEvidence, configureProcessRuntime } from "../src/process/process-runtime.js";
+import { inspectPublishedFeedbackRecovery } from "../src/orchestrator/published-feedback-recovery.js";
 import { pollProject } from "../src/orchestrator/poll-project.js";
+import {
+  readActivePrObservationHealth,
+  withActivePrObservation,
+} from "../src/orchestrator/active-pr-observation.js";
 import { beginInitialPublication } from "../src/orchestrator/initial-publication.js";
 import { getTaskSessionSourceSnapshotIdentity } from "../src/task-session/source-snapshot.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
@@ -47,7 +52,7 @@ let originalProcessPath: string | undefined;
 let originalPrimaryMode: string | undefined;
 const leases: ProjectOwnershipLease[] = [];
 interface LifecycleScenario {
-  publishedReadRecovery?: "ci" | "publication";
+  publishedReadRecovery?: "ci" | "publication" | "classification";
   preparedValidationFailure?: boolean;
   draft: boolean;
   terminal: "merged" | "closed";
@@ -56,7 +61,7 @@ interface LifecycleScenario {
   quality: "validation" | "none" | "coverage" | "both";
   terminalReadRaceAt?: number;
   correctionFailure?: boolean;
-  feedbackQuality?: "validation" | "unavailable" | "no-op";
+  feedbackQuality?: "validation" | "unavailable" | "no-op" | "classification-outage";
   terminalDuringFeedback?: "active" | "unknown" | "capacity" | "push-rejected";
   preparedReview?: "material" | "unavailable";
   ciReviewHandoffs?: boolean;
@@ -89,7 +94,7 @@ afterEach(async () => {
 
 describe("task lifecycle through pollProject", () => {
   it.each<LifecycleScenario>([
-    ...(["ci", "publication"] as const).map((publishedReadRecovery) => ({
+    ...(["ci", "publication", "classification"] as const).map((publishedReadRecovery) => ({
       draft: false,
       terminal: "merged" as const,
       destination: "done" as const,
@@ -137,14 +142,16 @@ describe("task lifecycle through pollProject", () => {
       quality: "both",
       terminalDuringFeedback: "push-rejected",
     },
-    ...(["validation", "unavailable", "no-op"] as const).map((feedbackQuality) => ({
-      draft: false,
-      terminal: "merged" as const,
-      destination: "done" as const,
-      ackLoss: false,
-      quality: "both" as const,
-      feedbackQuality,
-    })),
+    ...(["validation", "unavailable", "no-op", "classification-outage"] as const).map(
+      (feedbackQuality) => ({
+        draft: false,
+        terminal: "merged" as const,
+        destination: "done" as const,
+        ackLoss: false,
+        quality: "both" as const,
+        feedbackQuality,
+      }),
+    ),
     {
       draft: false,
       terminal: "merged",
@@ -650,6 +657,7 @@ describe("task lifecycle through pollProject", () => {
       let feedbackBody = "Please handle the empty result.";
       let feedbackPrimaryCorrections = 0;
       let feedbackClassifications = 0;
+      let classifierUnavailable = feedbackQuality === "classification-outage";
       const feedbackReplyBodies: string[] = [];
       const feedbackReviewDispatches: {
         operationId: string;
@@ -860,10 +868,34 @@ describe("task lifecycle through pollProject", () => {
                 {
                   id: 202,
                   commitSha: pr.headRefOid,
-                  body: feedbackBody,
+                  body: feedbackQuality === "classification-outage" ? null : feedbackBody,
                   author: "reviewer",
                   submittedAt: "2026-11-01T09:00:00.000Z",
-                  inlineComments: [],
+                  inlineComments:
+                    feedbackQuality === "classification-outage"
+                      ? [
+                          {
+                            id: 203,
+                            body: feedbackBody,
+                            author: "reviewer",
+                            path: "app.js",
+                            line: 1,
+                            threadId: "thread-203",
+                            isResolved: false,
+                            isOutdated: false,
+                          },
+                          {
+                            id: 204,
+                            body: "Please preserve the original behavior on success.",
+                            author: "reviewer",
+                            path: "app.js",
+                            line: 1,
+                            threadId: "thread-204",
+                            isResolved: false,
+                            isOutdated: false,
+                          },
+                        ]
+                      : [],
                 },
               ],
             },
@@ -934,6 +966,13 @@ describe("task lifecycle through pollProject", () => {
       const openCode = new OpenCodeClient(async (options: OpenCodeRunOptions) => {
         if (options.sessionLabel === "Human feedback classification") {
           feedbackClassifications++;
+          if (classifierUnavailable)
+            return {
+              exitCode: 1,
+              output: "",
+              errorOutput: "",
+              failureClassification: "dependency-outage",
+            };
           return {
             exitCode: 0,
             output: actionableFeedbackResponse(options.prompt),
@@ -1960,10 +1999,62 @@ describe("task lifecycle through pollProject", () => {
               ).toISOString(),
             }),
             recoveryAttentionReason:
-              "Authoritative recovery snapshot could not be read: GitHub CLI returned an invalid commit statuses",
+              publishedReadRecovery === "classification"
+                ? "Human feedback classification unavailable; current requests retained"
+                : "Authoritative recovery snapshot could not be read: GitHub CLI returned an invalid commit statuses",
           });
         };
         escalate();
+        if (publishedReadRecovery === "classification") {
+          const ownedPath = path.join(worktrees, firstWorktreeName);
+          const retained = taskStore.read("first")!;
+          const recoveryRead = (gitClient = git, githubClient = github) =>
+            owner.run(async () =>
+              inspectPublishedFeedbackRecovery({
+                project,
+                authority: owner,
+                task: retained,
+                card: await trello.getCard("first"),
+                git: gitClient,
+                github: githubClient,
+                commands,
+                signal,
+              }),
+            );
+          await expect(recoveryRead()).rejects.toThrow("process termination evidence");
+          owner.run(() => {
+            const evidence = beginProcessEvidence("opencode run --format json", ownedPath);
+            evidence.finish("nonzero", { exitCode: 1, treeStopped: true });
+          });
+          const wrongBranch = vi
+            .spyOn(git, "getCurrentBranch")
+            .mockResolvedValueOnce("different-branch");
+          await expect(recoveryRead()).rejects.toThrow("unchanged owned worktree and branch");
+          wrongBranch.mockRestore();
+          const localHead = vi.spyOn(git, "getHeadSha").mockResolvedValueOnce("f".repeat(40));
+          await expect(recoveryRead()).rejects.toThrow("trusted commit or local HEAD");
+          localHead.mockRestore();
+          const differentPr = vi
+            .spyOn(github, "findPullRequestState")
+            .mockResolvedValueOnce({ ...firstPr!, url: `${firstPr!.url}0`, mergedAt: null });
+          await expect(recoveryRead()).rejects.toThrow("recorded open PR and exact head");
+          differentPr.mockRestore();
+          const accepted = await recoveryRead();
+          expect(accepted).toMatchObject({
+            attemptId: owner.store.attemptId,
+            head: before.pullRequest!.headSha,
+            pullRequestUrl: before.pullRequest!.url,
+          });
+          expect(taskStore.read("first")).toEqual(retained);
+          activeAuthority = await ProjectRunAuthority.resumeAttempt({
+            projectId: project.id,
+            attemptId: owner.store.attemptId,
+            pinned,
+            projectLease: lease,
+            coordinationRoot,
+          });
+          authorities.set("first", activeAuthority);
+        }
         if (publishedReadRecovery === "publication") {
           const current = taskStore.read("first")!;
           taskStore.compareAndSwap("first", current.revision, {
@@ -2290,7 +2381,88 @@ describe("task lifecycle through pollProject", () => {
         const originalValidationCycle = store.read("first")!.validationRepair?.cycleId;
         firstPr!.body += "\n\nHuman-only deployment note.";
         correctionFeedback = true;
-        if (feedbackQuality === "validation") {
+        if (feedbackQuality === "classification-outage") {
+          const authority = activeAuthority!;
+          const attemptId = authority.store.attemptId;
+          const clock = Date.now();
+          vi.useRealTimers();
+          vi.useFakeTimers();
+          vi.setSystemTime(clock);
+          const delayedReads = vi
+            .spyOn(github, "findPullRequestState")
+            .mockImplementation(async () => {
+              await new Promise<void>((resolve) => setTimeout(resolve, 10));
+              return { ...firstPr!, mergedAt: null };
+            });
+          try {
+            let done!: () => void;
+            const activeWriter = new Promise<void>((resolve) => {
+              done = resolve;
+            });
+            const observer = withActivePrObservation(
+              {
+                project,
+                github,
+                authority,
+                signal,
+                intervalMs: 20,
+                timeoutMs: 5,
+                onError: vi.fn(),
+              },
+              () => activeWriter,
+            );
+            try {
+              await vi.advanceTimersByTimeAsync(85);
+              expect(readActivePrObservationHealth(authority)).toMatchObject({
+                status: "degraded",
+                identity: "timeout",
+                failures: 2,
+              });
+            } finally {
+              done();
+              await observer;
+              await vi.advanceTimersByTimeAsync(10);
+            }
+          } finally {
+            delayedReads.mockRestore();
+            vi.useRealTimers();
+            vi.useFakeTimers({ toFake: ["Date"] });
+            vi.setSystemTime(clock + 100);
+          }
+          await poll();
+          expect(feedbackClassifications).toBe(1);
+          expect(feedbackPrimaryCorrections).toBe(0);
+          expect(lists.get("first")).toBe("review");
+          expect(store.read("first")?.pullRequest?.headSha).toBe(originalHead);
+          expect(
+            Object.values(
+              authority.store.read()!.compatibility["feedback-classification-v1"] as object,
+            ),
+          ).toMatchObject([
+            { status: "waiting", classification: "provider-unavailable", failures: 0, outages: 1 },
+          ]);
+          activeAuthority = await ProjectRunAuthority.resumeAttempt({
+            projectId: project.id,
+            attemptId,
+            pinned,
+            projectLease: lease,
+            coordinationRoot,
+          });
+          authorities.set("first", activeAuthority);
+          expect(readActivePrObservationHealth(activeAuthority)).toMatchObject({
+            status: "degraded",
+            failures: 2,
+          });
+          git = new GitClient(runGit);
+          classifierUnavailable = false;
+          await poll();
+          expect(feedbackClassifications).toBe(2);
+          expect(activeAuthority.store.attemptId).toBe(attemptId);
+          expect(store.read("first")?.feedbackRemediation?.feedbackIds).toEqual([
+            "inline-comment:203",
+            "inline-comment:204",
+          ]);
+        } else if (feedbackQuality === "validation") {
           await expect(poll()).rejects.toThrow("lost feedback Working acknowledgment");
           expect(store.read("first")?.feedbackCardMove).toMatchObject({
             fromListId: "review",
@@ -2356,7 +2528,7 @@ describe("task lifecycle through pollProject", () => {
             exitCode: 1,
           });
           expect(firstPr?.body).toContain("failed");
-        } else {
+        } else if (feedbackQuality !== "classification-outage") {
           expect(corrected.publicationQuality?.review).toBeNull();
           expect(Object.values(corrected.feedbackRemediation?.reviewSourceAttempts ?? {})).toEqual([
             3,

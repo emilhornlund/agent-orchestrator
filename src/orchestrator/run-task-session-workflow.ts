@@ -40,6 +40,12 @@ import {
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import { runBoundedCiReview } from "../task-session/run-bounded-ci-review.js";
 import { extractOpenCodeTextOutput } from "../opencode/opencode-client.js";
+import { z } from "zod";
+import {
+  inspectPublishedFeedbackRecovery,
+  restorePublishedFeedbackCheckpoint,
+} from "./published-feedback-recovery.js";
+import { isLegacyFeedbackClassificationFailure } from "../task-session/reconcile-task-session.js";
 import { captureRepositorySnapshot, repositorySnapshotsEqual } from "../opencode/commit-result.js";
 import {
   CommitMessageAdviceUnavailableError,
@@ -1660,6 +1666,66 @@ async function runTaskSessionWorkflowAttempt(
     record: TaskExecutionRecord,
     worktreePath: string,
   ) => {
+    const authority = ProjectRunAuthority.current(project.id);
+    if (authority && isLegacyFeedbackClassificationFailure(record)) {
+      const recoveryKey = "legacy-published-feedback-recovery-v1";
+      const recoverySchema = z.strictObject({ reason: z.string(), retryAt: z.string().datetime() });
+      const prior = authority.read(recoveryKey, recoverySchema.parse);
+      if (prior && Date.now() < Date.parse(prior.retryAt))
+        return {
+          status: "waiting" as const,
+          checkpoint: "human-feedback" as const,
+          reason: prior.reason,
+          record,
+        };
+      try {
+        const proof = await inspectPublishedFeedbackRecovery({
+          project,
+          authority,
+          card,
+          task: record,
+          git,
+          github,
+          commands,
+          signal,
+        });
+        restorePublishedFeedbackCheckpoint(taskStore, record);
+        logger
+          .child({ projectId: project.id, cardId: card.id })
+          .event(
+            `Restored published feedback checkpoint for ${proof.pullRequestUrl}; attempt ${proof.attemptId}`,
+          );
+        return {
+          status: "resume" as const,
+          phase: "human-feedback" as const,
+          record: taskStore.read(card.id)!,
+        };
+      } catch (error) {
+        if (signal.aborted) throw error;
+        const reason = sanitizeControlledText(
+          error instanceof Error ? error.message : "Published feedback recovery inspection failed",
+        ).slice(0, 2_000);
+        const deferred = { reason, retryAt: new Date(Date.now() + 60_000).toISOString() };
+        authority.mutate(
+          recoveryKey,
+          deferred,
+          () => ({ value: deferred, result: undefined }),
+          recoverySchema.parse,
+        );
+        if (prior?.reason !== reason)
+          logger
+            .child({ projectId: project.id, cardId: card.id })
+            .warn(
+              `Published feedback recovery deferred for ${record.pullRequest?.url}; attempt ${authority.store.attemptId}; ${reason}`,
+            );
+        return {
+          status: "waiting" as const,
+          checkpoint: "human-feedback" as const,
+          reason,
+          record,
+        };
+      }
+    }
     const reconcile = (ownedRecord: TaskExecutionRecord) =>
       reconcileTaskSession({
         project,
@@ -2294,8 +2360,9 @@ async function runTaskSessionWorkflowAttempt(
       const noOpReportPending =
         record.feedbackRemediation?.status === "no-op" &&
         record.feedbackRemediation.outcomeReported !== true;
-      if (!noOpReportPending)
-        await refreshCurrentTaskFeedback({
+      if (
+        !noOpReportPending &&
+        !(await refreshCurrentTaskFeedback({
           project,
           cardId: card.id,
           observation,
@@ -2303,7 +2370,10 @@ async function runTaskSessionWorkflowAttempt(
           openCode,
           worktreePath,
           signal,
-        });
+          ...(emailNotifier === undefined ? {} : { emailNotifier }),
+        }))
+      )
+        return;
       const pending =
         feedbackLedgerStore
           .read(card.id)
@@ -3457,12 +3527,13 @@ async function runTaskSessionWorkflowAttempt(
       recoveryPath,
     );
     if (recovery === null || recovery.status !== "resume") {
+      if (isLegacyFeedbackClassificationFailure(recoveryRecord)) return;
       logger
         .child({ projectId: project.id, cardId: executionRecoveryCard.id })
         .event(
           recovery === null
             ? "Published task recovery remains waiting for reconstruction evidence"
-            : `Published task recovery remains ${recovery.status}; no writer was scheduled`,
+            : `Published task recovery remains ${recovery.status}${"reason" in recovery ? ` (${recovery.reason})` : ""}; no writer was scheduled`,
         );
       return;
     }
@@ -6465,7 +6536,6 @@ async function runTaskSessionWorkflowAttempt(
             });
           },
           repair: async (review, attempt, operationId, persistedPrompt) => {
-            cardLog.event(`Review repair attempt ${attempt} started`);
             let current = taskStore.read(activeCard.id);
             if (current === null)
               throw new Error("Task record disappeared during review remediation");

@@ -826,10 +826,9 @@ const defaultRunOpenCode: RunOpenCode = async ({
 
         flushOutput();
 
-        const failureClassification =
-          code !== 0 && hasStructuredProviderOutage(output)
-            ? ("dependency-outage" as const)
-            : undefined;
+        const failureClassification = hasStructuredProviderOutage(output)
+          ? ("dependency-outage" as const)
+          : undefined;
 
         settled = true;
         clearTimeout(safetyTimeout);
