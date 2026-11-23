@@ -1455,13 +1455,15 @@ describe("task lifecycle through pollProject", () => {
               errorOutput: "",
             };
           if (!identity) throw new Error("review prompt did not contain snapshot identity");
+          const incidentAdvisoryFinding =
+            feedbackQuality === "classification-outage" && !correctionFeedback;
           return {
             exitCode: 0,
             output: JSON.stringify({
               version: 1,
               projectId: project.id,
               cardId,
-              verdict: "pass",
+              verdict: incidentAdvisoryFinding ? "fail" : "pass",
               requirementAssessments: [
                 {
                   requirementId: "REQ-1",
@@ -1470,7 +1472,17 @@ describe("task lifecycle through pollProject", () => {
                   evidence: ["app.js"],
                 },
               ],
-              blockingFindings: [],
+              blockingFindings: incidentAdvisoryFinding
+                ? [
+                    {
+                      kind: "defect",
+                      summary: "Retained advisory edge case",
+                      detail:
+                        "The fixture intentionally leaves a review concern for the human reviewer.",
+                      location: { filePath: "app.js", line: 1 },
+                    },
+                  ]
+                : [],
               reviewedContentIdentity: identity,
             }),
             errorOutput: "",
@@ -1987,9 +1999,20 @@ describe("task lifecycle through pollProject", () => {
         return;
       }
       expect(firstPr?.isDraft).toBe(
-        draft || preparedReview !== undefined || preparedValidationFailure === true,
+        draft ||
+          preparedReview !== undefined ||
+          preparedValidationFailure === true ||
+          feedbackQuality === "classification-outage",
       );
       const progressMessages = progress.mock.calls.map(([message]) => message);
+      if (feedbackQuality === "classification-outage") {
+        expect(firstPr?.body).toContain("Retained advisory edge case");
+        expect(
+          progressMessages.filter((message) =>
+            message.startsWith("Review repair attempt 1 started"),
+          ),
+        ).toHaveLength(1);
+      }
       if (publishedReadRecovery) {
         expect(
           observedCommands.filter((command) => command === project.repository.validationCommand),
