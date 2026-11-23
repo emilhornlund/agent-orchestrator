@@ -1092,10 +1092,28 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
       rejectBeforeSpawn(error);
       return;
     }
+    const finishBeforeSpawn = (error: unknown, cancellationRequested = false) => {
+      try {
+        execution.finish(
+          "not-dispatched",
+          cancellationRequested ? { cancellationRequested: true } : {},
+        );
+      } catch (evidenceError) {
+        rejectBeforeSpawn(
+          new AggregateError(
+            [error, evidenceError],
+            "GitHub could not launch; process evidence finalization failed",
+          ),
+        );
+        return;
+      }
+      rejectBeforeSpawn(error);
+    };
     if (runtime.signal?.aborted) {
-      execution.finish("not-dispatched", { cancellationRequested: true });
-      const error = new ProcessExecutionError("GitHub CLI", execution.executionId, "interrupted");
-      reject(isGitHubWrite(args) ? githubMutationNotDispatched(error) : error);
+      finishBeforeSpawn(
+        new ProcessExecutionError("GitHub CLI", execution.executionId, "interrupted"),
+        true,
+      );
       return;
     }
     const contentFlags = new Set([
@@ -1120,8 +1138,7 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
     try {
       dispatch = containedProcess("gh", safeArguments);
     } catch (error) {
-      execution.finish("not-dispatched");
-      rejectBeforeSpawn(error);
+      finishBeforeSpawn(error);
       return;
     }
     let child: ReturnType<typeof spawn>;
@@ -1133,8 +1150,7 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
         env: buildChildEnvironment("github", environment),
       });
     } catch (error) {
-      execution.finish("not-dispatched");
-      rejectBeforeSpawn(error);
+      finishBeforeSpawn(error);
       return;
     }
 
@@ -1250,7 +1266,8 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
         settled = true;
         clearTimeout(timeout);
         runtime.signal?.removeEventListener("abort", abort);
-        reject(finishError);
+        if (child.pid === undefined) rejectBeforeSpawn(finishError);
+        else reject(finishError);
         return;
       }
       clearTimeout(timeout);
@@ -1319,7 +1336,8 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
           ...(signalName === null ? {} : { signal: signalName }),
         });
       } catch (finishError) {
-        reject(finishError);
+        if (payloadSpawned === false) rejectBeforeSpawn(finishError);
+        else reject(finishError);
         return;
       }
       recorderFailure ??= execution.failure;

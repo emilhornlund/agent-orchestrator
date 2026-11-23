@@ -90,12 +90,24 @@ export function feedbackClassificationCheckpoint(options: {
       return deferred;
     },
     assertStopped() {
-      for (const value of Object.values(read()))
+      for (const value of Object.values(read())) {
+        if (value.status === "running" && !value.executionId) {
+          // The classifier binds process evidence before spawn. A restart in
+          // the capacity queue cannot consume a genuine execution allowance.
+          save({
+            ...value,
+            status: "waiting",
+            failures: Math.max(0, value.failures - 1),
+            retryAt: null,
+          });
+          continue;
+        }
         if (
           (value.status === "running" || value.classification === "execution-uncertain") &&
           !verifiedStopped(value)
         )
           defer();
+      }
     },
     selectRevisions(revisions: readonly string[]) {
       const records = Object.values(read());

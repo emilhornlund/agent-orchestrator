@@ -311,6 +311,26 @@ it("keeps fresh feedback independent of a nearly exhausted revision after restar
   ]);
 });
 
+it("does not exhaust feedback after repeatedly restarting before the classifier can launch", async () => {
+  const f = fixture();
+  const revision = "request:revision-1";
+  for (let n = 0; n < 4; n++) {
+    const owner = new ProjectRunAuthority(f.project.id, f.store, 1, undefined, undefined, "card");
+    owner.run(() => {
+      const checkpoint = feedbackClassificationCheckpoint({
+        project: f.project,
+        cardId: "card",
+        pullRequestUrl: f.pr.url,
+        worktreePath: "/owned/worktree",
+      })!;
+      checkpoint.assertStopped();
+      expect(checkpoint.selectRevisions([revision])).toEqual([revision]);
+      checkpoint.reserve([revision]);
+      // Interrupt before the onExecutionPrepared callback can bind the child.
+    });
+  }
+});
+
 it("times out a delayed observer without overlapping it or invalidating the writer", async () => {
   vi.useFakeTimers();
   const f = fixture();

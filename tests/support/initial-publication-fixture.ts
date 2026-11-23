@@ -146,6 +146,22 @@ export class PublicationServices {
           }
         : null;
     },
+    getPullRequestStateByNumber: async ({
+      pullRequestNumber,
+    }: {
+      pullRequestNumber: number;
+    }): Promise<PullRequestState> => {
+      const pr = await this.github.findPullRequestState({
+        cwd: this.project.repository.path,
+        repository: this.project.repository.github,
+        headBranch: "agent/card",
+        baseBranch: "main",
+        project: this.project,
+      });
+      if (!pr || Number(new URL(pr.url).pathname.split("/").at(-1)) !== pullRequestNumber)
+        throw new Error("Numbered fixture PR is unavailable");
+      return pr;
+    },
     getPullRequestPublicationFields: async () => {
       this.ledger("pr-fields-read");
       const state = this.read();
