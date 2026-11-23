@@ -2526,6 +2526,7 @@ describe("task lifecycle through pollProject", () => {
               { trello, git, github, opencode: openCode, commands },
               resumed.signal,
               {
+                validateToolchain: async () => undefined,
                 validateGitHubCli: async () => undefined,
                 validateProjectTrello: async () => undefined,
                 validateProjectGitHub: async () => undefined,
