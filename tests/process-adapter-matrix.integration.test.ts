@@ -170,23 +170,28 @@ describe("production child adapter outcome matrix", () => {
     return { request, artifactRoot, scenario, timeline };
   }
 
-  async function inspectArtifact(artifactRoot: string) {
+  function inspectArtifacts(artifactRoot: string, expected = 1) {
     const entries = fs.readdirSync(artifactRoot);
-    expect(entries).toHaveLength(1);
-    const executionDirectory = path.join(artifactRoot, entries[0]!);
-    return {
-      metadata: JSON.parse(
-        fs.readFileSync(path.join(executionDirectory, "execution.json"), "utf8"),
-      ) as {
-        executionId: string;
-        status: string;
-        exitCode?: number;
-        signal?: string;
-        pid?: number;
-      },
-      stdout: fs.readFileSync(path.join(executionDirectory, "stdout.txt"), "utf8"),
-      stderr: fs.readFileSync(path.join(executionDirectory, "stderr.txt"), "utf8"),
-    };
+    expect(entries).toHaveLength(expected);
+    return entries.map((id) => {
+      const executionDirectory = path.join(artifactRoot, id);
+      return {
+        metadata: JSON.parse(
+          fs.readFileSync(path.join(executionDirectory, "execution.json"), "utf8"),
+        ) as {
+          executionId: string;
+          status: string;
+          exitCode?: number;
+          signal?: string;
+          pid?: number;
+        },
+        stdout: fs.readFileSync(path.join(executionDirectory, "stdout.txt"), "utf8"),
+        stderr: fs.readFileSync(path.join(executionDirectory, "stderr.txt"), "utf8"),
+      };
+    });
+  }
+  async function inspectArtifact(artifactRoot: string) {
+    return inspectArtifacts(artifactRoot)[0]!;
   }
 
   it("records a retained shell's numeric child-crash status without inventing a supervisor signal", async () => {
@@ -238,7 +243,11 @@ describe("production child adapter outcome matrix", () => {
         await expect(request).rejects.toBeDefined();
       }
 
-      const evidence = await inspectArtifact(artifactRoot);
+      const executions = family === "gh" && scenario === "timeout" ? 2 : 1;
+      const artifacts = inspectArtifacts(artifactRoot, executions);
+      const evidence = artifacts.find(
+        (entry) => entry.metadata.executionId === timeline[0]?.executionId,
+      )!;
       const expectedStatus =
         scenario === "partial"
           ? "success"
@@ -254,6 +263,9 @@ describe("production child adapter outcome matrix", () => {
                   ? "timeout"
                   : "interrupted";
       expect(evidence.metadata.status).toBe(expectedStatus);
+      if (executions === 2)
+        for (const attempt of artifacts)
+          expect(attempt.metadata).toMatchObject({ status: "timeout", treeStopped: true });
       const markers = fixtureMarkers(family, scenario);
       if (scenario === "spawn-failure") {
         expect(evidence.stdout).toBe("");
@@ -293,7 +305,9 @@ describe("production child adapter outcome matrix", () => {
         expect(evidence.metadata.signal).toBe("SIGTERM");
       const start = timeline.find((event) => event.type === "process-started");
       const finish = timeline.find((event) => event.type === "process-finished");
-      expect(timeline.map((event) => event.type)).toEqual(["process-started", "process-finished"]);
+      expect(timeline.map((event) => event.type)).toEqual(
+        Array.from({ length: executions }, () => ["process-started", "process-finished"]).flat(),
+      );
       expect(start).toMatchObject({
         executionId: evidence.metadata.executionId,
         stdoutArtifact: expect.stringContaining("stdout.txt"),

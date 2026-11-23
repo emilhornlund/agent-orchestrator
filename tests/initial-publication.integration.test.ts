@@ -513,7 +513,13 @@ describe("setup-aware initial publication commit scope", () => {
       if (large) vi.spyOn(f.git, "getIgnoredFiles").mockResolvedValue(largeIgnoredInventory());
       const disposition = await createSetupDisposition(f, "unrelated.setup");
       await begin(f, "feat: setup aware task", disposition);
+      const inventoryReads = vi.spyOn(TaskExecutionStore.prototype, "readSetupArtifact");
       await through(f, "pr");
+      if (large) {
+        expect(inventoryReads).toHaveBeenCalledTimes(3);
+        await through(f, "comment");
+        expect(inventoryReads).toHaveBeenCalledTimes(3);
+      }
       expect(f.isolated.git(f.worktreePath, "show", "HEAD:yarn.lock")).toBe("task dependency");
       expect(() => f.isolated.git(f.worktreePath, "show", "HEAD:unrelated.setup")).toThrow();
       expect(fs.readFileSync(path.join(f.worktreePath, "unrelated.setup"), "utf8")).toBe(

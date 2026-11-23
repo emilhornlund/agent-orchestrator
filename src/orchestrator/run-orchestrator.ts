@@ -465,6 +465,7 @@ async function runProjectWorkerInner(
       authority: runContext.authority,
       intervalMs: pollIntervalMilliseconds,
       signal,
+      ...(emailNotifier === undefined ? {} : { emailNotifier }),
       onError: (error, diagnosticReference) =>
         logger
           .child({ projectId: project.id })

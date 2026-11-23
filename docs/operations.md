@@ -372,6 +372,12 @@ diagnosis.
 
 ### GitHub CLI compatibility
 
+Ordinary `gh` reads have a 20-second subprocess deadline by default and one transient retry after
+250 ms. Writes default to 60 seconds and are not retried by the CLI adapter. A timed-out write
+remains pending in its existing journal until authoritative readback verifies the accepted effect or
+independently establishes non-dispatch. Configure deadlines under `projects[].repository`; they are
+independent of `opencode.timeoutMinutes`.
+
 Agent Orchestrator supports GitHub CLI (`gh`) `2.40.0` and later. Startup validates the installed
 CLI before bootstrapping any configured repository or beginning Trello project processing. The
 validation runs `gh --version` and checks the help surface for the executable commands and options
@@ -698,6 +704,17 @@ include the scheduled retry time, actual resume time, and retry lag. `beforeRead
 work in that pass before the step-specific read, including time in the setup scope and source
 fingerprint checks. `readbackMs` measures the step-specific read itself. Compare these durations
 before changing the poll interval.
+
+Publication decodes and verifies immutable setup inventories once per matching leased checkpoint. It
+reuses the derived scope across readbacks, rehashes current setup-affected bytes and modes, and
+still checks the live source, index and Git identities. A new authority or changed scope binding
+revalidates the original content-addressed artifacts.
+
+The background PR observer stores its health, failure identity, diagnostic reference and next probe
+in `active-pr-observation-health-v1` in the attempt. Each observation has a 90-second deadline.
+Failures back off exponentially up to five minutes, with degraded status after two failures. A
+complete, stable observation restores healthy monitoring; partial reads retain previous arrivals and
+cannot cancel the serialized writer. Verified terminal PR outcomes still fence writes.
 
 Credential redaction retains quoted escape boundaries in serialized tool output, including nested
 planning JSON and values split across stream chunks. Intentional review or requested-changes

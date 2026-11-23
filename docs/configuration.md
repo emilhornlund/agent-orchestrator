@@ -1,5 +1,12 @@
 # Configuration
 
+## GitHub operation deadlines
+
+Optional `projects[].repository.githubReadTimeoutSeconds` (1–120, default 20) and
+`projects[].repository.githubWriteTimeoutSeconds` (1–180, default 60) bound GitHub CLI subprocesses.
+They work with both ambient and GitHub App authentication and are independent of the OpenCode
+deadline. A transient CLI read can be retried once; the adapter never resends a timed-out write.
+
 [README](../README.md) | [Workflow](workflow.md) | [Recovery](recovery.md) |
 [Operations](operations.md)
 

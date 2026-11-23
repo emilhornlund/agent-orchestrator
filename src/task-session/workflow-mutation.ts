@@ -253,9 +253,39 @@ export async function withJournaledDispatch<T>(
   };
   try {
     return await dispatchContext.run(capability, operation);
+  } catch (error) {
+    if (expected.route.startsWith("github-") && capability.consumed && !capability.transported)
+      throw new GitHubMutationNotDispatchedError(operationId, dispatch.generation, error);
+    throw error;
   } finally {
     capability.active = false;
   }
+}
+
+export class GitHubMutationNotDispatchedError extends Error {
+  constructor(
+    readonly operationId: string,
+    readonly generation: number,
+    cause: unknown,
+  ) {
+    super("GitHub mutation stopped before transport dispatch", { cause });
+    this.name = "GitHubMutationNotDispatchedError";
+  }
+}
+
+export function githubMutationNotDispatched(cause: unknown): unknown {
+  const capability = dispatchContext.getStore();
+  if (
+    capability?.active &&
+    capability.transported &&
+    capability.expected.route.startsWith("github-")
+  )
+    return new GitHubMutationNotDispatchedError(
+      capability.operationId,
+      capability.dispatchGeneration,
+      cause,
+    );
+  return cause;
 }
 
 /** Match exactly one concrete mutation. Authority checks are never bypassed,
@@ -600,10 +630,14 @@ export async function workflowMutation<T>(options: {
     } catch (error) {
       authority.assertHeld();
       const rejection = options.rejected?.(error);
+      const generation = entry().mutation!.dispatches.at(-1)?.generation;
       const notSent =
-        error instanceof ObservedPrTerminalError &&
-        error.transport?.operationId === id &&
-        error.transport.generation === entry().mutation!.dispatches.at(-1)?.generation;
+        (error instanceof ObservedPrTerminalError &&
+          error.transport?.operationId === id &&
+          error.transport.generation === generation) ||
+        (error instanceof GitHubMutationNotDispatchedError &&
+          error.operationId === id &&
+          error.generation === generation);
       event({
         type: "response",
         outcome: rejection || notSent ? "not-delivered" : "unknown",

@@ -8,13 +8,22 @@ import { RunStore } from "../src/task-session/run-store.js";
 import { ProjectRunAuthority } from "../src/task-session/project-run-authority.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
+import { readTerminalPrFence } from "../src/task-session/terminal-pr-fence.js";
 import {
   observeActivePullRequest,
   readActivePrArrivals,
+  readActivePrObservationHealth,
   withActivePrObservation,
 } from "../src/orchestrator/active-pr-observation.js";
 
 let root: string;
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 afterEach(() => {
   vi.useRealTimers();
   if (root) fs.rmSync(root, { recursive: true, force: true });
@@ -86,7 +95,7 @@ function fixture() {
   const headSha = "a".repeat(40);
   const pr = {
     url: "https://github.com/owner/repo/pull/1",
-    state: "OPEN",
+    state: "OPEN" as const,
     mergedAt: null,
     headRefOid: headSha,
     headRefName: "agent/card",
@@ -225,6 +234,70 @@ it("retains observer failure diagnostics without interrupting the writer and bac
   expect(vi.getTimerCount()).toBe(0);
 });
 
+it("persists degraded health across restart and requires a complete recovery observation", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const lookup = vi.mocked(f.github.findPullRequestState);
+  lookup.mockRejectedValue(new Error("provider not responding"));
+  const onError = vi.fn();
+  const options = { ...f, intervalMs: 100, signal: new AbortController().signal, onError };
+  const first = deferred<string>();
+  const running = withActivePrObservation(options, () => first.promise);
+  await vi.advanceTimersByTimeAsync(300);
+  expect(lookup).toHaveBeenCalledTimes(2);
+  expect(onError).toHaveBeenCalledOnce();
+  first.resolve("writer succeeded");
+  await expect(running).resolves.toBe("writer succeeded");
+  const authority = new ProjectRunAuthority(f.project.id, f.store, 1, undefined, undefined, "card");
+  expect(readActivePrObservationHealth(authority)).toMatchObject({
+    status: "degraded",
+    failures: 2,
+  });
+  lookup.mockResolvedValue(f.pr);
+  const complete = vi.mocked(f.github.getCiObservations);
+  complete.mockResolvedValueOnce({ headSha: "b".repeat(40), checks: [], expectationSources: [] });
+  const second = deferred<void>();
+  const resumed = withActivePrObservation({ ...options, authority }, () => second.promise);
+  await vi.advanceTimersByTimeAsync(399);
+  expect(lookup).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(readActivePrObservationHealth(authority)).toMatchObject({
+    status: "degraded",
+    failures: 3,
+  });
+  expect(readActivePrArrivals(authority)).toEqual([]);
+  await vi.advanceTimersByTimeAsync(800);
+  expect(readActivePrObservationHealth(authority)).toMatchObject({
+    status: "healthy",
+    failures: 0,
+  });
+  expect(readActivePrArrivals(authority)).toHaveLength(1);
+  second.resolve();
+  await resumed;
+});
+
+it("times out a delayed observer without overlapping it or invalidating the writer", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const late = deferred<Awaited<ReturnType<GitHubClient["findPullRequestState"]>>>();
+  const lookup = vi.mocked(f.github.findPullRequestState).mockReturnValueOnce(late.promise);
+  const writer = deferred<number>();
+  const onError = vi.fn();
+  const result = withActivePrObservation(
+    { ...f, intervalMs: 100, timeoutMs: 50, signal: new AbortController().signal, onError },
+    () => writer.promise,
+  );
+  await vi.advanceTimersByTimeAsync(400);
+  expect(lookup).toHaveBeenCalledOnce();
+  expect(onError).toHaveBeenCalledOnce();
+  expect(readActivePrObservationHealth(f.authority)).toMatchObject({ identity: "timeout" });
+  writer.resolve(42);
+  await expect(result).resolves.toBe(42);
+  late.resolve(f.pr);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(readActivePrArrivals(f.authority)).toEqual([]);
+});
+
 it("preserves prior arrivals on outages and rejects stale owner generations", async () => {
   const f = fixture();
   await observeActivePullRequest(f);
@@ -281,7 +354,11 @@ it("does not persist mixed feedback when the PR changes during observation", asy
       ReturnType<GitHubClient["findPullRequestState"]>
     >);
   await observeActivePullRequest(f);
-  expect(readActivePrArrivals(f.authority)).toHaveLength(0);
+  expect(readActivePrArrivals(f.authority)).toMatchObject([{ state: "CLOSED" }]);
+  expect(readTerminalPrFence(f.authority)).toMatchObject({ state: "CLOSED" });
+  expect(new TaskMutationQueue(f.project.contextRoot, f.project, f.authority).list()).toMatchObject(
+    [{ kind: "terminal-pr" }],
+  );
 });
 
 it("reconciles interruption between durable observation and queue descriptor without losing or duplicating the arrival", async () => {

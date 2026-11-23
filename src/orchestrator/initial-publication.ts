@@ -1,6 +1,9 @@
 import fs from "node:fs";
 import { taskResources, runTaskResources } from "../task-session/task-resources.js";
-import { withJournaledDispatch } from "../task-session/workflow-mutation.js";
+import {
+  GitHubMutationNotDispatchedError,
+  withJournaledDispatch,
+} from "../task-session/workflow-mutation.js";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
@@ -22,7 +25,6 @@ import { TrelloRequestError } from "../trello/trello-client.js";
 import { TaskExecutionStore } from "../task-session/task-execution-store.js";
 import { captureSetupPath, assertSetupInventoryIdentity } from "../process/run-setup.js";
 import {
-  getSetupTrackedDelta,
   resolveSetupCommitScope,
   setupFileIdentity,
   type SetupInventory,
@@ -106,6 +108,16 @@ const checkpointSchema = z.strictObject({
 });
 type Checkpoint = z.infer<typeof checkpointSchema>;
 
+// Cache only the derived proof from immutable content addresses, scoped to the
+// leased authority. Never cache evidence about the current worktree's contents.
+const setupProofs = new WeakMap<
+  ProjectRunAuthority,
+  {
+    binding: string;
+    candidates: { path: string; identity: string | undefined }[];
+  }
+>();
+
 async function validateSetupDisposition(
   checkpoint: Checkpoint,
   run: NonNullable<ReturnType<ProjectRunAuthority["store"]["read"]>>,
@@ -130,21 +142,60 @@ async function validateSetupDisposition(
     task.setup.relevance !== disposition.artifactReference
   )
     throw new PublicationSafetyError("Setup scope proof is missing or unbound to the task record");
+  const authority = ProjectRunAuthority.current(project.id);
+  const binding = JSON.stringify({
+    attempt: run.attemptId,
+    cwd: fs.realpathSync(cwd),
+    branch: checkpoint.branch,
+    disposition,
+    setup: task.setup,
+  });
+  const cached = authority && setupProofs.get(authority);
+  const candidates =
+    cached?.binding === binding
+      ? cached.candidates
+      : deriveSetupDisposition(
+          store,
+          { ...task.setup, before: task.setup.before, after: task.setup.after },
+          disposition,
+          cwd,
+          checkpoint.branch,
+        );
+  if (authority && cached?.binding !== binding) setupProofs.set(authority, { binding, candidates });
+  for (const expected of candidates) {
+    const actual = captureSetupPath(cwd, expected.path);
+    if ((actual === undefined ? undefined : setupFileIdentity(actual)) !== expected.identity)
+      throw new PublicationSafetyError(
+        `Setup relevance evidence is stale for ${expected.path}; refusing to stage or commit`,
+      );
+  }
+}
+
+function deriveSetupDisposition(
+  store: TaskExecutionStore,
+  setup: Pick<
+    NonNullable<ReturnType<TaskExecutionStore["read"]>>["setup"] & object,
+    "history" | "attempts" | "attemptBefore"
+  > & { before: string; after: string },
+  disposition: NonNullable<Checkpoint["setupDisposition"]>,
+  cwd: string,
+  branch: string,
+) {
   const rawArtifact = store.readSetupArtifact(disposition.artifactReference);
   if (typeof rawArtifact !== "object" || rawArtifact === null)
     throw new PublicationSafetyError("Setup scope artifact is malformed");
   const artifact = rawArtifact as Record<string, unknown>;
   if (
     artifact.version !== 1 ||
-    artifact.before !== task.setup.before ||
-    artifact.after !== task.setup.after ||
-    !Array.isArray(task.setup.history) ||
-    task.setup.history.length === 0 ||
-    task.setup.history.length !== task.setup.attempts ||
-    task.setup.history[0]?.before !== task.setup.before ||
-    task.setup.history.at(-1)?.before !== (task.setup.attemptBefore ?? task.setup.before) ||
-    task.setup.history.at(-1)?.after !== task.setup.after ||
-    task.setup.history.at(-1)?.outcome !== "passed" ||
+    artifact.before !== setup.before ||
+    artifact.after !== setup.after ||
+    !Array.isArray(setup.history) ||
+    setup.history.length === 0 ||
+    setup.history.length !== setup.attempts ||
+    setup.history[0]?.before !== setup.before ||
+    setup.history.at(-1)?.before !== (setup.attemptBefore ?? setup.before) ||
+    setup.history.at(-1)?.after !== setup.after ||
+    setup.history.at(-1)?.outcome !== "passed" ||
     typeof artifact.verdict !== "object" ||
     artifact.verdict === null ||
     typeof artifact.current !== "object" ||
@@ -153,13 +204,17 @@ async function validateSetupDisposition(
     throw new PublicationSafetyError(
       "Setup scope artifact does not match its durable setup evidence",
     );
-  const before = store.readSetupArtifact(task.setup.before);
-  const attemptBefore = store.readSetupArtifact(task.setup.attemptBefore ?? task.setup.before);
-  const after = store.readSetupArtifact(task.setup.after);
-  assertSetupInventoryIdentity(before, cwd, checkpoint.branch);
-  assertSetupInventoryIdentity(attemptBefore, cwd, checkpoint.branch);
-  assertSetupInventoryIdentity(after, cwd, checkpoint.branch);
-  assertSetupInventoryIdentity(artifact.current, cwd, checkpoint.branch);
+  const before = store.readSetupArtifact(setup.before);
+  const after = store.readSetupArtifact(setup.after);
+  assertSetupInventoryIdentity(before, cwd, branch);
+  if (
+    setup.attemptBefore &&
+    setup.attemptBefore !== setup.before &&
+    setup.attemptBefore !== setup.after
+  )
+    assertSetupInventoryIdentity(store.readSetupArtifact(setup.attemptBefore), cwd, branch);
+  assertSetupInventoryIdentity(after, cwd, branch);
+  assertSetupInventoryIdentity(artifact.current, cwd, branch);
   const resolved = resolveSetupCommitScope(
     before as SetupInventory,
     after as SetupInventory,
@@ -174,26 +229,17 @@ async function validateSetupDisposition(
     throw new PublicationSafetyError(
       "Setup scope proof context differs from durable relevance evidence",
     );
-  const candidatePaths = getSetupTrackedDelta(
-    before as SetupInventory,
-    after as SetupInventory,
-    artifact.current as SetupInventory,
-  ).candidates.map((candidate) => candidate.path);
+  const candidatePaths = [...resolved.include, ...resolved.exclude.map((item) => item.path)];
   const recordedByPath = new Map(
     (artifact.current as SetupInventory).files.map((file) => [file.path, file]),
   );
-  for (const filePath of candidatePaths) {
+  return candidatePaths.map((filePath) => {
     const expected = recordedByPath.get(filePath);
-    const actual = captureSetupPath(cwd, filePath);
-    if (
-      (expected === undefined && actual !== undefined) ||
-      (expected !== undefined &&
-        (!actual || setupFileIdentity(actual) !== setupFileIdentity(expected)))
-    )
-      throw new PublicationSafetyError(
-        `Setup relevance evidence is stale for ${filePath}; refusing to stage or commit`,
-      );
-  }
+    return {
+      path: filePath,
+      identity: expected === undefined ? undefined : setupFileIdentity(expected),
+    };
+  });
 }
 
 async function assertSetupPreservation(
@@ -622,6 +668,9 @@ export async function resumeInitialPublication(options: {
           (error instanceof ObservedPrTerminalError &&
             error.transport?.operationId === id &&
             error.transport.generation === entry(id)?.mutation?.dispatches.at(-1)?.generation) ||
+          (error instanceof GitHubMutationNotDispatchedError &&
+            error.operationId === id &&
+            error.generation === entry(id)?.mutation?.dispatches.at(-1)?.generation) ||
           (error instanceof ProcessExecutionError && error.classification === "spawn-failure")
             ? ("transport-proven-not-sent" as const)
             : error instanceof TrelloRequestError &&
