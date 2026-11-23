@@ -1083,7 +1083,15 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
       environment?.GITHUB_TOKEN,
       ...runtime.secretValues,
     ].filter((value): value is string => value !== undefined);
-    const execution = beginProcessEvidence(`gh ${args.join(" ")}`, cwd, environmentSecrets);
+    const rejectBeforeSpawn = (error: unknown) =>
+      reject(isGitHubWrite(args) ? githubMutationNotDispatched(error) : error);
+    let execution: ReturnType<typeof beginProcessEvidence>;
+    try {
+      execution = beginProcessEvidence(`gh ${args.join(" ")}`, cwd, environmentSecrets);
+    } catch (error) {
+      rejectBeforeSpawn(error);
+      return;
+    }
     if (runtime.signal?.aborted) {
       execution.finish("not-dispatched", { cancellationRequested: true });
       const error = new ProcessExecutionError("GitHub CLI", execution.executionId, "interrupted");
@@ -1108,8 +1116,6 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
         ? `${flag}=${redactRegisteredSecrets(argument.slice(separator + 1), environmentSecrets)}`
         : argument;
     });
-    const rejectBeforeSpawn = (error: unknown) =>
-      reject(isGitHubWrite(args) ? githubMutationNotDispatched(error) : error);
     let dispatch: ReturnType<typeof containedProcess>;
     try {
       dispatch = containedProcess("gh", safeArguments);
@@ -1118,12 +1124,19 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
       rejectBeforeSpawn(error);
       return;
     }
-    const child = spawn(dispatch.command, dispatch.args, {
-      cwd,
-      stdio: ["inherit", "pipe", "pipe", "pipe", "pipe"],
-      detached: process.platform !== "win32",
-      env: buildChildEnvironment("github", environment),
-    });
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(dispatch.command, dispatch.args, {
+        cwd,
+        stdio: ["inherit", "pipe", "pipe", "pipe", "pipe"],
+        detached: process.platform !== "win32",
+        env: buildChildEnvironment("github", environment),
+      });
+    } catch (error) {
+      execution.finish("not-dispatched");
+      rejectBeforeSpawn(error);
+      return;
+    }
 
     let output = "";
     let errorOutput = "";

@@ -11,6 +11,7 @@ import {
   type OpenCodeRunOptions,
 } from "../opencode/opencode-client.js";
 import { ProcessExecutionError } from "../process/process-runtime.js";
+import { AiCapacityCancelledError } from "../orchestrator/ai-execution-capacity.js";
 import type { FeedbackLedgerEntry } from "./feedback-ledger.js";
 
 export function feedbackSourceRevision(entry: FeedbackLedgerEntry): string {
@@ -79,6 +80,7 @@ export async function classifyCurrentFeedback(options: {
   worktreePath: string;
   incoming: readonly FeedbackLedgerEntry[];
   previous: readonly FeedbackLedgerEntry[];
+  history?: readonly FeedbackLedgerEntry[];
   pullRequestUrl?: string;
   openCode: OpenCodeClient;
   signal: AbortSignal;
@@ -89,6 +91,17 @@ export async function classifyCurrentFeedback(options: {
 }): Promise<FeedbackLedgerEntry[]> {
   const key = (entry: FeedbackLedgerEntry) => `${entry.kind}:${entry.id}`;
   const previous = new Map(options.previous.map((entry) => [key(entry), entry]));
+  const classifiedHistory = new Map(
+    (options.history ?? [])
+      .filter((entry) => entry.actionability !== "unclassified" && entry.isCurrent !== false)
+      .map((entry) => [key(entry), entry]),
+  );
+  const classificationBaseline = (entry: FeedbackLedgerEntry) => {
+    const prior = previous.get(key(entry));
+    return prior?.actionability === "unclassified"
+      ? (classifiedHistory.get(key(entry)) ?? prior)
+      : prior;
+  };
   const linked = new Map<string, FeedbackLedgerEntry[]>();
   if (options.pullRequestUrl !== undefined) {
     const prefix = `${options.pullRequestUrl}#pullrequestreview-`;
@@ -201,7 +214,7 @@ export async function classifyCurrentFeedback(options: {
         feedbackId: `${entry.kind}:${entry.id}`,
         sourceRevision: feedbackSourceRevision(entry),
         current: entry,
-        previous: previous.get(`${entry.kind}:${entry.id}`) ?? null,
+        previous: classificationBaseline(entry) ?? null,
         linkedEarlierReviews: (linked.get(key(entry)) ?? []).map((target) => ({
           feedbackId: key(target),
           body: target.body,
@@ -238,6 +251,7 @@ export async function classifyCurrentFeedback(options: {
           : undefined;
       const kind =
         error instanceof OpenCodeRunAbortedError ||
+        error instanceof AiCapacityCancelledError ||
         (error instanceof ProcessExecutionError && error.classification === "interrupted")
           ? "cancelled"
           : error instanceof OpenCodeDefaultProviderResolutionError ||
@@ -303,7 +317,7 @@ export async function classifyCurrentFeedback(options: {
     options.incoming.map((entry) => {
       const assessment = assessments.get(`${entry.kind}:${entry.id}`);
       if (!assessment) return retained(entry);
-      const old = previous.get(`${entry.kind}:${entry.id}`);
+      const old = classificationBaseline(entry);
       const changed =
         old === undefined || assessment.substantiveChange || old.author !== entry.author;
       const supersedes = (linked.get(key(entry)) ?? [])

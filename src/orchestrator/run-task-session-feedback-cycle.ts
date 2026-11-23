@@ -270,6 +270,7 @@ export async function refreshCurrentTaskFeedback(options: {
       pullRequestUrl: options.observation.pullRequestUrl,
       incoming: toFeedbackEntries(options.observation),
       previous: previous?.entries ?? [],
+      history: previous?.history ?? [],
       ...(checkpoint === undefined
         ? {}
         : {

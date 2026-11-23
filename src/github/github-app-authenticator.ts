@@ -330,8 +330,9 @@ export class GitHubAppAuthenticator {
 
     try {
       body = await response.json();
-    } catch {
+    } catch (error) {
       assertActive();
+      if (timeout.aborted || error instanceof TypeError) throw new GitHubAppNetworkError();
       throw new GitHubAppApiError(
         "GitHub App installation token exchange returned invalid JSON",
         response.status,

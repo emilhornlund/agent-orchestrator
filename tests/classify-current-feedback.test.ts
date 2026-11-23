@@ -12,6 +12,7 @@ import {
   feedbackSourceRevision,
 } from "../src/task-session/classify-current-feedback.js";
 import type { FeedbackLedgerEntry } from "../src/task-session/feedback-ledger.js";
+import { AiCapacityCancelledError } from "../src/orchestrator/ai-execution-capacity.js";
 
 const entry: FeedbackLedgerEntry = {
   kind: "conversation-comment",
@@ -216,6 +217,41 @@ it("recovers once from the observed combined actionability token without weakeni
 });
 
 const executionId = "5125c222-01d9-4937-af6d-2a72e6a2c040";
+it("compares a deferred edit against the prior classified revision", async () => {
+  const edited = {
+    ...entry,
+    body: "Fix a different condition",
+    actionability: "unclassified" as const,
+  };
+  const run = vi.fn<RunOpenCode>(async ({ prompt }) => {
+    expect(prompt).toContain(entry.body);
+    return {
+      exitCode: 0,
+      errorOutput: "",
+      output: JSON.stringify({
+        version: 1,
+        assessments: [
+          {
+            feedbackId: "conversation-comment:1",
+            sourceRevision: feedbackSourceRevision(edited),
+            actionability: "actionable",
+            substantiveChange: true,
+          },
+        ],
+      }),
+    };
+  });
+  const result = await classifyCurrentFeedback({
+    project,
+    incoming: [edited],
+    previous: [edited],
+    history: [entry],
+    worktreePath: "/tmp",
+    openCode: new OpenCodeClient(run),
+    signal: new AbortController().signal,
+  });
+  expect(result[0]).toMatchObject({ actionability: "actionable", requestRevision: 2 });
+});
 it("can reuse a verified pending request while another source remains unavailable", async () => {
   const verified = { ...entry, status: "pending" as const, unresolvedReason: undefined };
   const deferred = {
@@ -270,6 +306,12 @@ it.each<[string, RunOpenCode]>([
     "cancelled",
     async () => {
       throw new OpenCodeRunAbortedError();
+    },
+  ],
+  [
+    "cancelled",
+    async () => {
+      throw new AiCapacityCancelledError();
     },
   ],
   [

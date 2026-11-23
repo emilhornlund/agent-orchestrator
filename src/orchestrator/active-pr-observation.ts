@@ -83,12 +83,10 @@ async function readActivePullRequest(
     project,
   };
   const readPr = () =>
-    options.terminalOnly
-      ? github.findPullRequestState(lookup)
-      : github.getPullRequestStateByNumber({
-          ...lookup,
-          pullRequestNumber: task.pullRequest!.number,
-        });
+    github.getPullRequestStateByNumber({
+      ...lookup,
+      pullRequestNumber: task.pullRequest!.number,
+    });
   let pr = await readPr();
   options.signal?.throwIfAborted();
   if (!pr || pr.url !== task.pullRequest.url || !pr.headRefOid)
