@@ -39,6 +39,7 @@ function describeCredentialFailure(cause: unknown): string {
 }
 
 export class GitHubCredentialResolutionError extends Error {
+  readonly transient: boolean;
   readonly projectId: string;
   readonly repository: string;
 
@@ -50,6 +51,10 @@ export class GitHubCredentialResolutionError extends Error {
       { cause: new Error(safeCause) },
     );
     this.name = "GitHubCredentialResolutionError";
+    this.transient =
+      cause instanceof GitHubAppNetworkError ||
+      (cause instanceof GitHubAppApiError &&
+        (cause.status === 429 || (cause.status !== undefined && cause.status >= 500)));
     this.projectId = project.id;
     this.repository = project.repository.github;
   }

@@ -68,10 +68,18 @@ export async function reconcileSessionCreation(options: {
   if (!owned)
     return wait("Initial session recovery awaits verified card, worktree and queue ownership");
   const executionId = record.sessionCreationExecutionId;
+  let executionLayout: "direct" | "process-executions" = "process-executions";
   let metadata: Record<string, unknown> | null = null;
   if (executionId) {
     try {
-      const raw = store.readProcessExecution(cardId, executionId, "process-executions");
+      const managed = store.readProcessExecution(cardId, executionId, "process-executions");
+      const direct = store.readProcessExecution(cardId, executionId, "direct");
+      if (managed && direct)
+        return wait(
+          "Initial session recovery found duplicate execution evidence in both artifact layouts",
+        );
+      if (direct) executionLayout = "direct";
+      const raw = managed ?? direct;
       if (raw && typeof raw === "object" && !Array.isArray(raw))
         metadata = raw as Record<string, unknown>;
     } catch {
@@ -119,7 +127,7 @@ export async function reconcileSessionCreation(options: {
       );
   } else if (!record.sessionCreationTitle) {
     return wait(
-      "Legacy initial session creation lacks dispatch provenance; operator evidence is required",
+      "Legacy initial session creation lacks dispatch provenance; preserve the attempt and restore the original finalized execution evidence",
     );
   }
   // For new intents the evidence callback is awaited before spawn; no execution
@@ -135,7 +143,7 @@ export async function reconcileSessionCreation(options: {
   let result: NonNullable<TaskExecutionRecord["primaryOperations"]>[string]["result"] = undefined;
   let resultUnavailable = false;
   try {
-    const raw = executionId ? store.readProcessResult(cardId, executionId) : null;
+    const raw = executionId ? store.readProcessResult(cardId, executionId, executionLayout) : null;
     if (raw !== null) {
       const parsed = primaryOperationSchema.shape.result.safeParse(raw);
       if (

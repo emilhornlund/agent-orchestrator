@@ -1201,7 +1201,7 @@ describe("GitHubClient", () => {
       body: "Example body",
     });
 
-    await vi.advanceTimersByTimeAsync(2 * 60 * 1000);
+    await vi.advanceTimersByTimeAsync(60_000);
 
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
 
@@ -1229,7 +1229,7 @@ describe("GitHubClient", () => {
       /GitHub CLI timeout; diagnostics: process-executions\//,
     );
 
-    await vi.advanceTimersByTimeAsync(2 * 60 * 1000 + 5_000);
+    await vi.advanceTimersByTimeAsync(60_000 + 5_000);
 
     expect(child.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
     expect(child.kill).toHaveBeenNthCalledWith(2, "SIGKILL");

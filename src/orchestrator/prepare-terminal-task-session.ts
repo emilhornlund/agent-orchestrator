@@ -21,6 +21,10 @@ import type { TaskMutationQueue } from "../task-session/task-mutation-queue.js";
 import { logger } from "../logging/logger.js";
 import { isConclusiveOperationResolution } from "../task-session/run-record.js";
 import { startupStopProofForExecution } from "../task-session/startup-stop-attestation.js";
+import {
+  readOwnedProcessInventory,
+  journalProvesGitHubProcessNeverStarted,
+} from "../task-session/owned-process-inventory.js";
 
 const reportedTerminalWaits = new Map<string, string>();
 
@@ -250,7 +254,7 @@ export async function prepareTerminalTaskSession(options: {
       .pendingOperations.some((entry) => !isConclusiveOperationResolution(entry))
   )
     return waiting();
-  if (authority && terminalStopProofValid(authority)) {
+  if (authority && terminalStopProofValid(authority, true)) {
     await assertTerminalArtifactIsolation(project, options.git);
     const preserveArtifacts = await inspectArtifacts();
     if (fence!.preserveArtifacts !== preserveArtifacts)
@@ -272,37 +276,27 @@ export async function prepareTerminalTaskSession(options: {
     digest.update(file).update(createHash("sha256").update(fs.readFileSync(file)).digest());
   };
   if (authority) {
-    const directory = path.join(
-      root,
-      "artifacts",
-      encodeURIComponent(project.id),
-      encodeURIComponent(cardId),
-      encodeURIComponent(authority.store.attemptId),
-      "process-executions",
-    );
-    const stat = fs.lstatSync(directory, { throwIfNoEntry: false });
-    if (stat) {
-      if (!stat.isDirectory() || stat.isSymbolicLink()) return waiting();
-      for (const id of fs.readdirSync(directory)) {
-        const file = path.join(directory, id, "execution.json");
-        const value = metadata(root, file);
-        if (!value || value.executionId !== id)
-          return waiting(`invalid process metadata; diagnostics: ${path.relative(root, file)}`);
-        if (!stopped(value)) {
-          const attestation = startupStopProofForExecution({
-            authority,
-            task,
-            file,
-            metadata: value,
-          });
-          if (!attestation)
-            return waiting(
-              `process termination lacks verified evidence; diagnostics: ${path.relative(root, file)}`,
-            );
-          startupStopAttestations.add(attestation);
-        }
-        checked(file);
+    let inventory: ReturnType<typeof readOwnedProcessInventory>;
+    try {
+      inventory = readOwnedProcessInventory(taskStore, cardId);
+    } catch {
+      return waiting("Owned process evidence is malformed or inaccessible");
+    }
+    for (const { file, metadata: value } of inventory.values()) {
+      if (!stopped(value) && !journalProvesGitHubProcessNeverStarted(authority, value)) {
+        const attestation = startupStopProofForExecution({
+          authority,
+          task,
+          file,
+          metadata: value,
+        });
+        if (!attestation)
+          return waiting(
+            `process termination lacks verified evidence; diagnostics: ${path.relative(root, file)}`,
+          );
+        startupStopAttestations.add(attestation);
       }
+      checked(file);
     }
   }
   const cancellations: { id: string; neverDispatched: boolean }[] = [];
@@ -340,6 +334,7 @@ export async function prepareTerminalTaskSession(options: {
       JSON.stringify({
         cardId,
         kind: "task-processes-stopped",
+        inventoryVersion: 2,
         checkedEvidenceRecords,
         digest: digest.digest("hex"),
         cancellations,

@@ -80,6 +80,7 @@ export function hasDueTaskSessionRecoveryWait(
   const projection = authorityRecord.compatibility[`task-execution-${authorityRecord.cardId}`];
   if (projection === undefined) return false;
   const taskProjection = parseTaskExecutionRecord(projection);
+  if (taskProjection.externalRecovery !== undefined) return true;
   if (canRecheckReviewedPublication(authorityRecord, taskProjection)) return true;
   const recoveryWait = taskProjection.recoveryWait;
   if (getLegacyPublishedGitHubReadRecoveryPhase(authorityRecord, taskProjection) !== null)
@@ -465,6 +466,7 @@ async function runProjectWorkerInner(
       authority: runContext.authority,
       intervalMs: pollIntervalMilliseconds,
       signal,
+      ...(emailNotifier === undefined ? {} : { emailNotifier }),
       onError: (error, diagnosticReference) =>
         logger
           .child({ projectId: project.id })

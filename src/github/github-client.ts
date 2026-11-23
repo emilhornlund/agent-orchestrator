@@ -15,7 +15,12 @@ import {
   redactRegisteredSecrets,
   redactSecrets,
 } from "../security/redact-secrets.js";
-import { getGitHubOperationProject } from "./github-operation-context.js";
+import {
+  getGitHubOperationProject,
+  withGitHubOperationProject,
+} from "./github-operation-context.js";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { setTimeout as delay } from "node:timers/promises";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { sanitizeControlledText } from "../security/redact-secrets.js";
 import { readPullRequestFields, type ReadPullRequestFields } from "./read-pull-request-fields.js";
@@ -32,6 +37,7 @@ import {
 } from "../process/process-runtime.js";
 import {
   GitHubCredentialProvider,
+  GitHubCredentialResolutionError,
   type GitHubCredential,
   type GitHubCredentialEnvironment,
 } from "./github-credential-provider.js";
@@ -173,6 +179,7 @@ export type CiCheckObservation =
     };
 
 export interface CiObservationsOptions {
+  requireAvailableReads?: boolean;
   cwd: string;
   repository: string;
   defaultBranch: string;
@@ -193,6 +200,7 @@ export type PullRequestStatus = "OPEN" | "CLOSED" | "MERGED";
 export type PullRequestBaseRelation = "current" | "behind" | "diverged" | "uncertain";
 
 export interface PullRequestBaseRelationOptions {
+  requireAvailableReads?: boolean;
   cwd: string;
   repository: string;
   baseBranch: string;
@@ -861,7 +869,13 @@ function hasTransientHttpStatus(error: unknown, message: string): boolean {
 
 /** Returns true only for failures that can reasonably change on a later read. */
 export function isRetryableGitHubError(error: unknown): boolean {
-  if (errorChain(error).some((entry) => entry instanceof GitHubMergeStateUnknownError)) {
+  if (
+    errorChain(error).some(
+      (entry) =>
+        entry instanceof GitHubMergeStateUnknownError ||
+        (entry instanceof ProcessExecutionError && entry.classification === "timeout"),
+    )
+  ) {
     return true;
   }
 
@@ -1028,6 +1042,23 @@ function getPullRequestNumberForRepository(pullRequestUrl: string, repository: s
   return parsedNumber;
 }
 
+function isGitHubWrite(args: readonly string[]): boolean {
+  if (args[0] === "pr") return ["create", "edit", "ready"].includes(args[1] ?? "");
+  if (args[0] !== "api") return false;
+  const method = args.indexOf("--method");
+  if (method >= 0) return args[method + 1] !== "GET";
+  if (args[1] === "graphql") return !args.some((arg) => /^query=\s*query\b/u.test(arg));
+  return args.some((arg) => ["-f", "-F", "--field", "--raw-field", "--input"].includes(arg));
+}
+
+const readDrainScope = new AsyncLocalStorage<Set<Promise<unknown>>>();
+
+/** A logical observer deadline does not release ownership of a child still
+ * finalizing. Only actual transport calls are joined, not arbitrary callers. */
+export function withTrackedGitHubReads<T>(pending: Set<Promise<unknown>>, read: () => T): T {
+  return readDrainScope.run(pending, read);
+}
+
 const defaultRunGitHubCommand: RunGitHubCommand = async (
   cwd,
   args,
@@ -1036,18 +1067,55 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
 ) =>
   new Promise((resolve, reject) => {
     const runtime = getProcessRuntime();
+    const repository = getGitHubOperationProject()?.repository;
+    const seconds = isGitHubWrite(args)
+      ? (repository?.githubWriteTimeoutSeconds ?? 60)
+      : (repository?.githubReadTimeoutSeconds ?? 20);
     const timeoutMilliseconds =
-      (getGitHubOperationProject()?.opencode.timeoutMinutes ??
-        runtime.operationTimeoutMilliseconds / 60_000) * 60_000;
+      repository &&
+      (isGitHubWrite(args)
+        ? repository.githubWriteTimeoutSeconds
+        : repository.githubReadTimeoutSeconds) !== undefined
+        ? seconds * 1000
+        : Math.min(seconds * 1000, runtime.operationTimeoutMilliseconds);
     const environmentSecrets = [
       environment?.GH_TOKEN,
       environment?.GITHUB_TOKEN,
       ...runtime.secretValues,
     ].filter((value): value is string => value !== undefined);
-    const execution = beginProcessEvidence(`gh ${args.join(" ")}`, cwd, environmentSecrets);
+    let processExecutionId: string | undefined;
+    const rejectBeforeSpawn = (error: unknown) =>
+      reject(isGitHubWrite(args) ? githubMutationNotDispatched(error, processExecutionId) : error);
+    let execution: ReturnType<typeof beginProcessEvidence>;
+    try {
+      execution = beginProcessEvidence(`gh ${args.join(" ")}`, cwd, environmentSecrets);
+      processExecutionId = execution.executionId;
+    } catch (error) {
+      rejectBeforeSpawn(error);
+      return;
+    }
+    const finishBeforeSpawn = (error: unknown, cancellationRequested = false) => {
+      try {
+        execution.finish(
+          "not-dispatched",
+          cancellationRequested ? { cancellationRequested: true } : {},
+        );
+      } catch (evidenceError) {
+        rejectBeforeSpawn(
+          new AggregateError(
+            [error, evidenceError],
+            "GitHub could not launch; process evidence finalization failed",
+          ),
+        );
+        return;
+      }
+      rejectBeforeSpawn(error);
+    };
     if (runtime.signal?.aborted) {
-      execution.finish("not-dispatched", { cancellationRequested: true });
-      reject(new ProcessExecutionError("GitHub CLI", execution.executionId, "interrupted"));
+      finishBeforeSpawn(
+        new ProcessExecutionError("GitHub CLI", execution.executionId, "interrupted"),
+        true,
+      );
       return;
     }
     const contentFlags = new Set([
@@ -1072,16 +1140,21 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
     try {
       dispatch = containedProcess("gh", safeArguments);
     } catch (error) {
-      execution.finish("not-dispatched");
-      reject(error);
+      finishBeforeSpawn(error);
       return;
     }
-    const child = spawn(dispatch.command, dispatch.args, {
-      cwd,
-      stdio: ["inherit", "pipe", "pipe", "pipe", "pipe"],
-      detached: process.platform !== "win32",
-      env: buildChildEnvironment("github", environment),
-    });
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(dispatch.command, dispatch.args, {
+        cwd,
+        stdio: ["inherit", "pipe", "pipe", "pipe", "pipe"],
+        detached: process.platform !== "win32",
+        env: buildChildEnvironment("github", environment),
+      });
+    } catch (error) {
+      finishBeforeSpawn(error);
+      return;
+    }
 
     let output = "";
     let errorOutput = "";
@@ -1195,7 +1268,8 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
         settled = true;
         clearTimeout(timeout);
         runtime.signal?.removeEventListener("abort", abort);
-        reject(finishError);
+        if (child.pid === undefined) rejectBeforeSpawn(finishError);
+        else reject(finishError);
         return;
       }
       clearTimeout(timeout);
@@ -1204,7 +1278,13 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
         clearTimeout(forceKillTimeout);
       }
 
-      reject(new ProcessExecutionError("GitHub CLI", execution.executionId, "spawn-failure"));
+      const failure = new ProcessExecutionError(
+        "GitHub CLI",
+        execution.executionId,
+        "spawn-failure",
+      );
+      if (child.pid === undefined) rejectBeforeSpawn(failure);
+      else reject(failure);
     });
 
     child.once("close", (code, signalName) => {
@@ -1258,7 +1338,8 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
           ...(signalName === null ? {} : { signal: signalName }),
         });
       } catch (finishError) {
-        reject(finishError);
+        if (payloadSpawned === false) rejectBeforeSpawn(finishError);
+        else reject(finishError);
         return;
       }
       recorderFailure ??= execution.failure;
@@ -1268,7 +1349,9 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
       }
 
       if (payloadSpawned === false) {
-        reject(new ProcessExecutionError("GitHub CLI", execution.executionId, "spawn-failure"));
+        rejectBeforeSpawn(
+          new ProcessExecutionError("GitHub CLI", execution.executionId, "spawn-failure"),
+        );
         return;
       }
 
@@ -1378,6 +1461,7 @@ export class GitHubClient {
       throw new Error("Terminal PR cannot accept new automated mutations");
   }
   private readonly credentials: GitHubCredentialProvider;
+  private readonly credentialProjects = new WeakMap<GitHubCredential, ProjectConfig>();
 
   constructor(
     private readonly runGitHubCommand: RunGitHubCommand = defaultRunGitHubCommand,
@@ -1394,13 +1478,7 @@ export class GitHubClient {
     onSuccessfulOutput?: (origin: GitHubOutputOrigin) => void,
   ): Promise<string> {
     const dispatch = async (): Promise<string> => {
-      if (
-        (args[0] === "pr" && ["create", "edit", "ready"].includes(args[1] ?? "")) ||
-        (args[0] === "api" &&
-          ((args.includes("--method") && args[args.indexOf("--method") + 1] !== "GET") ||
-            args.some((arg) => arg.startsWith("query=") && /\bmutation\s*[({]/u.test(arg))))
-      )
-        assertJournaledTransport();
+      if (isGitHubWrite(args)) assertJournaledTransport();
       try {
         const canCaptureOrigin =
           onSuccessfulOutput !== undefined &&
@@ -1418,7 +1496,11 @@ export class GitHubClient {
 
         return redactSecrets(output, credential.secretValues);
       } catch (error) {
-        if (error instanceof ProcessExecutionError) throw error;
+        if (
+          error instanceof ProcessExecutionError ||
+          error instanceof GitHubMutationNotDispatchedError
+        )
+          throw error;
         const safeError = redactError(error, credential.secretValues);
 
         if (credential.mode === "ambient" && !containsSecret(error, credential.secretValues)) {
@@ -1430,8 +1512,43 @@ export class GitHubClient {
         throw new Error(safeError.message, { cause: safeError });
       }
     };
-    const projectId = getGitHubOperationProject()?.id ?? ProjectRunAuthority.currentProjectId();
-    return projectId === undefined ? dispatch() : ProjectRunAuthority.dispatch(projectId, dispatch);
+    const project = this.credentialProjects.get(credential) ?? getGitHubOperationProject();
+    const projectId = project?.id ?? ProjectRunAuthority.currentProjectId();
+    const scopedDispatch = () =>
+      project ? withGitHubOperationProject(project, dispatch) : dispatch();
+    const run = () => {
+      const work =
+        projectId === undefined
+          ? scopedDispatch()
+          : ProjectRunAuthority.dispatch(projectId, scopedDispatch);
+      const pending = readDrainScope.getStore();
+      pending?.add(work);
+      if (pending)
+        void work.then(
+          () => pending.delete(work),
+          () => pending.delete(work),
+        );
+      return work;
+    };
+    // Only known reads may be retried at the transport boundary. In particular,
+    // GraphQL uses POST for queries and mutations, so classify by operation.
+    const read =
+      !isGitHubWrite(args) &&
+      (args[0] === "api" ||
+        (args[0] === "pr" && ["list", "view"].includes(args[1] ?? "")) ||
+        (args[0] === "repo" && args[1] === "view"));
+    try {
+      return await run();
+    } catch (error) {
+      const signal = getProcessRuntime().signal;
+      if (!read || signal?.aborted || !isRetryableGitHubError(error)) throw error;
+      try {
+        await delay(250, undefined, { signal });
+      } catch {
+        throw error;
+      }
+      return run();
+    }
   }
 
   /** Runs one command and returns provenance captured by that invocation only. */
@@ -1447,10 +1564,12 @@ export class GitHubClient {
     return { output, ...(origin === undefined ? {} : { origin }) };
   }
 
-  private resolveCredential(project?: ProjectConfig): Promise<GitHubCredential> {
+  private async resolveCredential(project?: ProjectConfig): Promise<GitHubCredential> {
     const operationProject = project ?? getGitHubOperationProject();
 
-    return this.credentials.resolve(operationProject);
+    const credential = { ...(await this.credentials.resolve(operationProject)) };
+    if (operationProject) this.credentialProjects.set(credential, operationProject);
+    return credential;
   }
 
   /** Collects exact-head check runs, statuses, and available CI contracts. */
@@ -1568,6 +1687,12 @@ export class GitHubClient {
     }
 
     const expectationSources: CiCheckExpectationSource[] = [];
+    if (
+      options.requireAvailableReads &&
+      "error" in branchRulesResult &&
+      isRetryableGitHubError(branchRulesResult.error)
+    )
+      throw branchRulesResult.error;
     if ("result" in branchRulesResult) {
       try {
         const rules: unknown = parseGitHubJson(
@@ -1661,7 +1786,8 @@ export class GitHubClient {
       } else {
         expectationSources.push(...workflowSources);
       }
-    } catch {
+    } catch (error) {
+      if (options.requireAvailableReads && isRetryableGitHubError(error)) throw error;
       expectationSources.push({
         kind: "workflow-contract",
         sourceId: "workflow-contract:repository",
@@ -2800,7 +2926,8 @@ export class GitHubClient {
         ["api", `repos/${options.repository}/compare/${comparison}`],
         credential,
       );
-    } catch {
+    } catch (error) {
+      if (options.requireAvailableReads) throw error;
       return "uncertain";
     }
     let parsed: unknown;
@@ -3356,7 +3483,9 @@ export class GitHubClient {
         error instanceof Error ? error.message : "GitHub credential resolution failed";
       const status = message.match(/HTTP\s+(\d{3})/i)?.[1];
       throw new ProjectResourceError(
-        status && Number(status) >= 500 ? "unavailable" : "invalid",
+        error instanceof GitHubCredentialResolutionError && error.transient
+          ? "unavailable"
+          : "invalid",
         `GitHub authentication check failed for project "${project.id}"${status ? ` (HTTP ${status})` : "; verify configured credentials"}`,
         error,
       );
@@ -3372,6 +3501,7 @@ export class GitHubClient {
       const message = error instanceof Error ? error.message : "GitHub repository lookup failed";
       const status = message.match(/(?:HTTP|status)\s+(401|403|404)\b/i)?.[1];
       const transient =
+        isRetryableGitHubError(error) ||
         /timed?\s*out|connection reset|connection refused|could not resolve|network|HTTP\s+5\d\d/i.test(
           message,
         );
@@ -3412,6 +3542,8 @@ export class GitHubClient {
 import {
   mutationAuthority,
   consumeJournaledDispatch,
+  githubMutationNotDispatched,
+  GitHubMutationNotDispatchedError,
   assertJournaledTransport,
   rejectJournaledDispatch,
   workflowMutation,

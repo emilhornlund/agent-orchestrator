@@ -5,7 +5,7 @@ import path from "node:path";
 
 import type { GitHubAppConfig } from "../config/config.js";
 import { registerProcessSecrets } from "../process/process-runtime.js";
-import { getProcessRuntime } from "../process/process-runtime.js";
+import { getProcessLifecycleSignal, getProcessRuntime } from "../process/process-runtime.js";
 
 const GITHUB_API_URL = "https://api.github.com";
 const GITHUB_API_VERSION = "2022-11-28";
@@ -208,6 +208,22 @@ export class GitHubAppAuthenticator {
     githubApp: GitHubAppConfig | undefined,
     repository: string | undefined,
   ): Promise<string> {
+    const callerSignal = getProcessRuntime().signal;
+    const cancellation = () =>
+      new DOMException("GitHub credential acquisition aborted", "AbortError");
+    if (callerSignal?.aborted) throw cancellation();
+    const waitForCaller = (exchange: Promise<string>) => {
+      if (!callerSignal) return exchange;
+      let abort = () => {};
+      const stopped = new Promise<never>((_resolve, reject) => {
+        abort = () => reject(cancellation());
+        callerSignal.addEventListener("abort", abort, { once: true });
+        if (callerSignal.aborted) abort();
+      });
+      return Promise.race([exchange, stopped]).finally(() =>
+        callerSignal.removeEventListener("abort", abort),
+      );
+    };
     validateGithubAppConfig(githubApp);
     validateGithubRepository(repository);
     const repositoryName = repository.slice(repository.indexOf("/") + 1);
@@ -232,7 +248,7 @@ export class GitHubAppAuthenticator {
     const pendingExchange = this.pendingExchanges.get(cacheKey);
 
     if (pendingExchange !== undefined) {
-      return pendingExchange;
+      return waitForCaller(pendingExchange);
     }
 
     const exchange = this.exchangeInstallationToken(
@@ -243,11 +259,11 @@ export class GitHubAppAuthenticator {
     );
     this.pendingExchanges.set(cacheKey, exchange);
 
-    try {
-      return await exchange;
-    } finally {
-      this.pendingExchanges.delete(cacheKey);
-    }
+    void exchange.then(
+      () => this.pendingExchanges.delete(cacheKey),
+      () => this.pendingExchanges.delete(cacheKey),
+    );
+    return waitForCaller(exchange);
   }
 
   private async exchangeInstallationToken(
@@ -256,7 +272,7 @@ export class GitHubAppAuthenticator {
     nowMilliseconds: number,
     cacheKey: string,
   ): Promise<string> {
-    const lifecycleSignal = getProcessRuntime().signal;
+    const lifecycleSignal = getProcessLifecycleSignal();
     const assertActive = () => {
       if (lifecycleSignal?.aborted)
         throw new DOMException("GitHub credential acquisition aborted", "AbortError");
@@ -314,8 +330,9 @@ export class GitHubAppAuthenticator {
 
     try {
       body = await response.json();
-    } catch {
+    } catch (error) {
       assertActive();
+      if (timeout.aborted || error instanceof TypeError) throw new GitHubAppNetworkError();
       throw new GitHubAppApiError(
         "GitHub App installation token exchange returned invalid JSON",
         response.status,

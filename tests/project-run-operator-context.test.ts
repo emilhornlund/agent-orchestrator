@@ -16,14 +16,13 @@ import {
 import { legacyAttemptId } from "../src/task-session/legacy-state-import.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
-import { acquireProjectRunOperatorContext } from "../src/operator/project-run-operator-context.js";
+import { acquireProjectRunOperatorContext } from "./support/project-run-operator-context.js";
 import type { TaskExecutionRecord } from "../src/task-session/task-execution-record.js";
 import { ProjectRunAuthority } from "../src/task-session/project-run-authority.js";
 import { GitClient } from "../src/git/git-client.js";
 import { withGitHubOperationProject } from "../src/github/github-operation-context.js";
 import { CommandRunner } from "../src/process/command-runner.js";
 import { reconcileExternalTaskSessionPullRequest } from "../src/orchestrator/reconcile-external-task-session-pr.js";
-import { runExternalTaskSessionRecovery } from "../src/operator/reconcile-external-task-session-pr.js";
 import type { TrelloClient } from "../src/trello/trello-client.js";
 
 let root = "";
@@ -233,7 +232,7 @@ describe("operator canonical attempt context", () => {
     await originalContext.release();
   });
 
-  it("rejects public external-PR recovery on changed active mappings before external effects and preserves the active attempt", async () => {
+  it("rejects recovery acquisition with changed active mappings and preserves the original attempt", async () => {
     const { config, project, sourceTask, coordinationRoot } = fixture();
     const serviceLease = await acquireProjectOwnership(
       coordinationRoot,
@@ -288,43 +287,16 @@ describe("operator canonical attempt context", () => {
     const registryBefore = fs.readFileSync(registryFile);
     const attemptBefore = fs.readFileSync(attemptFile);
     const taskBefore = fs.readFileSync(sourceTask);
-    const externalCalls = {
-      trello: vi.fn(),
-      github: vi.fn(),
-      git: vi.fn(),
-    };
     const changedProject = {
       ...project,
       trello: { ...project.trello, doneListId: "replacement-done" },
     };
     const changedConfig = { ...config, projects: [changedProject] };
 
-    await expect(
-      runExternalTaskSessionRecovery(
-        [
-          "--project",
-          project.id,
-          "--card",
-          task.cardId,
-          "--commit",
-          "a".repeat(40),
-          "--branch",
-          "recovery/card-one",
-          "--pr",
-          "18",
-        ],
-        {
-          config: changedConfig,
-          trello: externalCalls.trello as unknown as TrelloClient,
-          github: externalCalls.github as never,
-          git: externalCalls.git as never,
-        },
-      ),
-    ).rejects.toThrow("incompatible with its active host pin");
+    await expect(acquireProjectRunOperatorContext(changedConfig, changedProject)).rejects.toThrow(
+      "incompatible with its active host pin",
+    );
 
-    expect(externalCalls.trello).not.toHaveBeenCalled();
-    expect(externalCalls.github).not.toHaveBeenCalled();
-    expect(externalCalls.git).not.toHaveBeenCalled();
     expect(fs.readFileSync(registryFile)).toEqual(registryBefore);
     expect(fs.readFileSync(attemptFile)).toEqual(attemptBefore);
     expect(fs.readFileSync(sourceTask)).toEqual(taskBefore);

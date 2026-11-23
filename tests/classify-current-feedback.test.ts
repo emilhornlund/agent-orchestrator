@@ -1,11 +1,18 @@
 import { expect, it, vi } from "vitest";
 import type { ProjectConfig } from "../src/config/config.js";
-import { OpenCodeClient } from "../src/opencode/opencode-client.js";
+import {
+  OpenCodeClient,
+  OpenCodeDefaultProviderResolutionError,
+  OpenCodeRunAbortedError,
+  OpenCodeTimeoutError,
+  type RunOpenCode,
+} from "../src/opencode/opencode-client.js";
 import {
   classifyCurrentFeedback,
   feedbackSourceRevision,
 } from "../src/task-session/classify-current-feedback.js";
 import type { FeedbackLedgerEntry } from "../src/task-session/feedback-ledger.js";
+import { AiCapacityCancelledError } from "../src/orchestrator/ai-execution-capacity.js";
 
 const entry: FeedbackLedgerEntry = {
   kind: "conversation-comment",
@@ -207,4 +214,188 @@ it("recovers once from the observed combined actionability token without weakeni
     expect.objectContaining({ prompt: expect.stringContaining('"discussion", "not-actionable"') }),
   );
   expect(result[0]?.actionability).toBe("discussion");
+});
+
+const executionId = "5125c222-01d9-4937-af6d-2a72e6a2c040";
+it("returns a blocked wait without launching a classifier when every revision is withheld", async () => {
+  const run = vi.fn<RunOpenCode>();
+  const waiting = {
+    status: "blocked" as const,
+    retryAt: "2026-11-23T19:00:00.000Z",
+    reason: "Dependency probe required",
+  };
+  const result = await classifyCurrentFeedback({
+    project,
+    incoming: [entry],
+    previous: [],
+    worktreePath: "/tmp",
+    openCode: new OpenCodeClient(run),
+    signal: new AbortController().signal,
+    selectRevisions: () => waiting,
+  });
+  expect(result).toEqual(waiting);
+  expect(run).not.toHaveBeenCalled();
+});
+
+it("preserves a task-wide stop blocker even with an unchanged classified pending request", async () => {
+  const pending = { ...entry, status: "pending" as const };
+  const run = vi.fn<RunOpenCode>();
+  const wait = {
+    status: "blocked" as const,
+    taskWide: true as const,
+    retryAt: null,
+    reason: "Unknown process termination",
+  };
+  const selection = vi.fn(() => wait);
+  expect(
+    await classifyCurrentFeedback({
+      project,
+      incoming: [pending],
+      previous: [pending],
+      worktreePath: "/tmp",
+      openCode: new OpenCodeClient(run),
+      signal: new AbortController().signal,
+      selectRevisions: selection,
+    }),
+  ).toEqual(wait);
+  expect(selection).toHaveBeenCalledWith([]);
+  expect(run).not.toHaveBeenCalled();
+});
+it("compares a deferred edit against the prior classified revision", async () => {
+  const edited = {
+    ...entry,
+    body: "Fix a different condition",
+    actionability: "unclassified" as const,
+  };
+  const run = vi.fn<RunOpenCode>(async ({ prompt }) => {
+    expect(prompt).toContain(entry.body);
+    return {
+      exitCode: 0,
+      errorOutput: "",
+      output: JSON.stringify({
+        version: 1,
+        assessments: [
+          {
+            feedbackId: "conversation-comment:1",
+            sourceRevision: feedbackSourceRevision(edited),
+            actionability: "actionable",
+            substantiveChange: true,
+          },
+        ],
+      }),
+    };
+  });
+  const result = await classifyCurrentFeedback({
+    project,
+    incoming: [edited],
+    previous: [edited],
+    history: [entry],
+    worktreePath: "/tmp",
+    openCode: new OpenCodeClient(run),
+    signal: new AbortController().signal,
+  });
+  expect(result[0]).toMatchObject({ actionability: "actionable", requestRevision: 2 });
+});
+it("can reuse a verified pending request while another source remains unavailable", async () => {
+  const verified = { ...entry, status: "pending" as const, unresolvedReason: undefined };
+  const deferred = {
+    ...entry,
+    id: "2",
+    actionability: "unclassified" as const,
+    status: "pending" as const,
+  };
+  const run = vi.fn<RunOpenCode>();
+  const result = await classifyCurrentFeedback({
+    project,
+    incoming: [verified, deferred],
+    previous: [verified],
+    worktreePath: "/tmp",
+    openCode: new OpenCodeClient(run),
+    signal: new AbortController().signal,
+    selectRevisions: () => [],
+  });
+  expect(result).toMatchObject([
+    { actionability: "actionable" },
+    { actionability: "unclassified" },
+  ]);
+  expect(run).not.toHaveBeenCalled();
+});
+
+it.each<[string, RunOpenCode]>([
+  [
+    "nonzero",
+    async () => ({
+      exitCode: 7,
+      errorOutput: "private child output",
+      output: "",
+      processExecutionId: executionId,
+    }),
+  ],
+  [
+    "provider-unavailable",
+    async () => ({
+      exitCode: 0,
+      errorOutput: "",
+      output: "",
+      failureClassification: "dependency-outage",
+    }),
+  ],
+  [
+    "malformed",
+    async () => ({
+      exitCode: 0,
+      errorOutput: "",
+      output: "incomplete JSON",
+      processExecutionId: executionId,
+    }),
+  ],
+  [
+    "cancelled",
+    async () => {
+      throw new OpenCodeRunAbortedError();
+    },
+  ],
+  [
+    "cancelled",
+    async () => {
+      throw new AiCapacityCancelledError();
+    },
+  ],
+  [
+    "timeout",
+    async () => {
+      throw new OpenCodeTimeoutError(200, executionId, true);
+    },
+  ],
+  [
+    "execution-uncertain",
+    async () => {
+      throw new OpenCodeTimeoutError(200, executionId);
+    },
+  ],
+  [
+    "configuration",
+    async () => {
+      throw new OpenCodeDefaultProviderResolutionError();
+    },
+  ],
+])("returns a typed %s failure without applying a partial result", async (classification, run) => {
+  const execute = vi.fn(run);
+  await expect(
+    classifyCurrentFeedback({
+      project,
+      incoming: [entry],
+      previous: [],
+      worktreePath: "/tmp",
+      openCode: new OpenCodeClient(execute),
+      signal: new AbortController().signal,
+      singleExecution: true,
+    }),
+  ).rejects.toMatchObject({
+    classification,
+    ...(classification === "nonzero"
+      ? { executionId, exitCode: 7, message: expect.not.stringContaining("private child output") }
+      : {}),
+  });
+  expect(execute).toHaveBeenCalledTimes(1);
 });

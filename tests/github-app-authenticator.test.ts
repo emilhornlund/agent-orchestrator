@@ -14,7 +14,11 @@ import {
   GitHubAppNetworkError,
   type SignGitHubAppJwt,
 } from "../src/github/github-app-authenticator.js";
-import { getProcessRuntime, configureProcessRuntime } from "../src/process/process-runtime.js";
+import {
+  getProcessRuntime,
+  configureProcessRuntime,
+  withProcessCancellationSignal,
+} from "../src/process/process-runtime.js";
 import { redactSecrets } from "../src/security/redact-secrets.js";
 import { appendSessionLog } from "../src/logging/session-log.js";
 
@@ -39,6 +43,28 @@ function tokenResponse(token: string, expiresAt: string): Response {
 }
 
 describe("GitHubAppAuthenticator", () => {
+  it("does not cancel a writer's shared token exchange when an observer stops", async () => {
+    const observer = new AbortController();
+    let resolve!: (response: Response) => void;
+    const pending = new Promise<Response>((accept) => {
+      resolve = accept;
+    });
+    const request = vi.fn(() => pending);
+    const authenticator = new GitHubAppAuthenticator({
+      readPrivateKey: async () => privateKeyPem,
+      request,
+    });
+    const observing = withProcessCancellationSignal(observer.signal, () =>
+      authenticator.getInstallationToken(githubApp, repository),
+    );
+    const stopped = expect(observing).rejects.toMatchObject({ name: "AbortError" });
+    const writer = authenticator.getInstallationToken(githubApp, repository);
+    observer.abort();
+    await stopped;
+    resolve(tokenResponse("writer-token", "2099-01-01T00:00:00Z"));
+    await expect(writer).resolves.toBe("writer-token");
+    expect(request).toHaveBeenCalledOnce();
+  });
   it("cancels in-flight token acquisition without retaining credential-bearing transport errors", async () => {
     const controller = new AbortController();
     configureProcessRuntime({ runtimeRoot: os.tmpdir(), signal: controller.signal });

@@ -27,7 +27,7 @@ vi.mock("../src/orchestrator/run-task-session-feedback-cycle.js", async (importO
   ...(await importOriginal<
     typeof import("../src/orchestrator/run-task-session-feedback-cycle.js")
   >()),
-  refreshCurrentTaskFeedback: vi.fn(async () => undefined),
+  refreshCurrentTaskFeedback: vi.fn(async () => true),
   runTaskSessionFeedbackCycle: vi.fn(async () => "idle"),
 }));
 vi.mock("../src/task-session/run-task-session-ci-repairs.js", () => ({

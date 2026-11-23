@@ -98,6 +98,7 @@ export function getLegacyPublishedGitHubReadRecoveryPhase(
   run: RunRecord | null,
   record: TaskExecutionRecord,
 ): "ci" | "human-feedback" | null {
+  const classificationFailure = isLegacyFeedbackClassificationFailure(record);
   if (
     !run ||
     run.lifecycle !== "waiting" ||
@@ -116,9 +117,10 @@ export function getLegacyPublishedGitHubReadRecoveryPhase(
     record.sessionCreationStatus !== "bound" ||
     !record.primarySessionId ||
     run.sessions.primary !== record.primarySessionId ||
-    !record.recoveryAttentionReason?.startsWith(
+    (!record.recoveryAttentionReason?.startsWith(
       "Authoritative recovery snapshot could not be read: GitHub CLI returned an invalid ",
-    ) ||
+    ) &&
+      !classificationFailure) ||
     record.validationRepair?.activePrimaryOperation ||
     record.reviewRepair?.activePrimaryOperation ||
     record.ciRepair?.activePrimaryOperation ||
@@ -160,7 +162,14 @@ export function getLegacyPublishedGitHubReadRecoveryPhase(
     queue.activeEventId !== null
   )
     return null;
-  return run.checkpoint === "human-review" ? "human-feedback" : "ci";
+  return classificationFailure || run.checkpoint === "human-review" ? "human-feedback" : "ci";
+}
+
+export function isLegacyFeedbackClassificationFailure(record: TaskExecutionRecord): boolean {
+  return [
+    "Human feedback classification unavailable; current requests retained",
+    "Human feedback classification does not match the current sources or result schema; current requests retained",
+  ].includes(record.recoveryAttentionReason ?? "");
 }
 
 function bumpTimestamp(record: TaskExecutionRecord): string {
@@ -580,6 +589,13 @@ export async function reconcileTaskSession(
     }
   }
   if (record.phase === "attention-required") {
+    if (isLegacyFeedbackClassificationFailure(record))
+      return {
+        status: "attention-required",
+        reason:
+          "Published classification recovery requires the owned PR and stopped-process inspection",
+        record,
+      };
     const run = ProjectRunAuthority.current(project.id)?.store.read() ?? null;
     recoveredReviewedPublication = canRecheckReviewedPublication(run, record);
     const resumePhase = recoveredReviewedPublication

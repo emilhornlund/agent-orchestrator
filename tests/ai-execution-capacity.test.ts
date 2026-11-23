@@ -475,7 +475,7 @@ it("observes human closure while the production worker is behind a future depend
   const retryAt = tasks.read(f.card.id)!.recoveryWait!.retryAt;
   const [owner, repository] = f.project.repository.github.split("/");
   const github = {
-    findPullRequestState: vi.fn(async () => ({
+    getPullRequestStateByNumber: vi.fn(async () => ({
       url,
       state: "CLOSED",
       mergedAt: null,

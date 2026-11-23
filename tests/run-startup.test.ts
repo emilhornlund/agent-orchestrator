@@ -40,7 +40,7 @@ import {
 } from "../src/startup/run-startup.js";
 import { TrelloRequestError, type TrelloClient } from "../src/trello/trello-client.js";
 import { ProjectResourceError } from "../src/startup/project-resource-error.js";
-import { acquireProjectRunOperatorContext } from "../src/operator/project-run-operator-context.js";
+import { acquireProjectRunOperatorContext } from "./support/project-run-operator-context.js";
 import { drainProcessGroup } from "../src/process/process-runtime.js";
 
 function createProject(repositoryPath: string): ProjectConfig {

@@ -1,17 +1,21 @@
-import type { Config, ProjectConfig } from "../config/config.js";
+import type { Config, ProjectConfig } from "../../src/config/config.js";
 import path from "node:path";
-import { canonicalizeGitHubRepository } from "../config/config.js";
+import { canonicalizeGitHubRepository } from "../../src/config/config.js";
 import {
   acquireProjectOwnership,
   type ProjectOwnershipLease,
-} from "../coordination/project-ownership.js";
+} from "../../src/coordination/project-ownership.js";
 import {
   readProjectPinCandidates,
   verifyAndPinProjects,
   type HostProjectPin,
-} from "../coordination/project-registry.js";
-import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
-import { projectUsingHostPin, reconcilePinnedProjectAttempt } from "../startup/run-startup.js";
+} from "../../src/coordination/project-registry.js";
+import { ProjectRunAuthority } from "../../src/task-session/project-run-authority.js";
+import { RunRegistry, RunStore } from "../../src/task-session/run-store.js";
+import {
+  projectUsingHostPin,
+  reconcilePinnedProjectAttempt,
+} from "../../src/startup/run-startup.js";
 
 export interface ProjectRunOperatorContext {
   readonly lease: ProjectOwnershipLease;
@@ -25,6 +29,7 @@ export interface ProjectRunOperatorContext {
 export async function acquireProjectRunOperatorContext(
   config: Config,
   project: ProjectConfig,
+  inspectionOnly = false,
 ): Promise<ProjectRunOperatorContext> {
   const coordinationRoot = config.workflow.coordinationRoot;
   const namespaceId = config.workflow.coordinationNamespaceId;
@@ -57,11 +62,65 @@ export async function acquireProjectRunOperatorContext(
       }
       effectiveProject = projectUsingHostPin(project, pin);
     } else {
+      if (inspectionOnly)
+        throw new Error("No pinned canonical attempt is available for inspection");
       pin = (await verifyAndPinProjects({ ...config, projects: [project] }, [lease])).find(
         (candidate) => candidate.projectId === project.id,
       );
     }
     if (!pin) throw new Error(`No host project pin exists for ${project.id}`);
+    if (inspectionOnly) {
+      if (!pin.activeAttempt || pin.pendingAttempt)
+        throw new Error("Project attempt handoff is not settled");
+      const integrationId = JSON.stringify({
+        trelloBoardId: lease.identity.trelloBoardId,
+        githubRepository: lease.identity.githubRepository,
+      });
+      const readerLease = {
+        integrationId,
+        instanceId: lease.instanceId,
+        token: lease.token,
+        assertHeld: () => lease.assertHeld(),
+      };
+      const pointer = new RunRegistry(pin.storageRoot, integrationId, readerLease).reconcile();
+      if (!pointer || pointer.attemptId !== pin.activeAttempt.attemptId)
+        throw new Error("Pinned and canonical attempt identities differ; inspection refused");
+      const previous = RunStore.openWithPersistedIdentity(
+        pin.storageRoot,
+        pointer.attemptId,
+        readerLease,
+      )?.read();
+      if (
+        !previous ||
+        previous.projectId !== project.id ||
+        previous.pinned.boardId !== project.trello.boardId ||
+        previous.pinned.repository !== project.repository.github ||
+        previous.pinned.repositoryPath !== project.repository.path ||
+        previous.pinned.worktreeRoot !== project.repository.worktreeRoot
+      )
+        throw new Error(
+          "Canonical attempt pins do not match the configured project; inspection refused",
+        );
+      const store = new RunStore(pin.storageRoot, pointer.attemptId, previous.pinned, {
+        ...readerLease,
+        instanceId: previous.owner.instanceId,
+        token: previous.owner.token,
+      });
+      const authority = new ProjectRunAuthority(
+        project.id,
+        store,
+        previous.owner.generation,
+        undefined,
+        (pid) => lease.markProcessGroupAmbiguous(pid),
+        previous.cardId,
+      );
+      return {
+        lease,
+        authority,
+        run: (operation) => authority.run(operation),
+        release: () => lease.release(),
+      };
+    }
     const effectiveConfig = {
       ...config,
       projects: [effectiveProject],

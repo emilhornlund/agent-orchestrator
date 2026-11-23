@@ -155,6 +155,8 @@ const repositorySchema = z.strictObject({
   coverageCommand: nonBlankString.optional(),
   gitIdentity: gitIdentitySchema,
   githubApp: githubAppSchema.optional(),
+  githubReadTimeoutSeconds: z.number().int().min(1).max(120).optional(),
+  githubWriteTimeoutSeconds: z.number().int().min(1).max(180).optional(),
 });
 
 const openCodeStageSchema = z.strictObject({

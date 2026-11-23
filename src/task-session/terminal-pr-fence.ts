@@ -251,14 +251,21 @@ export function markTerminalWritersStopped(
     (value) => schema.parse(value),
   );
 }
-export function terminalStopProofValid(authority: ProjectRunAuthority): boolean {
+export function terminalStopProofValid(
+  authority: ProjectRunAuthority,
+  requireBothLayouts = false,
+): boolean {
   const fence = readTerminalPrFence(authority);
   if (!fence?.stoppedAt || !fence.proofArtifact) return false;
   try {
     const proof = z
-      .object({ kind: z.literal("task-processes-stopped"), cardId: z.string() })
+      .object({
+        kind: z.literal("task-processes-stopped"),
+        cardId: z.string(),
+        inventoryVersion: z.literal(2).optional(),
+      })
       .parse(JSON.parse(authority.store.readArtifact(fence.proofArtifact).toString("utf8")));
-    return proof.cardId === fence.cardId;
+    return proof.cardId === fence.cardId && (!requireBothLayouts || proof.inventoryVersion === 2);
   } catch {
     return false;
   }

@@ -315,6 +315,32 @@ episode; continuing failure or a new SHA alone cannot.
 
 ## Feedback and replies
 
+### Retained published classification failure
+
+Keep the original named volumes and mount paths for coordination, context/artifacts, repository,
+worktree, and the service user's OpenCode home. Stop the previous service instance before acquiring
+the same project lease. Keep the card in its recorded `Human Review` list. The service can reopen an
+idle canonical attention checkpoint carrying the earlier classification-failure reason only after it
+verifies the original PR and exact head, trusted commit, local and remote branch, clean owned
+worktree, original session, prior process termination and absence of unresolved mutation ownership.
+An unverifiable prior execution is a blocker, not permission to replace the task.
+
+For Klurigo, the expected identity from the incident is project `klurigo`, card
+`6b02ade22e99a0a22377c6f9`, attempt `d0f480db-592d-4fa8-80e5-164ae843e695`,
+[PR #778](https://github.com/emilhornlund/klurigo/pull/778), and published head
+`b3b9d5e01371032ede5356f9c3dadd38c1f93971`. Read the exact branch and worktree from the pinned
+attempt. Start the upgraded service normally. Startup reacquires the canonical attempt under its
+project lease; polling checks both direct and `process-executions/` metadata layouts. Older workers
+could log a classification failure while leaving the task in Human Review; the first classification
+after upgrade also checks retained execution evidence before dispatching from that checkpoint.
+Recovery does not clear unrelated attention reasons, ambiguous writers, changed branches or heads,
+or pending mutations. If the service reports a blocker, preserve the retained evidence and
+investigate the specific mismatch in the task log. Do not move the card to Ready or create a second
+PR. On successful resumption the service re-reads the two inline requests and classifies them
+against the verified head before scheduling any correction in the existing primary session. It will
+not mark the requests fulfilled or resolve the threads as a side effect of recovery. This procedure
+has not been executed on the Klurigo production volumes.
+
 Review bodies, inline threads, and conversation comments are tracked by stable GitHub identity in
 the task ledger. New comments do not erase earlier still-applicable unresolved feedback. Actionable
 items are resumed in the primary session and independently verified against current content/head.
@@ -503,56 +529,16 @@ CI evidence, and unresolved feedback. Do not start a second task in the project 
 task has ambiguous ownership. Contact a human when the available evidence does not establish a safe
 deterministic continuation.
 
-### Explicit recovery tooling
+### Recovery under the normal service
 
-Stop the normal service before running an operator command. Commands use the same configuration,
-shared namespace and canonical attempt authority, and refuse a live or ambiguous competing owner.
-From a checkout with development dependencies:
-
-```sh
-yarn reconcile:external-pr --project ID --card ID --commit SHA --branch BRANCH --pr NUMBER
-yarn recover:legacy-mutation --project ID --event EVENT_ID --confirm-never-started
-yarn recover:session-startup --project ID --card ID --confirm-stopped
-# If a completed startup emitted a verified session but binding failed:
-yarn recover:session-startup --project ID --card ID --confirm-stopped --session SESSION_ID
-```
-
-For a production image, the equivalent entry points are
-`node dist/operator/reconcile-external-task-session-pr.js` and
-`node dist/operator/recover-legacy-retired-mutation.js` with the same flags and persistent mounts.
-Use external-PR reconciliation only for independently verified salvage of the retained
-implementation through an already human-merged recovery PR. It verifies branch/base identity,
-equivalent implementation content, commit history, CI and Trello location before reconciling Done;
-it does not create a replacement PR or authorize rewriting published history. Never use it to
-associate unrelated work.
-
-The legacy-mutation command is narrower: it retires only a completed legacy Ready event whose
-execution never started, with no task-execution owner, after verifying Ready membership and absence
-from Working. The confirmation flag is an operator assertion, not something inferred from PID
-absence. It cannot clear started, failed, ambiguous or actively owned work.
-
-The session-startup command handles an older initial-session failure whose process evidence was not
-finalized. Stop the service and independently establish that the failed process and descendants have
-stopped before supplying `--confirm-stopped`; the flag records an operator assertion, not automatic
-stopped-process proof. The command obtains the shared project lease and requires an unpublished
-planning blockage, verified Working membership, the clean unchanged owned branch, no PR, no
-primary-operation history, and a complete OpenCode session inventory with no session for that
-worktree. It then resumes planning in the existing attempt, preserving setup and diagnostics. Any
-uncertainty refuses recovery. It does not permit resetting interrupted implementation or bypassing
-unknown session ownership.
-
-With `--session`, the same command instead binds the explicitly identified original session after
-the operator confirms process-tree termination and the command verifies the session's exact worktree
-identity. This explicit attestation is retained separately from automatic process evidence; it does
-not fabricate a successful process result or create a replacement session. Both legacy attention
-states and automatically monitored planning waits are supported. This handles older
-plugin-contaminated startup output; subsequent orchestrated runs use OpenCode's `--pure` mode so
-external plugin console output cannot corrupt the JSON event protocol. Startup requires that CLI
-capability. Some plugins still emit tagged import-time banners under `--pure`; the process adapter
-removes only a bounded tagged bootstrap preamble from returned output, retaining the original bytes
-in child stdout evidence. Malformed JSON and interleaved diagnostics remain errors; strict event
-parsing remains unchanged. Resumed planning also explicitly requests JSON events rather than
-accidentally switching to formatted terminal output.
+Startup and polling use the same project lease and canonical attempt as normal execution. A
+retained, previously persisted external PR association can resume after rechecking the merge
+identity, equivalent implementation, CI, card membership and original processes. A patch or branch
+name alone cannot establish an external association. A legacy Ready event labelled `completed`
+cannot prove that it never started; those ambiguous events stay blocked. Older initial-session
+attempts resume only when retained execution and session evidence establish a safe outcome. Existing
+scoped startup attestations remain readable for compatible historical state; new assertions are not
+accepted.
 
 New initial-session dispatches persist a unique `--title` correlation intent, then bind execution
 identity before spawning, and finalize process evidence even when the event stream is malformed.
@@ -579,8 +565,8 @@ and `ambiguous` initial creation before general task recovery:
   Missing PIDs, elapsed time, and a negative immediate read are never stopped-process proof.
 
 When authoritative evidence becomes available, a later poll resumes automatically. If an old lost
-supervisor cannot supply termination proof, the explicit operator attestation command above remains
-necessary; automatic recovery never invents safety evidence or discards preserved work.
+supervisor cannot supply termination proof, the service retains an explicit blocker. Restore the
+original evidence if available; PID absence, a restart or manual state edits are not substitutes.
 
 For an imported legacy `attention-required` implementation without terminal-failure proof, an
 explicitly authorized move to Failed can retire the matching legacy queue event after identity/owner

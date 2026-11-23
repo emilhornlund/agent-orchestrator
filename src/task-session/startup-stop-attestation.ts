@@ -124,6 +124,7 @@ export function recordStartupStopAttestation(options: {
  * metadata. Legacy v1 assertions apply only to the original missing-finalization
  * startup signature, unchanged since the assertion, never to later task work. */
 export function startupStopProofForExecution(options: {
+  adopt?: boolean;
   authority: ProjectRunAuthority;
   task: TaskExecutionRecord;
   file: string;
@@ -207,7 +208,7 @@ export function startupStopProofForExecution(options: {
         );
     }
     if (!matches) continue;
-    if (!run.artifacts.some((artifact) => artifact.id === id)) {
+    if (options.adopt !== false && !run.artifacts.some((artifact) => artifact.id === id)) {
       const artifact = authority.store.writeArtifact(bytes!, "application/json");
       authority.store.referenceMutationArtifact(
         authority.store.read()!.revision,

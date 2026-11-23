@@ -8,13 +8,26 @@ import { RunStore } from "../src/task-session/run-store.js";
 import { ProjectRunAuthority } from "../src/task-session/project-run-authority.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
+import { readTerminalPrFence } from "../src/task-session/terminal-pr-fence.js";
+import { feedbackClassificationCheckpoint } from "../src/task-session/feedback-classification-checkpoint.js";
+import { FeedbackClassificationError } from "../src/task-session/classify-current-feedback.js";
+import { OpenCodeClient } from "../src/opencode/opencode-client.js";
+import { actionableFeedbackResponse } from "./support/feedback-classification-response.js";
 import {
   observeActivePullRequest,
   readActivePrArrivals,
+  readActivePrObservationHealth,
   withActivePrObservation,
 } from "../src/orchestrator/active-pr-observation.js";
 
 let root: string;
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 afterEach(() => {
   vi.useRealTimers();
   if (root) fs.rmSync(root, { recursive: true, force: true });
@@ -86,7 +99,7 @@ function fixture() {
   const headSha = "a".repeat(40);
   const pr = {
     url: "https://github.com/owner/repo/pull/1",
-    state: "OPEN",
+    state: "OPEN" as const,
     mergedAt: null,
     headRefOid: headSha,
     headRefName: "agent/card",
@@ -110,9 +123,11 @@ function fixture() {
     updatedAt: new Date().toISOString(),
   });
   let body = "first request";
+  const readPr = vi.fn(async () => pr);
   const github = {
     comparePullRequestHeadToBase: vi.fn(async () => "current" as const),
-    findPullRequestState: vi.fn(async () => pr),
+    findPullRequestState: readPr,
+    getPullRequestStateByNumber: readPr,
     findChangesRequestedPullRequest: vi.fn(async () => null),
     getPullRequestConversationComments: vi.fn(async () => [
       {
@@ -225,6 +240,240 @@ it("retains observer failure diagnostics without interrupting the writer and bac
   expect(vi.getTimerCount()).toBe(0);
 });
 
+it("persists degraded health across restart and requires a complete recovery observation", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const lookup = vi.mocked(f.github.findPullRequestState);
+  lookup.mockRejectedValue(new Error("provider not responding"));
+  const onError = vi.fn();
+  const options = { ...f, intervalMs: 100, signal: new AbortController().signal, onError };
+  const first = deferred<string>();
+  const running = withActivePrObservation(options, () => first.promise);
+  await vi.advanceTimersByTimeAsync(300);
+  expect(lookup).toHaveBeenCalledTimes(2);
+  expect(onError).toHaveBeenCalledOnce();
+  first.resolve("writer succeeded");
+  await expect(running).resolves.toBe("writer succeeded");
+  const authority = new ProjectRunAuthority(f.project.id, f.store, 1, undefined, undefined, "card");
+  expect(readActivePrObservationHealth(authority)).toMatchObject({
+    status: "degraded",
+    failures: 2,
+  });
+  lookup.mockResolvedValue(f.pr);
+  const complete = vi.mocked(f.github.getCiObservations);
+  complete.mockResolvedValueOnce({ headSha: "b".repeat(40), checks: [], expectationSources: [] });
+  const second = deferred<void>();
+  const resumed = withActivePrObservation({ ...options, authority }, () => second.promise);
+  await vi.advanceTimersByTimeAsync(399);
+  expect(lookup).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(readActivePrObservationHealth(authority)).toMatchObject({
+    status: "degraded",
+    failures: 3,
+  });
+  expect(readActivePrArrivals(authority)).toEqual([]);
+  await vi.advanceTimersByTimeAsync(800);
+  expect(readActivePrObservationHealth(authority)).toMatchObject({
+    status: "healthy",
+    failures: 0,
+  });
+  expect(readActivePrArrivals(authority)).toHaveLength(1);
+  second.resolve();
+  await resumed;
+});
+
+it("keeps fresh feedback independent of a nearly exhausted revision after restart", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const f = fixture();
+  const use = () =>
+    feedbackClassificationCheckpoint({
+      project: f.project,
+      cardId: "card",
+      pullRequestUrl: f.pr.url,
+      worktreePath: "/owned/worktree",
+    })!;
+  const fail = async (authority: ProjectRunAuthority, revision: string) =>
+    authority.run(async () => {
+      const episode = use();
+      episode.reserve([revision]);
+      await episode.fail(new FeedbackClassificationError("nonzero"));
+      vi.setSystemTime(Date.now() + 60_000);
+    });
+  await fail(f.authority, "request-a:revision-1");
+  await fail(f.authority, "request-a:revision-1");
+  const restarted = new ProjectRunAuthority(f.project.id, f.store, 1, undefined, undefined, "card");
+  const a = "request-a:revision-1";
+  const b = "request-b:revision-1";
+  expect(restarted.run(() => use().selectRevisions([a, b]))).toEqual([b]);
+  await fail(restarted, b);
+  await fail(restarted, a);
+  expect(restarted.run(() => use().selectRevisions([a, b]))).toEqual([b]);
+  expect(restarted.run(() => use().selectRevisions([a, "request-a:revision-2"]))).toEqual([
+    "request-a:revision-2",
+  ]);
+});
+
+it("does not exhaust feedback after repeatedly restarting before the classifier can launch", async () => {
+  const f = fixture();
+  const revision = "request:revision-1";
+  for (let n = 0; n < 4; n++) {
+    const owner = new ProjectRunAuthority(f.project.id, f.store, 1, undefined, undefined, "card");
+    owner.run(() => {
+      const checkpoint = feedbackClassificationCheckpoint({
+        project: f.project,
+        cardId: "card",
+        pullRequestUrl: f.pr.url,
+        worktreePath: "/owned/worktree",
+      })!;
+      checkpoint.assertStopped();
+      expect(checkpoint.selectRevisions([revision])).toEqual([revision]);
+      checkpoint.reserve([revision]);
+      // Interrupt before the onExecutionPrepared callback can bind the child.
+    });
+  }
+});
+
+it("archives a completed classification after a crash between ledger commit and checkpoint cleanup", () => {
+  const f = fixture();
+  const use = () =>
+    feedbackClassificationCheckpoint({
+      project: f.project,
+      cardId: "card",
+      pullRequestUrl: f.pr.url,
+      worktreePath: "/owned/worktree",
+    })!;
+  f.authority.run(() => {
+    const episode = use();
+    episode.reserve(["request:revision"]);
+    episode.prepareLedgerCommit(4);
+  });
+  const restarted = new ProjectRunAuthority(f.project.id, f.store, 1, undefined, undefined, "card");
+  const state = () =>
+    f.store.read()!.compatibility["feedback-classification-v1"] as {
+      active: object;
+      archiveHead: string | null;
+    };
+  restarted.run(() => use().finishCommittedCheckpoints(3));
+  expect(Object.values(state().active)).toHaveLength(1);
+  for (let revision = 4; revision < 40; revision++) {
+    restarted.run(() => {
+      use().finishCommittedCheckpoints(revision);
+      expect(state().active).toEqual({});
+      const next = use();
+      next.reserve([`request:${revision}`]);
+      next.prepareLedgerCommit(revision + 1);
+    });
+  }
+  expect(Object.values(state().active)).toHaveLength(1);
+  expect(state().archiveHead).toMatch(/^sha256:/u);
+});
+
+it.each(["configuration", "malformed"] as const)(
+  "reopens an original %s block only after a paced dependency probe",
+  async (failure) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const f = fixture();
+    const project: ProjectConfig = {
+      ...f.project,
+      opencode: {
+        refinement: {},
+        implementation: {},
+        review: { model: "fixture" },
+        remediation: { maxPasses: 1 },
+        commit: {},
+        timeoutMinutes: 1,
+      },
+    };
+    const email = { send: vi.fn(async () => undefined) };
+    const revision = "review:42:original-revision";
+    const use = () =>
+      feedbackClassificationCheckpoint({
+        project,
+        cardId: "card",
+        pullRequestUrl: f.pr.url,
+        worktreePath: "/owned/worktree",
+        emailNotifier: email,
+      })!;
+    let ready = false;
+    const probe = vi.fn(async ({ prompt }: { prompt: string }) => ({
+      exitCode: ready ? 0 : 1,
+      output: ready
+        ? actionableFeedbackResponse(prompt).replaceAll('"actionable"', '"discussion"')
+        : "",
+      errorOutput: "",
+    }));
+    const openCode = new OpenCodeClient(probe);
+    const signal = new AbortController().signal;
+    for (let i = 0; i < (failure === "configuration" ? 1 : 3); i++) {
+      await f.authority.run(async () => {
+        const episode = use();
+        episode.reserve([revision]);
+        await episode.fail(new FeedbackClassificationError(failure));
+      });
+      vi.setSystemTime(Date.now() + 60_000);
+    }
+    const reopen = () =>
+      new ProjectRunAuthority(project.id, f.store, 1, undefined, undefined, "card");
+    let owner = reopen();
+    const before = f.store.read()!.revision;
+    for (let i = 0; i < 1_000; i++) {
+      expect(
+        await owner.run(() => use().selectWithRecovery([revision], openCode, signal)),
+      ).toMatchObject({ status: "blocked", retryAt: expect.any(String) });
+    }
+    expect(f.store.read()!.revision).toBe(before);
+    expect(probe).not.toHaveBeenCalled();
+    expect(email.send).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(Date.now() + 5 * 60_000);
+    await owner.run(() => use().selectWithRecovery([revision], openCode, signal));
+    expect(probe).toHaveBeenCalledOnce();
+    ready = true;
+    owner = reopen();
+    vi.setSystemTime(Date.now() + 10 * 60_000);
+    expect(await owner.run(() => use().selectWithRecovery([revision], openCode, signal))).toEqual([
+      revision,
+    ]);
+    owner.run(() => {
+      const episode = use();
+      episode.reserve([revision]);
+      episode.complete();
+    });
+    const state = f.store.read()!.compatibility["feedback-classification-v1"] as {
+      active: object;
+      archiveHead: string;
+    };
+    expect(state.active).toEqual({});
+    expect(JSON.parse(f.store.readArtifact(state.archiveHead).toString("utf8"))).toMatchObject({
+      kind: "feedback-classification-history",
+      previous: expect.stringMatching(/^sha256:/u),
+      entries: [{ status: "recovered", revisions: [revision] }],
+    });
+    expect(email.send).toHaveBeenCalledTimes(1);
+  },
+);
+
+it("times out a delayed observer without overlapping it or invalidating the writer", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const late = deferred<Awaited<ReturnType<GitHubClient["findPullRequestState"]>>>();
+  const lookup = vi.mocked(f.github.findPullRequestState).mockReturnValueOnce(late.promise);
+  const writer = deferred<number>();
+  const onError = vi.fn();
+  const result = withActivePrObservation(
+    { ...f, intervalMs: 100, timeoutMs: 50, signal: new AbortController().signal, onError },
+    () => writer.promise,
+  );
+  await vi.advanceTimersByTimeAsync(400);
+  expect(lookup).toHaveBeenCalledOnce();
+  expect(onError).toHaveBeenCalledOnce();
+  expect(readActivePrObservationHealth(f.authority)).toMatchObject({ identity: "timeout" });
+  writer.resolve(42);
+  await expect(result).resolves.toBe(42);
+  late.resolve(f.pr);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(readActivePrArrivals(f.authority)).toEqual([]);
+});
+
 it("preserves prior arrivals on outages and rejects stale owner generations", async () => {
   const f = fixture();
   await observeActivePullRequest(f);
@@ -281,7 +530,11 @@ it("does not persist mixed feedback when the PR changes during observation", asy
       ReturnType<GitHubClient["findPullRequestState"]>
     >);
   await observeActivePullRequest(f);
-  expect(readActivePrArrivals(f.authority)).toHaveLength(0);
+  expect(readActivePrArrivals(f.authority)).toMatchObject([{ state: "CLOSED" }]);
+  expect(readTerminalPrFence(f.authority)).toMatchObject({ state: "CLOSED" });
+  expect(new TaskMutationQueue(f.project.contextRoot, f.project, f.authority).list()).toMatchObject(
+    [{ kind: "terminal-pr" }],
+  );
 });
 
 it("reconciles interruption between durable observation and queue descriptor without losing or duplicating the arrival", async () => {

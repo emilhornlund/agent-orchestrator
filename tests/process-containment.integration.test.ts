@@ -114,16 +114,20 @@ ${mode === "success" ? `process.stdout.write(${JSON.stringify(output)});process.
       suppressOutput: true,
     });
   };
-  const evidence = () => {
+  const evidenceList = (expected = 1) => {
     const dir = path.join(runtime, "process-executions");
     const ids = fs.readdirSync(dir);
-    expect(ids).toHaveLength(1);
-    return JSON.parse(fs.readFileSync(path.join(dir, ids[0]!, "execution.json"), "utf8")) as Record<
-      string,
-      unknown
-    >;
+    expect(ids).toHaveLength(expected);
+    return ids.map(
+      (id) =>
+        JSON.parse(fs.readFileSync(path.join(dir, id, "execution.json"), "utf8")) as Record<
+          string,
+          unknown
+        >,
+    );
   };
-  return { root, bin, runtime, sentinel, controller, launchers, execute, evidence };
+  const evidence = () => evidenceList()[0]!;
+  return { root, bin, runtime, sentinel, controller, launchers, execute, evidence, evidenceList };
 }
 
 it.each(["command", "git", "gh", "opencode"])(
@@ -179,11 +183,12 @@ it.each(["command", "git", "gh", "opencode"])(
     const size = fs.statSync(f.sentinel).size;
     await delay(150);
     expect(fs.statSync(f.sentinel).size).toBe(size);
-    expect(f.evidence()).toMatchObject({
-      status: "timeout",
-      containment: "linux-pid-namespace",
-      treeStopped: true,
-    });
+    for (const evidence of f.evidenceList(family === "gh" ? 2 : 1))
+      expect(evidence).toMatchObject({
+        status: "timeout",
+        containment: "linux-pid-namespace",
+        treeStopped: true,
+      });
   },
 );
 

@@ -260,6 +260,7 @@ export function cleanupLogRetention(
     ]),
   ];
   const protectedPaths = new Set<string>();
+  const classificationArchiveDirectories = new Set<string>();
   const protectedIds = new Set(protectedAttemptIds);
   const unsafeRoots = new Set<string>();
   let inventoryIsUncertain = false;
@@ -304,6 +305,14 @@ export function cleanupLogRetention(
         // durable run envelope, including after the run becomes terminal.
         for (const artifact of record.artifacts)
           if (path.isAbsolute(artifact.path)) protectedPaths.add(path.resolve(artifact.path));
+        const classification = record.compatibility["feedback-classification-v1"];
+        if (
+          classification &&
+          typeof classification === "object" &&
+          "archiveHead" in classification &&
+          typeof classification.archiveHead === "string"
+        )
+          classificationArchiveDirectories.add(path.join(runtimeRoot, "artifacts", id));
         if (!terminal || protectedIds.has(id)) {
           hasActiveAttempt ||= !terminal;
           protectedIds.add(id);
@@ -357,6 +366,8 @@ export function cleanupLogRetention(
         if (
           !entry.isFile() ||
           protectedPaths.has(path.resolve(target)) ||
+          (classificationArchiveDirectories.has(directory) &&
+            /^sha256-[a-f0-9]{64}$/u.test(entry.name)) ||
           [...protectedIds].some((id) => target.includes(id))
         )
           continue;

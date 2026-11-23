@@ -261,7 +261,13 @@ export class FeedbackLedgerStore {
           : {
               ...incoming,
               actionability:
-                incoming.supersessionOnly === true ? "discussion" : previous.actionability,
+                incoming.supersessionOnly === true
+                  ? "discussion"
+                  : (incoming.sourceRevision !== undefined &&
+                        incoming.actionability === "unclassified") ||
+                      previous.actionability === "unclassified"
+                    ? incoming.actionability
+                    : previous.actionability,
               status: previous.status,
               verificationEvidence: previous.verificationEvidence,
               resolution: previous.resolution,
