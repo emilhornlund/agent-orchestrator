@@ -283,7 +283,7 @@ it("persists degraded health across restart and requires a complete recovery obs
 it("keeps fresh feedback independent of a nearly exhausted revision after restart", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   const f = fixture();
-  const use = (authority: ProjectRunAuthority) =>
+  const use = () =>
     feedbackClassificationCheckpoint({
       project: f.project,
       cardId: "card",
@@ -292,7 +292,7 @@ it("keeps fresh feedback independent of a nearly exhausted revision after restar
     })!;
   const fail = async (authority: ProjectRunAuthority, revision: string) =>
     authority.run(async () => {
-      const episode = use(authority);
+      const episode = use();
       episode.reserve([revision]);
       await episode.fail(new FeedbackClassificationError("nonzero"));
       vi.setSystemTime(Date.now() + 60_000);
@@ -302,11 +302,11 @@ it("keeps fresh feedback independent of a nearly exhausted revision after restar
   const restarted = new ProjectRunAuthority(f.project.id, f.store, 1, undefined, undefined, "card");
   const a = "request-a:revision-1";
   const b = "request-b:revision-1";
-  expect(restarted.run(() => use(restarted).selectRevisions([a, b]))).toEqual([b]);
+  expect(restarted.run(() => use().selectRevisions([a, b]))).toEqual([b]);
   await fail(restarted, b);
   await fail(restarted, a);
-  expect(restarted.run(() => use(restarted).selectRevisions([a, b]))).toEqual([b]);
-  expect(restarted.run(() => use(restarted).selectRevisions([a, "request-a:revision-2"]))).toEqual([
+  expect(restarted.run(() => use().selectRevisions([a, b]))).toEqual([b]);
+  expect(restarted.run(() => use().selectRevisions([a, "request-a:revision-2"]))).toEqual([
     "request-a:revision-2",
   ]);
 });

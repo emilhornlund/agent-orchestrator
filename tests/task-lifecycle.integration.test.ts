@@ -2050,7 +2050,7 @@ describe("task lifecycle through pollProject", () => {
           await expect(recoveryRead()).rejects.toThrow("trusted commit or local HEAD");
           localHead.mockRestore();
           const differentPr = vi
-            .spyOn(github, "getPullRequestStateByNumber")
+            .spyOn(github, "findPullRequestState")
             .mockResolvedValueOnce({ ...firstPr!, url: `${firstPr!.url}0`, mergedAt: null });
           await expect(recoveryRead()).rejects.toThrow("recorded open PR and exact head");
           differentPr.mockRestore();
@@ -2404,7 +2404,7 @@ describe("task lifecycle through pollProject", () => {
           vi.useFakeTimers();
           vi.setSystemTime(clock);
           const delayedReads = vi
-            .spyOn(github, "findPullRequestState")
+            .spyOn(github, "getPullRequestStateByNumber")
             .mockImplementation(async () => {
               await new Promise<void>((resolve) => setTimeout(resolve, 10));
               return { ...firstPr!, mergedAt: null };

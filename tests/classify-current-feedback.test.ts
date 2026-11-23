@@ -216,6 +216,28 @@ it("recovers once from the observed combined actionability token without weakeni
 });
 
 const executionId = "5125c222-01d9-4937-af6d-2a72e6a2c040";
+it("can reuse a verified pending request while another source remains unavailable", async () => {
+  const verified = { ...entry, status: "pending" as const, unresolvedReason: undefined };
+  const deferred = {
+    ...entry,
+    id: "2",
+    actionability: "unclassified" as const,
+    status: "pending" as const,
+  };
+  const run = vi.fn<RunOpenCode>();
+  const result = await classifyCurrentFeedback({
+    project,
+    incoming: [verified, deferred],
+    previous: [verified],
+    worktreePath: "/tmp",
+    openCode: new OpenCodeClient(run),
+    signal: new AbortController().signal,
+    selectRevisions: () => [],
+  });
+  expect(result.map(({ actionability }) => actionability)).toEqual(["actionable", "unclassified"]);
+  expect(run).not.toHaveBeenCalled();
+});
+
 it.each<[string, RunOpenCode]>([
   [
     "nonzero",
