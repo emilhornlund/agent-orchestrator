@@ -8,6 +8,9 @@ import type { ChildProcess } from "node:child_process";
 
 let runtimeRoot: string | undefined;
 let lifecycleSignal: AbortSignal | undefined;
+export function getProcessLifecycleSignal(): AbortSignal | undefined {
+  return lifecycleSignal;
+}
 const operationSignal = new AsyncLocalStorage<AbortSignal>();
 export function withProcessCancellationSignal<T>(signal: AbortSignal, operation: () => T): T {
   return operationSignal.run(signal, operation);

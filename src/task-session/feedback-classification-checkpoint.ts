@@ -97,10 +97,28 @@ export function feedbackClassificationCheckpoint(options: {
         )
           defer();
     },
-    isExhausted(revision: string) {
-      return Object.values(read()).some(
-        (value) => value.status === "blocked" && value.revisions?.includes(revision),
-      );
+    selectRevisions(revisions: readonly string[]) {
+      const records = Object.values(read());
+      const cohorts = new Map<string, string[]>();
+      for (const revision of revisions) {
+        const related = records.filter(
+          (item) => item.status !== "recovered" && item.revisions?.includes(revision),
+        );
+        if (
+          related.some(
+            (item) =>
+              item.status === "blocked" || (item.retryAt && Date.now() < Date.parse(item.retryAt)),
+          )
+        )
+          continue;
+        const cohort = related
+          .map((item) => item.identity)
+          .sort()
+          .join(":");
+        cohorts.set(cohort, [...(cohorts.get(cohort) ?? []), revision]);
+      }
+      // A new revision has its own allowance, even when an old revision is due.
+      return cohorts.get("") ?? cohorts.values().next().value ?? [];
     },
     reserve(revisions: readonly string[]) {
       const identity = createHash("sha256").update(JSON.stringify(revisions)).digest("hex");

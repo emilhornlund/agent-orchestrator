@@ -275,7 +275,7 @@ export async function refreshCurrentTaskFeedback(options: {
         : {
             singleExecution: true,
             beforeDispatch: checkpoint.reserve,
-            isExhausted: checkpoint.isExhausted,
+            selectRevisions: checkpoint.selectRevisions,
             onExecutionPrepared: checkpoint.bind,
           }),
     });

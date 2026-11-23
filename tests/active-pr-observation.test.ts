@@ -9,6 +9,8 @@ import { ProjectRunAuthority } from "../src/task-session/project-run-authority.j
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import { readTerminalPrFence } from "../src/task-session/terminal-pr-fence.js";
+import { feedbackClassificationCheckpoint } from "../src/task-session/feedback-classification-checkpoint.js";
+import { FeedbackClassificationError } from "../src/task-session/classify-current-feedback.js";
 import {
   observeActivePullRequest,
   readActivePrArrivals,
@@ -119,9 +121,11 @@ function fixture() {
     updatedAt: new Date().toISOString(),
   });
   let body = "first request";
+  const readPr = vi.fn(async () => pr);
   const github = {
     comparePullRequestHeadToBase: vi.fn(async () => "current" as const),
-    findPullRequestState: vi.fn(async () => pr),
+    findPullRequestState: readPr,
+    getPullRequestStateByNumber: readPr,
     findChangesRequestedPullRequest: vi.fn(async () => null),
     getPullRequestConversationComments: vi.fn(async () => [
       {
@@ -274,6 +278,37 @@ it("persists degraded health across restart and requires a complete recovery obs
   expect(readActivePrArrivals(authority)).toHaveLength(1);
   second.resolve();
   await resumed;
+});
+
+it("keeps fresh feedback independent of a nearly exhausted revision after restart", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const f = fixture();
+  const use = (authority: ProjectRunAuthority) =>
+    feedbackClassificationCheckpoint({
+      project: f.project,
+      cardId: "card",
+      pullRequestUrl: f.pr.url,
+      worktreePath: "/owned/worktree",
+    })!;
+  const fail = async (authority: ProjectRunAuthority, revision: string) =>
+    authority.run(async () => {
+      const episode = use(authority);
+      episode.reserve([revision]);
+      await episode.fail(new FeedbackClassificationError("nonzero"));
+      vi.setSystemTime(Date.now() + 60_000);
+    });
+  await fail(f.authority, "request-a:revision-1");
+  await fail(f.authority, "request-a:revision-1");
+  const restarted = new ProjectRunAuthority(f.project.id, f.store, 1, undefined, undefined, "card");
+  const a = "request-a:revision-1";
+  const b = "request-b:revision-1";
+  expect(restarted.run(() => use(restarted).selectRevisions([a, b]))).toEqual([b]);
+  await fail(restarted, b);
+  await fail(restarted, a);
+  expect(restarted.run(() => use(restarted).selectRevisions([a, b]))).toEqual([b]);
+  expect(restarted.run(() => use(restarted).selectRevisions([a, "request-a:revision-2"]))).toEqual([
+    "request-a:revision-2",
+  ]);
 });
 
 it("times out a delayed observer without overlapping it or invalidating the writer", async () => {

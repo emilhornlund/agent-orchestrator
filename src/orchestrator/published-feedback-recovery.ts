@@ -110,6 +110,7 @@ export async function inspectPublishedFeedbackRecovery(options: {
     if (
       !stopped &&
       !startupStopProofForExecution({
+        adopt: false,
         authority,
         task,
         file: path.join(directory, id, "execution.json"),

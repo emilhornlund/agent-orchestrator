@@ -82,7 +82,14 @@ async function readActivePullRequest(
     baseBranch: project.repository.defaultBranch,
     project,
   };
-  let pr = await github.findPullRequestState(lookup);
+  const readPr = () =>
+    options.terminalOnly
+      ? github.findPullRequestState(lookup)
+      : github.getPullRequestStateByNumber({
+          ...lookup,
+          pullRequestNumber: task.pullRequest!.number,
+        });
+  let pr = await readPr();
   options.signal?.throwIfAborted();
   if (!pr || pr.url !== task.pullRequest.url || !pr.headRefOid)
     throw new Error("Active PR observation could not verify the owned PR identity");
@@ -123,7 +130,7 @@ async function readActivePullRequest(
         })
       : "uncertain";
   if (current !== null) {
-    const confirmed = await github.findPullRequestState(lookup);
+    const confirmed = await readPr();
     if (
       confirmed &&
       confirmed.url === pr.url &&
@@ -139,7 +146,8 @@ async function readActivePullRequest(
       confirmed.state !== pr.state ||
       confirmed.headRefOid !== pr.headRefOid ||
       !matchesRepository(confirmed) ||
-      (current.feedback !== null && current.feedback.headSha !== pr.headRefOid) ||
+      (current.feedback !== null &&
+        (current.feedback.headSha !== pr.headRefOid || current.feedback.url !== pr.url)) ||
       current.ci.headSha !== pr.headRefOid
     ) {
       if (tasks.read(task.cardId)?.pullRequest?.headSha !== task.pullRequest.headSha)

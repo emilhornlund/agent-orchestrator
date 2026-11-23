@@ -37,6 +37,7 @@ import {
 } from "../process/process-runtime.js";
 import {
   GitHubCredentialProvider,
+  GitHubCredentialResolutionError,
   type GitHubCredential,
   type GitHubCredentialEnvironment,
 } from "./github-credential-provider.js";
@@ -1107,12 +1108,14 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
         ? `${flag}=${redactRegisteredSecrets(argument.slice(separator + 1), environmentSecrets)}`
         : argument;
     });
+    const rejectBeforeSpawn = (error: unknown) =>
+      reject(isGitHubWrite(args) ? githubMutationNotDispatched(error) : error);
     let dispatch: ReturnType<typeof containedProcess>;
     try {
       dispatch = containedProcess("gh", safeArguments);
     } catch (error) {
       execution.finish("not-dispatched");
-      reject(error);
+      rejectBeforeSpawn(error);
       return;
     }
     const child = spawn(dispatch.command, dispatch.args, {
@@ -1243,7 +1246,13 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
         clearTimeout(forceKillTimeout);
       }
 
-      reject(new ProcessExecutionError("GitHub CLI", execution.executionId, "spawn-failure"));
+      const failure = new ProcessExecutionError(
+        "GitHub CLI",
+        execution.executionId,
+        "spawn-failure",
+      );
+      if (child.pid === undefined) rejectBeforeSpawn(failure);
+      else reject(failure);
     });
 
     child.once("close", (code, signalName) => {
@@ -1307,7 +1316,9 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
       }
 
       if (payloadSpawned === false) {
-        reject(new ProcessExecutionError("GitHub CLI", execution.executionId, "spawn-failure"));
+        rejectBeforeSpawn(
+          new ProcessExecutionError("GitHub CLI", execution.executionId, "spawn-failure"),
+        );
         return;
       }
 
@@ -3439,7 +3450,9 @@ export class GitHubClient {
         error instanceof Error ? error.message : "GitHub credential resolution failed";
       const status = message.match(/HTTP\s+(\d{3})/i)?.[1];
       throw new ProjectResourceError(
-        status && Number(status) >= 500 ? "unavailable" : "invalid",
+        error instanceof GitHubCredentialResolutionError && error.transient
+          ? "unavailable"
+          : "invalid",
         `GitHub authentication check failed for project "${project.id}"${status ? ` (HTTP ${status})` : "; verify configured credentials"}`,
         error,
       );

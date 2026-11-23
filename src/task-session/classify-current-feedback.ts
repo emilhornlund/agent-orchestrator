@@ -83,7 +83,7 @@ export async function classifyCurrentFeedback(options: {
   openCode: OpenCodeClient;
   signal: AbortSignal;
   beforeDispatch?: (revisions: readonly string[]) => void;
-  isExhausted?: (revision: string) => boolean;
+  selectRevisions?: (revisions: readonly string[]) => readonly string[];
   onExecutionPrepared?: OpenCodeRunOptions["onExecutionPrepared"];
   singleExecution?: boolean;
 }): Promise<FeedbackLedgerEntry[]> {
@@ -123,10 +123,12 @@ export async function classifyCurrentFeedback(options: {
   });
   const revisionKey = (entry: FeedbackLedgerEntry) =>
     `${key(entry)}:${feedbackSourceRevision(entry)}`;
-  const exhausted = new Set(
-    candidates.filter((entry) => options.isExhausted?.(revisionKey(entry))).map(key),
+  const revisions = candidates.map(revisionKey);
+  const selected = new Set(options.selectRevisions?.(revisions) ?? revisions);
+  const withheld = new Set(
+    candidates.filter((entry) => !selected.has(revisionKey(entry))).map(key),
   );
-  const eligible = candidates.filter((entry) => !exhausted.has(key(entry)));
+  const eligible = candidates.filter((entry) => !withheld.has(key(entry)));
   const reconcileSupersessions = (entries: FeedbackLedgerEntry[]) => {
     const superseded = new Set<string>();
     for (const entry of [...entries].sort(
@@ -148,7 +150,7 @@ export async function classifyCurrentFeedback(options: {
   };
   const retained = (entry: FeedbackLedgerEntry): FeedbackLedgerEntry => {
     const old = previous.get(key(entry));
-    if (exhausted.has(key(entry)))
+    if (withheld.has(key(entry)))
       return {
         ...entry,
         actionability: "unclassified",

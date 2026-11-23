@@ -723,6 +723,21 @@ describe("task lifecycle through pollProject", () => {
             headRepositoryOwner: { login: "owner" },
           };
         },
+        getPullRequestStateByNumber: async ({
+          pullRequestNumber,
+        }: {
+          pullRequestNumber: number;
+        }) => {
+          const pr = [...prs.values()].find((item) => item.number === pullRequestNumber);
+          if (!pr) throw new Error("Numbered test PR is unavailable");
+          return github.findPullRequestState({
+            cwd: source,
+            repository: project.repository.github,
+            headBranch: pr.headBranch,
+            baseBranch: "main",
+            project,
+          });
+        },
         ensurePullRequestDraft: async (input: { pullRequestUrl: string }) => {
           const pr = [...prs.values()].find(({ url }) => url === input.pullRequestUrl);
           if (pr) pr.isDraft = true;
@@ -2035,7 +2050,7 @@ describe("task lifecycle through pollProject", () => {
           await expect(recoveryRead()).rejects.toThrow("trusted commit or local HEAD");
           localHead.mockRestore();
           const differentPr = vi
-            .spyOn(github, "findPullRequestState")
+            .spyOn(github, "getPullRequestStateByNumber")
             .mockResolvedValueOnce({ ...firstPr!, url: `${firstPr!.url}0`, mergedAt: null });
           await expect(recoveryRead()).rejects.toThrow("recorded open PR and exact head");
           differentPr.mockRestore();
