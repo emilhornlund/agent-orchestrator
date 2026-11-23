@@ -267,13 +267,14 @@ export class GitHubMutationNotDispatchedError extends Error {
     readonly operationId: string,
     readonly generation: number,
     cause: unknown,
+    readonly processExecutionId?: string,
   ) {
     super("GitHub mutation stopped before transport dispatch", { cause });
     this.name = "GitHubMutationNotDispatchedError";
   }
 }
 
-export function githubMutationNotDispatched(cause: unknown): unknown {
+export function githubMutationNotDispatched(cause: unknown, processExecutionId?: string): unknown {
   const capability = dispatchContext.getStore();
   if (
     capability?.active &&
@@ -284,6 +285,7 @@ export function githubMutationNotDispatched(cause: unknown): unknown {
       capability.operationId,
       capability.dispatchGeneration,
       cause,
+      processExecutionId,
     );
   return cause;
 }
@@ -645,6 +647,11 @@ export async function workflowMutation<T>(options: {
           ...evidence({
             response: "unknown; process diagnostics retained separately",
             ...(rejection ? { rejection } : {}),
+            ...(notSent &&
+            error instanceof GitHubMutationNotDispatchedError &&
+            error.processExecutionId
+              ? { processExecutionId: error.processExecutionId }
+              : {}),
           }),
           ...(notSent ? { nonDeliveryProof: "transport-proven-not-sent" as const } : {}),
           ...(rejection

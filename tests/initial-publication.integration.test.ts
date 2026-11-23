@@ -10,6 +10,7 @@ import { runOrchestrator } from "../src/orchestrator/run-orchestrator.js";
 import { Logger } from "../src/logging/logger.js";
 import type { Config } from "../src/config/config.js";
 import { GitHubClient } from "../src/github/github-client.js";
+import * as ProcessRuntime from "../src/process/process-runtime.js";
 import { reconcileWorkflowMutations } from "../src/orchestrator/reconcile-workflow-mutations.js";
 import { WorkflowMutationWaitingError } from "../src/task-session/workflow-mutation.js";
 import { registerProcessSecrets } from "../src/process/process-runtime.js";
@@ -1544,6 +1545,72 @@ describe("initial publication production checkpoint with independent simulated s
     expect(f.services.read().requests).toHaveLength(1);
     expect(operation(f, "pr")?.mutation?.dispatches).toHaveLength(2);
     expect(task(f)?.phase).toBe("ci");
+  });
+
+  it("retains proof of non-dispatch when pre-launch evidence finalization fails, then creates once after restart", async () => {
+    const f = fixture();
+    await begin(f);
+    const finish = vi.fn(() => {
+      throw new Error("injected process evidence finalization failure");
+    });
+    const beginEvidence = ProcessRuntime.beginProcessEvidence;
+    const evidence = vi
+      .spyOn(ProcessRuntime, "beginProcessEvidence")
+      .mockImplementation((...args) => {
+        const original = beginEvidence(...args);
+        return args[0].startsWith("gh pr create ") ? { ...original, finish } : original;
+      });
+    const github = new GitHubClient();
+    f.services.github.createPullRequest = (options) =>
+      ProcessRuntime.withProcessCancellationSignal(AbortSignal.abort(), () =>
+        github.createPullRequest(options),
+      );
+    try {
+      await through(f, "push");
+    } finally {
+      evidence.mockRestore();
+    }
+    expect(finish).toHaveBeenCalledWith("not-dispatched", { cancellationRequested: true });
+    expect(f.services.read().requests).toEqual([]);
+    expect(operation(f, "pr")?.mutation?.dispatches).toMatchObject([
+      {
+        response: {
+          outcome: "not-delivered",
+          evidence: { nonDeliveryProof: "transport-proven-not-sent" },
+        },
+      },
+    ]);
+    const restarted = reopenPublicationFixture(f.root, "pre-launch-restart");
+    await through(restarted, "comment");
+    expect(restarted.services.read().requests).toHaveLength(1);
+    expect(restarted.services.read().prs).toHaveLength(1);
+    expect(operation(restarted, "pr")?.mutation?.dispatches).toHaveLength(2);
+    const lookup = restarted.services.github.findPullRequestState;
+    vi.spyOn(restarted.services.github, "findPullRequestState").mockImplementation(
+      async (options) => {
+        const pr = await lookup(options);
+        return pr && { ...pr, state: "CLOSED", mergedAt: null };
+      },
+    );
+    const directRoot = new TaskExecutionStore(
+      restarted.project.contextRoot,
+      restarted.project,
+      restarted.authority,
+    ).processExecutionDirectory("card")!;
+    const unknownExecution = restarted.authority.run(() =>
+      ProcessRuntime.beginProcessEvidence("opencode run", restarted.worktreePath, [], directRoot),
+    );
+    await poll(restarted, true);
+    expect(restarted.store.read()!.terminalSync).not.toBe("verified");
+    expect(restarted.services.read().list).toBe("review");
+    unknownExecution.finish("nonzero", { treeStopped: true, exitCode: 1 });
+    for (let pass = 0; pass < 4 && restarted.store.read()!.lifecycle !== "cancelled"; pass++)
+      await poll(restarted, true);
+    expect(restarted.store.read()).toMatchObject({
+      lifecycle: "cancelled",
+      terminalSync: "verified",
+    });
+    expect(restarted.services.read().requests).toHaveLength(1);
   });
   it.each(["commit", "push", "move", "comment", "projection"] as const)(
     "discovers the original effect after SIGKILL following %s acceptance/durable handoff",

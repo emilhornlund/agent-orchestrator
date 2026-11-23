@@ -2312,6 +2312,27 @@ async function runTaskSessionWorkflowAttempt(
     if (
       record &&
       ["ci", "human-feedback"].includes(record.phase) &&
+      !hasUnresolvedLegacyMaintenance &&
+      queue.getActive()?.kind !== "feedback" &&
+      !(
+        record.feedbackRemediation?.status === "no-op" &&
+        record.feedbackRemediation.outcomeReported !== true
+      ) &&
+      !(await refreshCurrentTaskFeedback({
+        project,
+        cardId: observation.cardId,
+        observation,
+        ledgerStore: feedbackLedgerStore,
+        openCode,
+        worktreePath: taskResources(project, observation.cardId).path,
+        signal,
+        ...(emailNotifier === undefined ? {} : { emailNotifier }),
+      }))
+    )
+      return;
+    if (
+      record &&
+      ["ci", "human-feedback"].includes(record.phase) &&
       record.ciRepair?.activePrimaryOperation === undefined &&
       (queue.getActive() === null || queue.getActive()?.kind === "ci-repair")
     ) {
@@ -2360,20 +2381,6 @@ async function runTaskSessionWorkflowAttempt(
       const noOpReportPending =
         record.feedbackRemediation?.status === "no-op" &&
         record.feedbackRemediation.outcomeReported !== true;
-      if (
-        !noOpReportPending &&
-        !(await refreshCurrentTaskFeedback({
-          project,
-          cardId: card.id,
-          observation,
-          ledgerStore: feedbackLedgerStore,
-          openCode,
-          worktreePath,
-          signal,
-          ...(emailNotifier === undefined ? {} : { emailNotifier }),
-        }))
-      )
-        return;
       const pending =
         feedbackLedgerStore
           .read(card.id)

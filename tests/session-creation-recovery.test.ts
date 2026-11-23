@@ -545,5 +545,7 @@ it("retries a new creation intent proven never dispatched but keeps legacy missi
   });
   legacy.inventory([]);
   expect(await legacy.recover()).toBe("waiting");
-  expect(legacy.read().recoveryWait?.reason).toContain("operator evidence");
+  expect(legacy.read().recoveryWait?.reason).toContain(
+    "restore the original finalized execution evidence",
+  );
 });

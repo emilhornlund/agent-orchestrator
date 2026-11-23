@@ -11,6 +11,8 @@ import { TaskMutationQueue } from "../src/task-session/task-mutation-queue.js";
 import { readTerminalPrFence } from "../src/task-session/terminal-pr-fence.js";
 import { feedbackClassificationCheckpoint } from "../src/task-session/feedback-classification-checkpoint.js";
 import { FeedbackClassificationError } from "../src/task-session/classify-current-feedback.js";
+import { OpenCodeClient } from "../src/opencode/opencode-client.js";
+import { actionableFeedbackResponse } from "./support/feedback-classification-response.js";
 import {
   observeActivePullRequest,
   readActivePrArrivals,
@@ -330,6 +332,125 @@ it("does not exhaust feedback after repeatedly restarting before the classifier 
     });
   }
 });
+
+it("archives a completed classification after a crash between ledger commit and checkpoint cleanup", () => {
+  const f = fixture();
+  const use = () =>
+    feedbackClassificationCheckpoint({
+      project: f.project,
+      cardId: "card",
+      pullRequestUrl: f.pr.url,
+      worktreePath: "/owned/worktree",
+    })!;
+  f.authority.run(() => {
+    const episode = use();
+    episode.reserve(["request:revision"]);
+    episode.prepareLedgerCommit(4);
+  });
+  const restarted = new ProjectRunAuthority(f.project.id, f.store, 1, undefined, undefined, "card");
+  const state = () =>
+    f.store.read()!.compatibility["feedback-classification-v1"] as {
+      active: object;
+      archiveHead: string | null;
+    };
+  restarted.run(() => use().finishCommittedCheckpoints(3));
+  expect(Object.values(state().active)).toHaveLength(1);
+  for (let revision = 4; revision < 40; revision++) {
+    restarted.run(() => {
+      use().finishCommittedCheckpoints(revision);
+      expect(state().active).toEqual({});
+      const next = use();
+      next.reserve([`request:${revision}`]);
+      next.prepareLedgerCommit(revision + 1);
+    });
+  }
+  expect(Object.values(state().active)).toHaveLength(1);
+  expect(state().archiveHead).toMatch(/^sha256:/u);
+});
+
+it.each(["configuration", "malformed"] as const)(
+  "reopens an original %s block only after a paced dependency probe",
+  async (failure) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const f = fixture();
+    const project: ProjectConfig = {
+      ...f.project,
+      opencode: {
+        refinement: {},
+        implementation: {},
+        review: { model: "fixture" },
+        remediation: { maxPasses: 1 },
+        commit: {},
+        timeoutMinutes: 1,
+      },
+    };
+    const email = { send: vi.fn(async () => undefined) };
+    const revision = "review:42:original-revision";
+    const use = () =>
+      feedbackClassificationCheckpoint({
+        project,
+        cardId: "card",
+        pullRequestUrl: f.pr.url,
+        worktreePath: "/owned/worktree",
+        emailNotifier: email,
+      })!;
+    let ready = false;
+    const probe = vi.fn(async ({ prompt }: { prompt: string }) => ({
+      exitCode: ready ? 0 : 1,
+      output: ready
+        ? actionableFeedbackResponse(prompt).replaceAll('"actionable"', '"discussion"')
+        : "",
+      errorOutput: "",
+    }));
+    const openCode = new OpenCodeClient(probe);
+    const signal = new AbortController().signal;
+    for (let i = 0; i < (failure === "configuration" ? 1 : 3); i++) {
+      await f.authority.run(async () => {
+        const episode = use();
+        episode.reserve([revision]);
+        await episode.fail(new FeedbackClassificationError(failure));
+      });
+      vi.setSystemTime(Date.now() + 60_000);
+    }
+    const reopen = () =>
+      new ProjectRunAuthority(project.id, f.store, 1, undefined, undefined, "card");
+    let owner = reopen();
+    const before = f.store.read()!.revision;
+    for (let i = 0; i < 1_000; i++) {
+      expect(
+        await owner.run(() => use().selectWithRecovery([revision], openCode, signal)),
+      ).toMatchObject({ status: "blocked", retryAt: expect.any(String) });
+    }
+    expect(f.store.read()!.revision).toBe(before);
+    expect(probe).not.toHaveBeenCalled();
+    expect(email.send).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(Date.now() + 5 * 60_000);
+    await owner.run(() => use().selectWithRecovery([revision], openCode, signal));
+    expect(probe).toHaveBeenCalledOnce();
+    ready = true;
+    owner = reopen();
+    vi.setSystemTime(Date.now() + 10 * 60_000);
+    expect(await owner.run(() => use().selectWithRecovery([revision], openCode, signal))).toEqual([
+      revision,
+    ]);
+    owner.run(() => {
+      const episode = use();
+      episode.reserve([revision]);
+      episode.complete();
+    });
+    const state = f.store.read()!.compatibility["feedback-classification-v1"] as {
+      active: object;
+      archiveHead: string;
+    };
+    expect(state.active).toEqual({});
+    expect(JSON.parse(f.store.readArtifact(state.archiveHead).toString("utf8"))).toMatchObject({
+      kind: "feedback-classification-history",
+      previous: expect.stringMatching(/^sha256:/u),
+      entries: [{ status: "recovered", revisions: [revision] }],
+    });
+    expect(email.send).toHaveBeenCalledTimes(1);
+  },
+);
 
 it("times out a delayed observer without overlapping it or invalidating the writer", async () => {
   vi.useFakeTimers();

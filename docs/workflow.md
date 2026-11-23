@@ -430,9 +430,12 @@ cycle.
 
 Classification failure retains the original PR and feedback ledger. The versioned classification
 checkpoint records source revisions, process evidence, and the retry deadline. Recognized provider
-outages use paced rechecks; invalid output, genuine nonzero results and stopped timeouts have a
-finite per-snapshot allowance. An unknown process outcome prevents redispatch until stopped evidence
-is available. No classification failure counts as a successful empty result.
+outages use paced rechecks. Configuration failures and exhausted allowances use a separate read-only
+classifier probe containing no real review feedback. A verified recovery opens a bounded episode for
+the original revisions; an otherwise continuously healthy probe cannot repeatedly renew an exhausted
+episode. Completed checkpoint history is kept in a content-addressed chain, outside the active map.
+An unknown process outcome prevents redispatch until stopped evidence is available. An explicit wait
+is neither malformed output nor a successful empty classification.
 
 If a feedback remediation produces no repository changes, it is not treated as resolved: the ledger
 retains the unresolved attempted item and the workflow does not publish a correction or claim

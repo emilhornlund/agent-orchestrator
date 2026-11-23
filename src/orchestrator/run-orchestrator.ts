@@ -80,6 +80,7 @@ export function hasDueTaskSessionRecoveryWait(
   const projection = authorityRecord.compatibility[`task-execution-${authorityRecord.cardId}`];
   if (projection === undefined) return false;
   const taskProjection = parseTaskExecutionRecord(projection);
+  if (taskProjection.externalRecovery !== undefined) return true;
   if (canRecheckReviewedPublication(authorityRecord, taskProjection)) return true;
   const recoveryWait = taskProjection.recoveryWait;
   if (getLegacyPublishedGitHubReadRecoveryPhase(authorityRecord, taskProjection) !== null)

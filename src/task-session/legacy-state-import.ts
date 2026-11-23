@@ -476,14 +476,9 @@ export function inventoryLegacyProject(options: {
         | {
             pullRequestNumber?: unknown;
             pullRequestUrl?: unknown;
-            implementationCommit?: unknown;
           }
         | undefined;
-      addIdentity(
-        recovery?.pullRequestNumber,
-        recovery?.pullRequestUrl,
-        recovery?.implementationCommit,
-      );
+      addIdentity(recovery?.pullRequestNumber, recovery?.pullRequestUrl, undefined);
       if (Array.isArray(data.operations))
         for (const operation of data.operations) {
           if (!operation || typeof operation !== "object") continue;
@@ -509,7 +504,6 @@ export function inventoryLegacyProject(options: {
           externalRecovery?: {
             pullRequestNumber?: unknown;
             pullRequestUrl?: unknown;
-            implementationCommit?: unknown;
           };
         },
       ]),
@@ -530,7 +524,7 @@ export function inventoryLegacyProject(options: {
       const recovery = task.externalRecovery;
       const number = taskPr?.number ?? recovery?.pullRequestNumber;
       const url = taskPr?.url ?? recovery?.pullRequestUrl;
-      const head = taskPr?.headSha ?? recovery?.implementationCommit;
+      const head = taskPr?.headSha;
       if (
         (number !== undefined && number !== operation.pullRequest.number) ||
         (url !== undefined && url !== operation.pullRequest.url) ||

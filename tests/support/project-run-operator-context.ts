@@ -1,18 +1,21 @@
-import type { Config, ProjectConfig } from "../config/config.js";
+import type { Config, ProjectConfig } from "../../src/config/config.js";
 import path from "node:path";
-import { canonicalizeGitHubRepository } from "../config/config.js";
+import { canonicalizeGitHubRepository } from "../../src/config/config.js";
 import {
   acquireProjectOwnership,
   type ProjectOwnershipLease,
-} from "../coordination/project-ownership.js";
+} from "../../src/coordination/project-ownership.js";
 import {
   readProjectPinCandidates,
   verifyAndPinProjects,
   type HostProjectPin,
-} from "../coordination/project-registry.js";
-import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
-import { RunRegistry, RunStore } from "../task-session/run-store.js";
-import { projectUsingHostPin, reconcilePinnedProjectAttempt } from "../startup/run-startup.js";
+} from "../../src/coordination/project-registry.js";
+import { ProjectRunAuthority } from "../../src/task-session/project-run-authority.js";
+import { RunRegistry, RunStore } from "../../src/task-session/run-store.js";
+import {
+  projectUsingHostPin,
+  reconcilePinnedProjectAttempt,
+} from "../../src/startup/run-startup.js";
 
 export interface ProjectRunOperatorContext {
   readonly lease: ProjectOwnershipLease;

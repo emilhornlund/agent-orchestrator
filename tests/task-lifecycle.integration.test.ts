@@ -24,6 +24,9 @@ import { CommandRunner, type CommandRunOptions } from "../src/process/command-ru
 import { beginProcessEvidence, configureProcessRuntime } from "../src/process/process-runtime.js";
 import { inspectPublishedFeedbackRecovery } from "../src/orchestrator/published-feedback-recovery.js";
 import { pollProject } from "../src/orchestrator/poll-project.js";
+import { runOrchestrator } from "../src/orchestrator/run-orchestrator.js";
+import { runStartup } from "../src/startup/run-startup.js";
+import * as FeedbackClassifier from "../src/task-session/classify-current-feedback.js";
 import {
   readActivePrObservationHealth,
   withActivePrObservation,
@@ -62,6 +65,7 @@ interface LifecycleScenario {
   terminalReadRaceAt?: number;
   correctionFailure?: boolean;
   feedbackQuality?: "validation" | "unavailable" | "no-op" | "classification-outage";
+  legacyClassifierLayout?: "direct" | "process-executions";
   terminalDuringFeedback?: "active" | "unknown" | "capacity" | "push-rejected";
   preparedReview?: "material" | "unavailable";
   ciReviewHandoffs?: boolean;
@@ -142,6 +146,15 @@ describe("task lifecycle through pollProject", () => {
       quality: "both",
       terminalDuringFeedback: "push-rejected",
     },
+    ...(["direct", "process-executions"] as const).map((legacyClassifierLayout) => ({
+      quality: "both" as const,
+      draft: false,
+      terminal: "merged" as const,
+      destination: "done" as const,
+      ackLoss: false,
+      feedbackQuality: "classification-outage" as const,
+      legacyClassifierLayout,
+    })),
     ...(["validation", "unavailable", "no-op", "classification-outage"] as const).map(
       (feedbackQuality) => ({
         draft: false,
@@ -286,7 +299,7 @@ describe("task lifecycle through pollProject", () => {
       }),
     ),
   ] as const)(
-    "preserves the owned lifecycle (quality=$quality, draft=$draft, terminal=$terminal, ackLoss=$ackLoss, correctionFailure=$correctionFailure, feedbackQuality=$feedbackQuality, terminalDuringFeedback=$terminalDuringFeedback, preparedReview=$preparedReview, ciReviewHandoffs=$ciReviewHandoffs, feedbackReviewRecovery=$feedbackReviewRecovery, ciReviewRecovery=$ciReviewRecovery, ciQuality=$ciQuality, targetMerge=$targetMerge, ciBudget=$ciBudget, preparedValidationFailure=$preparedValidationFailure, publishedReadRecovery=$publishedReadRecovery)",
+    "preserves the owned lifecycle (quality=$quality, draft=$draft, terminal=$terminal, ackLoss=$ackLoss, correctionFailure=$correctionFailure, feedbackQuality=$feedbackQuality, legacyClassifierLayout=$legacyClassifierLayout, terminalDuringFeedback=$terminalDuringFeedback, preparedReview=$preparedReview, ciReviewHandoffs=$ciReviewHandoffs, feedbackReviewRecovery=$feedbackReviewRecovery, ciReviewRecovery=$ciReviewRecovery, ciQuality=$ciQuality, targetMerge=$targetMerge, ciBudget=$ciBudget, preparedValidationFailure=$preparedValidationFailure, publishedReadRecovery=$publishedReadRecovery)",
     async ({
       draft,
       terminal,
@@ -295,6 +308,7 @@ describe("task lifecycle through pollProject", () => {
       terminalReadRaceAt = 2,
       correctionFailure = false,
       feedbackQuality,
+      legacyClassifierLayout,
       terminalDuringFeedback,
       quality,
       preparedReview,
@@ -2419,6 +2433,122 @@ describe("task lifecycle through pollProject", () => {
         const originalValidationCycle = store.read("first")!.validationRepair?.cycleId;
         firstPr!.body += "\n\nHuman-only deployment note.";
         correctionFeedback = true;
+        if (legacyClassifierLayout) {
+          const retained = activeAuthority!;
+          const attemptId = retained.store.attemptId;
+          const canonical = retained.store.read()!;
+          const worktreePath = path.join(worktrees, firstWorktreeName);
+          // ec180cc threw this untyped error from the classifier on a nonzero
+          // process result. Let the real worker handle the failure at that boundary.
+          const legacy = vi
+            .spyOn(FeedbackClassifier, "classifyCurrentFeedback")
+            .mockImplementationOnce(async () => {
+              const root = new TaskExecutionStore(
+                contextRoot,
+                project,
+                retained,
+              ).processExecutionDirectory("first")!;
+              const evidence = beginProcessEvidence(
+                "opencode run",
+                worktreePath,
+                [],
+                legacyClassifierLayout === "direct" ? root : undefined,
+              );
+              evidence.finish("nonzero", { exitCode: 1, treeStopped: true });
+              throw new Error(
+                "Human feedback classification unavailable; current requests retained",
+              );
+            });
+          const legacyStop = new AbortController();
+          let ready = false;
+          const warn = Logger.prototype.error;
+          const capture = vi.spyOn(Logger.prototype, "error").mockImplementation(function (
+            this: Logger,
+            message: string,
+          ) {
+            warn.call(this, message);
+            if (
+              message.includes(
+                "Human feedback classification unavailable; current requests retained",
+              )
+            ) {
+              ready = true;
+              legacyStop.abort();
+            }
+          });
+          await runOrchestrator(
+            trello,
+            git,
+            github,
+            openCode,
+            commands,
+            orchestrationConfig,
+            legacyStop.signal,
+            undefined,
+            undefined,
+            new Map([
+              [project.id, { authority: retained, pinned, projectLease: lease, coordinationRoot }],
+            ]),
+          );
+          capture.mockRestore();
+          legacy.mockRestore();
+          expect(ready).toBe(true);
+          expect(store.read("first")).toMatchObject({
+            phase: "human-feedback",
+            primarySessionId: sessionId,
+            pullRequest: { headSha: originalHead },
+          });
+          expect(retained.store.read()!.budgets).toEqual(canonical.budgets);
+          expect(
+            retained.store.read()!.compatibility["feedback-classification-v1"],
+          ).toBeUndefined();
+          expect(feedbackPrimaryCorrections).toBe(0);
+          expect(lists.get("first")).toBe("review");
+          await lease.release();
+
+          const resumed = new AbortController();
+          let resumedOwnerReady = false;
+          classifierUnavailable = false;
+          const deadline = setTimeout(() => resumed.abort(), 15_000);
+          const timer = setInterval(() => {
+            if (
+              resumedOwnerReady &&
+              !resumed.signal.aborted &&
+              lists.get("first") === "review" &&
+              store.read("first")?.pullRequest?.headSha !== originalHead &&
+              feedbackPrimaryCorrections === 1
+            )
+              resumed.abort();
+          }, 30);
+          try {
+            await runStartup(
+              orchestrationConfig,
+              { trello, git, github, opencode: openCode, commands },
+              resumed.signal,
+              {
+                validateGitHubCli: async () => undefined,
+                validateProjectTrello: async () => undefined,
+                validateProjectGitHub: async () => undefined,
+                runOrchestrator: (...args) => {
+                  const resumedOwner = args[9]?.get(project.id)?.authority;
+                  expect(resumedOwner?.store.attemptId).toBe(attemptId);
+                  expect(resumedOwner?.store.read()?.budgets).toEqual(canonical.budgets);
+                  authorities.set("first", resumedOwner!);
+                  resumedOwnerReady = true;
+                  return runOrchestrator(...args);
+                },
+              },
+            );
+          } finally {
+            clearTimeout(deadline);
+            clearInterval(timer);
+          }
+          expect(feedbackPrimaryCorrections).toBe(1);
+          expect(prs.size).toBe(1);
+          expect(requests).toEqual([firstBranch]);
+          expect(lists.get("first")).toBe("review");
+          return;
+        }
         if (feedbackQuality === "classification-outage") {
           const authority = activeAuthority!;
           const attemptId = authority.store.attemptId;
@@ -2472,11 +2602,10 @@ describe("task lifecycle through pollProject", () => {
           expect(feedbackPrimaryCorrections).toBe(0);
           expect(lists.get("first")).toBe("review");
           expect(store.read("first")?.pullRequest?.headSha).toBe(originalHead);
-          expect(
-            Object.values(
-              authority.store.read()!.compatibility["feedback-classification-v1"] as object,
-            ),
-          ).toMatchObject([
+          const retainedClassification = authority.store.read()!.compatibility[
+            "feedback-classification-v1"
+          ] as { active: Record<string, unknown> };
+          expect(Object.values(retainedClassification.active)).toMatchObject([
             { status: "waiting", classification: "provider-unavailable", failures: 0, outages: 1 },
           ]);
           activeAuthority = await ProjectRunAuthority.resumeAttempt({

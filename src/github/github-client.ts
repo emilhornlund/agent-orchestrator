@@ -1083,11 +1083,13 @@ const defaultRunGitHubCommand: RunGitHubCommand = async (
       environment?.GITHUB_TOKEN,
       ...runtime.secretValues,
     ].filter((value): value is string => value !== undefined);
+    let processExecutionId: string | undefined;
     const rejectBeforeSpawn = (error: unknown) =>
-      reject(isGitHubWrite(args) ? githubMutationNotDispatched(error) : error);
+      reject(isGitHubWrite(args) ? githubMutationNotDispatched(error, processExecutionId) : error);
     let execution: ReturnType<typeof beginProcessEvidence>;
     try {
       execution = beginProcessEvidence(`gh ${args.join(" ")}`, cwd, environmentSecrets);
+      processExecutionId = execution.executionId;
     } catch (error) {
       rejectBeforeSpawn(error);
       return;

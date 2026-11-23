@@ -594,8 +594,12 @@ export class TaskExecutionStore {
   }
 
   /** Verify the fixed child-result artifact against its finalized metadata. */
-  readProcessResult(cardId: string, executionId: string): unknown | null {
-    const raw = this.readProcessExecution(cardId, executionId, "process-executions");
+  readProcessResult(
+    cardId: string,
+    executionId: string,
+    layout: "direct" | "process-executions" = "process-executions",
+  ): unknown | null {
+    const raw = this.readProcessExecution(cardId, executionId, layout);
     if (!raw || typeof raw !== "object" || !("resultArtifact" in raw)) return null;
     const ref = raw.resultArtifact;
     if (
@@ -610,7 +614,12 @@ export class TaskExecutionStore {
       throw new Error("Invalid process result reference");
     const root = this.processExecutionDirectory(cardId);
     if (!root) return null;
-    const file = path.join(root, "process-executions", executionId, "result.json");
+    const file = path.join(
+      root,
+      ...(layout === "process-executions" ? [layout] : []),
+      executionId,
+      "result.json",
+    );
     const stat = fs.lstatSync(file);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 700 * 1024)
       throw new Error("Unsafe process result artifact");

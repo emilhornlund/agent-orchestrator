@@ -264,8 +264,9 @@ export async function refreshCurrentTaskFeedback(options: {
   });
   let incoming: FeedbackLedgerEntry[];
   try {
-    checkpoint?.assertStopped();
-    incoming = await classifyCurrentFeedback({
+    checkpoint?.finishCommittedCheckpoints(previous?.revision ?? 0);
+    if (checkpoint?.assertStopped()) return false;
+    const result = await classifyCurrentFeedback({
       ...options,
       pullRequestUrl: options.observation.pullRequestUrl,
       incoming: toFeedbackEntries(options.observation),
@@ -276,15 +277,19 @@ export async function refreshCurrentTaskFeedback(options: {
         : {
             singleExecution: true,
             beforeDispatch: checkpoint.reserve,
-            selectRevisions: checkpoint.selectRevisions,
+            selectRevisions: (revisions: readonly string[]) =>
+              checkpoint.selectWithRecovery(revisions, options.openCode, options.signal),
             onExecutionPrepared: checkpoint.bind,
           }),
     });
+    if (!Array.isArray(result)) return false;
+    incoming = result;
   } catch (error) {
     if (!checkpoint || !(error instanceof FeedbackClassificationError)) throw error;
     await checkpoint.fail(error);
     return false;
   }
+  checkpoint?.prepareLedgerCommit((previous?.revision ?? 0) + 1);
   if (previous === null) options.ledgerStore.create(options.cardId, incoming);
   else
     reconcileFeedbackRound({

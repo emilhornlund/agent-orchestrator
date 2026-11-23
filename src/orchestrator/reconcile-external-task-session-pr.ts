@@ -9,6 +9,107 @@ import { transitionTaskExecutionRecord } from "../task-session/task-execution-tr
 import { establishCiCheckExpectations } from "../github/ci-check-expectations.js";
 import { evaluateCiChecks } from "../github/evaluate-ci-checks.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import { isConclusiveOperationResolution } from "../task-session/run-record.js";
+import {
+  readOwnedProcessInventory,
+  processInventoryEntryStopped,
+  journalProvesGitHubProcessNeverStarted,
+} from "../task-session/owned-process-inventory.js";
+import { startupStopProofForExecution } from "../task-session/startup-stop-attestation.js";
+import { TaskExecutionStore as ExecutionStore } from "../task-session/task-execution-store.js";
+import { TaskMutationQueue as MutationQueue } from "../task-session/task-mutation-queue.js";
+import { logger } from "../logging/logger.js";
+import { sanitizeControlledText } from "../security/redact-secrets.js";
+import { z } from "zod";
+
+const externalRecoveryWait = z.strictObject({ reason: z.string(), retryAt: z.string().datetime() });
+
+/** Resume only an association explicitly verified and persisted by a previous
+ * release. Never discover an association by branch name or patch similarity. */
+export async function resumeRetainedExternalRecovery(options: {
+  authority: ProjectRunAuthority;
+  project: ProjectConfig;
+  trello: TrelloClient;
+  git: GitClient;
+  github: GitHubClient;
+}): Promise<boolean> {
+  const { authority, project, trello, git, github } = options;
+  const cardId = authority.cardId;
+  if (!cardId) return false;
+  const taskStore = new ExecutionStore(authority.store.storageRoot, project, authority);
+  const task = taskStore.read(cardId);
+  const recovery = task?.externalRecovery;
+  if (!task || !recovery) return false;
+  const key = "retained-external-pr-recovery-wait";
+  const prior = authority.read(key, externalRecoveryWait.parse);
+  if (prior && Date.now() < Date.parse(prior.retryAt)) return true;
+  try {
+    const run = authority.store.assertCurrentLease(authority.ownerGeneration);
+    if (!run.pendingOperations.every(isConclusiveOperationResolution))
+      throw new Error("External recovery awaits conclusive mutation readback");
+    const entries = readOwnedProcessInventory(taskStore, cardId);
+    const boundIds = [
+      task.setup?.executionId,
+      task.sessionCreationExecutionId,
+      ...Object.values(task.primaryOperations ?? {}).map(
+        (operation) => operation.processExecutionId,
+      ),
+    ].filter((id): id is string => id !== undefined);
+    if (
+      entries.size === 0 ||
+      boundIds.some((id) => !entries.has(id)) ||
+      [...entries.values()].some(
+        ({ file, metadata }) =>
+          !processInventoryEntryStopped(metadata) &&
+          !journalProvesGitHubProcessNeverStarted(authority, metadata) &&
+          !startupStopProofForExecution({ authority, task, file, metadata, adopt: false }),
+      )
+    )
+      throw new Error("External recovery awaits stopped-process evidence for the original attempt");
+    const currentList = (await trello.getCard(cardId)).idList;
+    if (
+      ![
+        project.trello.workingListId,
+        project.trello.reviewListId,
+        project.trello.doneListId,
+      ].includes(currentList)
+    )
+      throw new Error(
+        "External recovery awaits the original Working, Human Review or Done card membership",
+      );
+    await reconcileExternalTaskSessionPullRequest({
+      project,
+      association: {
+        projectId: project.id,
+        cardId,
+        implementationCommit: recovery.implementationCommit,
+        recoveryBranch: recovery.recoveryBranch,
+        pullRequestNumber: recovery.pullRequestNumber,
+      },
+      github,
+      git,
+      trello,
+      taskStore,
+      queue: new MutationQueue(authority.store.storageRoot, project, authority),
+      readTrelloListId: async () => (await trello.getCard(cardId)).idList,
+      doneListId: project.trello.doneListId,
+      release: false,
+    });
+  } catch (error) {
+    const reason = sanitizeControlledText(
+      error instanceof Error ? error.message : "External recovery unavailable",
+    ).slice(0, 2000);
+    const wait = { reason, retryAt: new Date(Date.now() + 60_000).toISOString() };
+    authority.mutate(
+      key,
+      wait,
+      () => ({ value: wait, result: undefined }),
+      externalRecoveryWait.parse,
+    );
+    if (reason !== prior?.reason) logger.child({ projectId: project.id, cardId }).warn(reason);
+  }
+  return true;
+}
 
 export interface ExternalTaskSessionRecoveryAssociation {
   projectId: string;
@@ -38,6 +139,7 @@ export async function reconcileExternalTaskSessionPullRequest(options: {
   trello: TrelloClient;
   readTrelloListId: () => Promise<string>;
   doneListId: string;
+  release?: boolean;
 }): Promise<void> {
   const { project, association, taskStore, queue } = options;
   if (
@@ -128,7 +230,7 @@ export async function reconcileExternalTaskSessionPullRequest(options: {
             trelloVerifiedAt: verifiedAt,
           },
         });
-        await authority.releaseVerifiedTerminal();
+        if (options.release !== false) await authority.releaseVerifiedTerminal();
       }
       return;
     }
@@ -359,7 +461,7 @@ export async function reconcileExternalTaskSessionPullRequest(options: {
             },
           },
         );
-        await authority.releaseVerifiedTerminal();
+        if (options.release !== false) await authority.releaseVerifiedTerminal();
       }
     }
 

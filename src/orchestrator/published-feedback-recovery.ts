@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import path from "node:path";
 import type { ProjectConfig } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
@@ -19,6 +18,11 @@ import { assertTaskResourceProvenance, runTaskResources } from "../task-session/
 import type { TrelloCard } from "../trello/trello-client.js";
 import { readPendingCommitState, readTrustedCommitState } from "./trusted-commit-state.js";
 import { readTerminalPrFence } from "../task-session/terminal-pr-fence.js";
+import {
+  readOwnedProcessInventory,
+  processInventoryEntryStopped,
+  journalProvesGitHubProcessNeverStarted,
+} from "../task-session/owned-process-inventory.js";
 
 /** Narrow recovery for an idle, published classification failure. This does not
  * authorize resuming a failed mutation or an unknown writer. */
@@ -74,51 +78,30 @@ export async function inspectPublishedFeedbackRecovery(options: {
   assertTaskResourceProvenance(run);
   assertOwnedTaskWorktreePath(project, resources.path);
   const store = new TaskExecutionStore(run.pinned.storageRoot, project, authority);
-  const directory = path.join(store.processExecutionDirectory(card.id)!, "process-executions");
-  const stat = fs.lstatSync(directory, { throwIfNoEntry: false });
-  if (!stat?.isDirectory() || stat.isSymbolicLink())
+  const executions = readOwnedProcessInventory(store, card.id);
+  if (executions.size === 0)
     throw new Error("Published feedback recovery is missing process termination evidence");
-  const executions = fs.readdirSync(directory);
-  if (executions.length === 0)
-    throw new Error("Published feedback recovery is missing process termination evidence");
-  for (const id of executions) {
-    const evidence = store.readProcessExecution(card.id, id, "process-executions");
+  const boundIds = [
+    task.setup?.executionId,
+    task.sessionCreationExecutionId,
+    ...Object.values(task.primaryOperations ?? {}).map((operation) => operation.processExecutionId),
+  ].filter((id): id is string => id !== undefined);
+  if (boundIds.some((id) => !executions.has(id)))
+    throw new Error("Published feedback recovery lacks bound process evidence");
+  for (const { file, metadata } of executions.values()) {
     if (
-      !evidence ||
-      typeof evidence !== "object" ||
-      !("executionId" in evidence) ||
-      evidence.executionId !== id ||
-      !("status" in evidence)
-    )
-      throw new Error("Published feedback recovery contains invalid process metadata");
-    const stopped =
-      evidence.status === "not-dispatched" ||
-      ("treeStopped" in evidence &&
-        evidence.treeStopped === true &&
-        [
-          "success",
-          "nonzero",
-          "timeout",
-          "interrupted",
-          "evidence-failure",
-          "spawn-failure",
-        ].includes(String(evidence.status))) ||
-      (evidence.status === "spawn-failure" &&
-        "dispatchState" in evidence &&
-        evidence.dispatchState === "not-dispatched" &&
-        !("pid" in evidence));
-    if (
-      !stopped &&
+      !processInventoryEntryStopped(metadata) &&
+      !journalProvesGitHubProcessNeverStarted(authority, metadata) &&
       !startupStopProofForExecution({
         adopt: false,
         authority,
         task,
-        file: path.join(directory, id, "execution.json"),
-        metadata: evidence as Record<string, unknown>,
+        file,
+        metadata,
       })
     )
       throw new Error(
-        `Published feedback recovery lacks verified process termination; diagnostics: process-executions/${id}/execution.json`,
+        `Published feedback recovery lacks verified process termination; diagnostics: ${path.relative(run.pinned.storageRoot, file)}`,
       );
   }
   const head = task.pullRequest.headSha;

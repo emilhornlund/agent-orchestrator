@@ -23,6 +23,7 @@ import { WorkflowError } from "./workflow-error.js";
 import type { TrelloCard, TrelloClient } from "../trello/trello-client.js";
 import type { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { reconcileWorkflowMutations } from "./reconcile-workflow-mutations.js";
+import { resumeRetainedExternalRecovery } from "./reconcile-external-task-session-pr.js";
 import { withActivePrObservation, observeActivePullRequest } from "./active-pr-observation.js";
 import {
   readTerminalPrFence,
@@ -100,6 +101,11 @@ export async function pollProject(
       drainNotifications(project.id, emailNotifier, (message) =>
         logger.child({ projectId: project.id }).warn(message),
       );
+      if (
+        authority &&
+        (await resumeRetainedExternalRecovery({ authority, project, trello, git, github }))
+      )
+        return;
       if (authority)
         await observeActivePullRequest({
           project,

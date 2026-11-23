@@ -698,6 +698,11 @@ export async function resumeInitialPublication(options: {
                     classification: error.classification,
                   }
                 : {}),
+              ...(proof &&
+              error instanceof GitHubMutationNotDispatchedError &&
+              error.processExecutionId
+                ? { processExecutionId: error.processExecutionId }
+                : {}),
               ...(proof && error instanceof TrelloRequestError
                 ? { operation: error.operation, status: error.status }
                 : {}),

@@ -217,6 +217,50 @@ it("recovers once from the observed combined actionability token without weakeni
 });
 
 const executionId = "5125c222-01d9-4937-af6d-2a72e6a2c040";
+it("returns a blocked wait without launching a classifier when every revision is withheld", async () => {
+  const run = vi.fn<RunOpenCode>();
+  const waiting = {
+    status: "blocked" as const,
+    retryAt: "2026-11-23T19:00:00.000Z",
+    reason: "Dependency probe required",
+  };
+  const result = await classifyCurrentFeedback({
+    project,
+    incoming: [entry],
+    previous: [],
+    worktreePath: "/tmp",
+    openCode: new OpenCodeClient(run),
+    signal: new AbortController().signal,
+    selectRevisions: () => waiting,
+  });
+  expect(result).toEqual(waiting);
+  expect(run).not.toHaveBeenCalled();
+});
+
+it("preserves a task-wide stop blocker even with an unchanged classified pending request", async () => {
+  const pending = { ...entry, status: "pending" as const };
+  const run = vi.fn<RunOpenCode>();
+  const wait = {
+    status: "blocked" as const,
+    taskWide: true as const,
+    retryAt: null,
+    reason: "Unknown process termination",
+  };
+  const selection = vi.fn(() => wait);
+  expect(
+    await classifyCurrentFeedback({
+      project,
+      incoming: [pending],
+      previous: [pending],
+      worktreePath: "/tmp",
+      openCode: new OpenCodeClient(run),
+      signal: new AbortController().signal,
+      selectRevisions: selection,
+    }),
+  ).toEqual(wait);
+  expect(selection).toHaveBeenCalledWith([]);
+  expect(run).not.toHaveBeenCalled();
+});
 it("compares a deferred edit against the prior classified revision", async () => {
   const edited = {
     ...entry,
@@ -270,7 +314,10 @@ it("can reuse a verified pending request while another source remains unavailabl
     signal: new AbortController().signal,
     selectRevisions: () => [],
   });
-  expect(result.map(({ actionability }) => actionability)).toEqual(["actionable", "unclassified"]);
+  expect(result).toMatchObject([
+    { actionability: "actionable" },
+    { actionability: "unclassified" },
+  ]);
   expect(run).not.toHaveBeenCalled();
 });
 

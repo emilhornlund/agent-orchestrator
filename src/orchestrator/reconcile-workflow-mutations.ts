@@ -1,4 +1,18 @@
 import fs from "node:fs";
+import {
+  readOwnedProcessInventory,
+  processInventoryEntryStopped,
+  journalProvesGitHubProcessNeverStarted,
+} from "../task-session/owned-process-inventory.js";
+import { startupStopProofForExecution } from "../task-session/startup-stop-attestation.js";
+import {
+  terminalStopProofValid,
+  markTerminalWritersStopped,
+  otherTaskWriterIsActive,
+} from "../task-session/terminal-pr-fence.js";
+import { TaskExecutionStore } from "../task-session/task-execution-store.js";
+import { logger } from "../logging/logger.js";
+import { sanitizeControlledText } from "../security/redact-secrets.js";
 import { z } from "zod";
 import { isAbandonedRefinementWrite } from "../refinement/refinement-card-guard.js";
 import {
@@ -135,6 +149,56 @@ export async function reconcileWorkflowMutations(options: {
       .parse(JSON.parse(fs.readFileSync(reference.path, "utf8")));
     const terminal = terminalPrFenceFromRun(run);
     const terminalSuperseded = terminal !== null && !terminalMutationAllowed(run, request);
+    if (terminal?.stoppedAt && !terminalSuperseded && !terminalStopProofValid(authority, true)) {
+      // Older stop proofs covered only managed children. Upgrade the proof
+      // before replay can reach dispatch, including an intent persisted before
+      // shutdown. A pending effect cannot be used as proof of stopped work.
+      const waitKey = "terminal-process-proof-upgrade-wait";
+      const schema = z.strictObject({ reason: z.string(), retryAt: z.iso.datetime() });
+      const prior = authority.read(waitKey, schema.parse);
+      if (prior && Date.now() < Date.parse(prior.retryAt)) return true;
+      try {
+        if (otherTaskWriterIsActive(authority)) throw new Error("Another task writer is active");
+        const tasks = new TaskExecutionStore(run.pinned.storageRoot, options.project, authority);
+        const task = tasks.read(run.cardId);
+        if (!task) throw new Error("Missing terminal task projection");
+        const inventory = readOwnedProcessInventory(tasks, run.cardId);
+        if (
+          [...inventory.values()].some(
+            ({ file, metadata }) =>
+              !processInventoryEntryStopped(metadata) &&
+              !journalProvesGitHubProcessNeverStarted(authority, metadata) &&
+              !startupStopProofForExecution({ authority, task, file, metadata, adopt: false }),
+          )
+        )
+          throw new Error("A retained process lacks authoritative stopped evidence");
+        const proof = authority.store.writeArtifact(
+          Buffer.from(
+            JSON.stringify({
+              kind: "task-processes-stopped",
+              cardId: run.cardId,
+              inventoryVersion: 2,
+              checkedEvidenceRecords: inventory.size,
+              executionIds: [...inventory.keys()],
+            }),
+          ),
+          "application/json",
+        );
+        markTerminalWritersStopped(authority, proof.id);
+        if (prior) authority.remove(waitKey);
+      } catch (error) {
+        const reason = sanitizeControlledText(
+          error instanceof Error ? error.message : "Process evidence could not be read",
+        ).slice(0, 2000);
+        const wait = { reason, retryAt: new Date(Date.now() + 60_000).toISOString() };
+        authority.mutate(waitKey, wait, () => ({ value: wait, result: undefined }), schema.parse);
+        if (prior?.reason !== reason)
+          logger
+            .child({ projectId: run.projectId, cardId: run.cardId })
+            .warn(`Terminal mutation awaits upgraded stop proof: ${reason}`);
+        return true;
+      }
+    }
     if (
       entry.mutation?.dispatches.length === 0 &&
       (terminalSuperseded ||

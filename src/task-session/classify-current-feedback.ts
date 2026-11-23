@@ -75,7 +75,14 @@ export class FeedbackClassificationError extends Error {
 /** Semantic judgments belong to OpenCode. Only exact source/actor identities,
  * complete response coverage, and monotonically increasing request revisions are
  * enforced here. Timestamp/head-only changes never renew an exhausted request. */
-export async function classifyCurrentFeedback(options: {
+export interface FeedbackClassificationWait {
+  status: "waiting" | "blocked";
+  reason: string;
+  retryAt: string | null;
+  taskWide?: true;
+}
+
+interface ClassificationOptions {
   project: ProjectConfig;
   worktreePath: string;
   incoming: readonly FeedbackLedgerEntry[];
@@ -85,10 +92,27 @@ export async function classifyCurrentFeedback(options: {
   openCode: OpenCodeClient;
   signal: AbortSignal;
   beforeDispatch?: (revisions: readonly string[]) => void;
-  selectRevisions?: (revisions: readonly string[]) => readonly string[];
+  selectRevisions?:
+    | undefined
+    | ((
+        revisions: readonly string[],
+      ) =>
+        | readonly string[]
+        | FeedbackClassificationWait
+        | Promise<readonly string[] | FeedbackClassificationWait>);
   onExecutionPrepared?: OpenCodeRunOptions["onExecutionPrepared"];
   singleExecution?: boolean;
-}): Promise<FeedbackLedgerEntry[]> {
+}
+
+export function classifyCurrentFeedback(
+  options: Omit<ClassificationOptions, "selectRevisions"> & { selectRevisions?: undefined },
+): Promise<FeedbackLedgerEntry[]>;
+export function classifyCurrentFeedback(
+  options: ClassificationOptions,
+): Promise<FeedbackLedgerEntry[] | FeedbackClassificationWait>;
+export async function classifyCurrentFeedback(
+  options: ClassificationOptions,
+): Promise<FeedbackLedgerEntry[] | FeedbackClassificationWait> {
   const key = (entry: FeedbackLedgerEntry) => `${entry.kind}:${entry.id}`;
   const previous = new Map(options.previous.map((entry) => [key(entry), entry]));
   const classifiedHistory = new Map(
@@ -137,7 +161,10 @@ export async function classifyCurrentFeedback(options: {
   const revisionKey = (entry: FeedbackLedgerEntry) =>
     `${key(entry)}:${feedbackSourceRevision(entry)}`;
   const revisions = candidates.map(revisionKey);
-  const selected = new Set(options.selectRevisions?.(revisions) ?? revisions);
+  const selection = (await options.selectRevisions?.(revisions)) ?? revisions;
+  const wait = "status" in selection ? selection : undefined;
+  if (wait?.taskWide) return wait;
+  const selected = new Set("status" in selection ? [] : selection);
   const withheld = new Set(
     candidates.filter((entry) => !selected.has(revisionKey(entry))).map(key),
   );
@@ -199,7 +226,9 @@ export async function classifyCurrentFeedback(options: {
       );
     });
     if (hasVerifiedPending) return reconcileSupersessions(options.incoming.map(retained));
-    throw new FeedbackClassificationError("malformed");
+    return (
+      wait ?? { status: "waiting", reason: "No classification revision is eligible", retryAt: null }
+    );
   }
   const prompt = [
     "Classify current human pull-request feedback. Do not modify repository files.",
