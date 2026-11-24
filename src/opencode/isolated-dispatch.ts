@@ -92,6 +92,14 @@ export function isolatedOpenCodeDispatch(
   // PATH. Exposing bin alone makes existing bootstrap/config files disappear,
   // causing an attempted .gitignore write on the read-only synthetic parent.
   read(home && path.join(home, ".opencode"));
+  // Corepack shims need the pre-provisioned package-manager cache even offline.
+  // Expose only the default cache, not the surrounding home/cache directories.
+  const corepackCache = home && path.join(home, ".cache/node/corepack");
+  if (corepackCache && fs.existsSync(corepackCache)) {
+    if (fs.realpathSync(corepackCache) !== corepackCache)
+      throw new Error("Corepack cache must not resolve outside its configured location");
+    read(corepackCache);
+  }
   read(environment.OPENCODE_CONFIG);
   read(environment.OPENCODE_CONFIG_DIR ?? (config && path.join(config, "opencode")));
   read(environment.GOOGLE_APPLICATION_CREDENTIALS);
