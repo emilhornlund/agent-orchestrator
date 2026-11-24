@@ -141,6 +141,8 @@ async function readActivePullRequest(
   } | null = null;
   let baseRelation: "current" | "behind" | "diverged" | "uncertain" = "uncertain";
   if (pr.state === "OPEN") {
+    const observedHeadSha = pr.headRefOid;
+    const observedPullRequestUrl = pr.url;
     // These reads are independent and bound to the same initial PR head.
     // A second PR read below rejects any snapshot that changed mid-flight.
     const [feedback, comments, ci, relation] = await Promise.all([
@@ -148,13 +150,16 @@ async function readActivePullRequest(
         github.findChangesRequestedPullRequest(lookup, true),
       ),
       observedRead(options, "conversation comments", () =>
-        github.getPullRequestConversationComments({ ...lookup, pullRequestUrl: pr.url }),
+        github.getPullRequestConversationComments({
+          ...lookup,
+          pullRequestUrl: observedPullRequestUrl,
+        }),
       ),
       observedRead(options, "CI observations", () =>
         github.getCiObservations({
           ...lookup,
           defaultBranch: project.repository.defaultBranch,
-          headSha: pr.headRefOid!,
+          headSha: observedHeadSha,
           pullRequestNumber: task.pullRequest!.number,
           requireAvailableReads: true,
         }),
@@ -164,7 +169,7 @@ async function readActivePullRequest(
             github.comparePullRequestHeadToBase({
               ...lookup,
               baseBranch: project.repository.defaultBranch,
-              headSha: pr.headRefOid!,
+              headSha: observedHeadSha,
               requireAvailableReads: true,
             }),
           )
