@@ -65,6 +65,12 @@ jobs:
             exit 1
           fi
 
+      - name: Diagnose Prettier differences
+        run: |
+          yarn prettier --write tests/pr-maintenance-resource-identity.test.ts
+          git diff -- tests/pr-maintenance-resource-identity.test.ts
+          git restore -- tests/pr-maintenance-resource-identity.test.ts
+
       - name: Check formatting
         run: yarn format:check
 
