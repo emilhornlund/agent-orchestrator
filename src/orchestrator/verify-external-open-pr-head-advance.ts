@@ -38,7 +38,9 @@ export async function verifyExternalOpenPrHeadAdvance(options: {
   ].join(":");
   if (reportedAdvances.has(identity)) return;
   reportedAdvances.add(identity);
-  logger.child({ projectId: options.project.id, cardId: options.cardId }).warn(
-    `Owned open PR head advanced externally from ${options.recordedHeadSha} to ${options.observedHeadSha}; original task retained, automated writes paused pending safe reconciliation`,
-  );
+  logger
+    .child({ projectId: options.project.id, cardId: options.cardId })
+    .warn(
+      `Owned open PR head advanced externally from ${options.recordedHeadSha} to ${options.observedHeadSha}; original task retained, automated writes paused pending safe reconciliation`,
+    );
 }
