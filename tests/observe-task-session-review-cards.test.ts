@@ -143,6 +143,51 @@ function fixture() {
 }
 
 describe("observeTaskSessionReviewCards", () => {
+  it("retains the previous head when a human adds a verified merge commit to an open PR", async () => {
+    const f = fixture();
+    const prior = f.store.read("card-one")!;
+    const nextHead = "c".repeat(40);
+    f.headByCard.set("card-one", nextHead);
+    vi.mocked(f.github.getPullRequestCommitShas).mockResolvedValue([
+      prior.pullRequest!.headSha!,
+      nextHead,
+    ]);
+    vi.mocked(f.github.isAncestorCommit).mockResolvedValue(true);
+
+    const result = await observeTaskSessionReviewCards({
+      project: f.project,
+      cards: f.cards,
+      taskRecordStore: f.store,
+      github: f.github,
+    });
+
+    expect(result.map((item) => item.cardId)).toEqual(["card-two"]);
+    expect(f.store.read("card-one")).toEqual(prior);
+    expect(f.github.getCiObservations).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a rewritten open PR head rather than silently adopting it", async () => {
+    const f = fixture();
+    const prior = f.store.read("card-one")!;
+    const nextHead = "c".repeat(40);
+    f.headByCard.set("card-one", nextHead);
+    vi.mocked(f.github.getPullRequestCommitShas).mockResolvedValue([
+      prior.pullRequest!.headSha!,
+      nextHead,
+    ]);
+    vi.mocked(f.github.isAncestorCommit).mockResolvedValue(false);
+
+    await expect(
+      observeTaskSessionReviewCards({
+        project: f.project,
+        cards: [f.cards[0]!],
+        taskRecordStore: f.store,
+        github: f.github,
+      }),
+    ).rejects.toThrow("not descended");
+    expect(f.store.read("card-one")).toEqual(prior);
+  });
+
   it.each(["missing", "queued", "discovery unavailable"])(
     "retains the observation deadline across polling and restart for %s CI",
     async (kind) => {
