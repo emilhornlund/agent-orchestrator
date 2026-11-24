@@ -69,7 +69,7 @@ async function observedRead<T>(
 
 export async function observeActivePullRequest(
   options: ActivePrObservationOptions,
-): Promise<void | "superseded"> {
+): Promise<void | "superseded" | "external-head"> {
   const id = options.authority.attemptScopeKey;
   if (inFlight.has(id)) return "superseded";
   inFlight.add(id);
@@ -82,7 +82,7 @@ export async function observeActivePullRequest(
 
 async function readActivePullRequest(
   options: ActivePrObservationOptions,
-): Promise<void | "superseded"> {
+): Promise<void | "superseded" | "external-head"> {
   const { project, github, authority } = options;
   authority.assertHeld();
   if (!authority.cardId || !project.contextRoot) return;
@@ -132,7 +132,7 @@ async function readActivePullRequest(
     );
     // No new-head CI or feedback mutations may be queued against the
     // previous publication checkpoint. Terminal PR observation remains live.
-    return "superseded";
+    return "external-head";
   }
   let current: {
     feedback: Awaited<ReturnType<GitHubClient["findChangesRequestedPullRequest"]>>;
@@ -325,7 +325,7 @@ async function readActivePullRequest(
 
 const healthKey = "active-pr-observation-health-v1";
 const healthSchema = z.strictObject({
-  status: z.enum(["healthy", "degraded", "recovering"]),
+  status: z.enum(["healthy", "degraded", "recovering", "external-head-wait"]),
   failures: z.number().int().min(0).max(16),
   retryAt: z.string().datetime().nullable(),
   identity: z.string().optional(),
@@ -423,6 +423,19 @@ export async function withActivePrObservation<T>(
                 }
               });
               if (result === "superseded") return;
+              if (result === "external-head") {
+                // Keep monitoring terminal PR outcomes but avoid a rapid loop
+                // against a human-advanced head that has not been adopted.
+                save({
+                  status: "external-head-wait",
+                  failures: 0,
+                  retryAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+                });
+                return;
+              }
+              if (health?.status === "external-head-wait") {
+                save({ status: "healthy", failures: 0, retryAt: null });
+              }
               if (health?.failures) {
                 // One successful read between timeouts is not a recovery.
                 // Keep failure backoff and the original diagnostic identity
