@@ -53,6 +53,7 @@ limits and the separately tested automatic interrupted-creation recovery cases.
 | -------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
 | Workflow lifecycle, Trello states, refinement, and review feedback   | [Workflow](docs/workflow.md)                                                    |
 | `config.yaml`, environment variables, defaults, and validation       | [Configuration](docs/configuration.md)                                          |
+| GitHub App setup, permissions, and troubleshooting                   | [GitHub App](docs/github-app.md)                                                |
 | Reconciliation, restart recovery, retries, and ambiguous state       | [Recovery](docs/recovery.md)                                                    |
 | Worktree safety, publication, notifications, logging, and operations | [Operations](docs/operations.md)                                                |
 | Agreed product behavior and stable acceptance criteria               | [Requirements](docs/requirements.md) and [Specification](docs/specification.md) |

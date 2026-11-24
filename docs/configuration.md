@@ -457,6 +457,10 @@ publication, not approval. Operational safety and primary-execution recovery rem
 
 #### GitHub authentication modes
 
+For installation steps, repository permission requirements (including Actions, Checks, Commit
+statuses, Issues, and workflow-file editing), and access verification, see the
+[GitHub App setup and permissions guide](github-app.md).
+
 GitHub authentication is selected independently for each project at the `repository.githubApp`
 boundary. These are the two supported modes:
 
