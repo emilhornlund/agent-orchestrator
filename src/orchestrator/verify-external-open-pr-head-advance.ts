@@ -4,6 +4,7 @@ import { logger } from "../logging/logger.js";
 import { verifyMergedTaskPrHeadContinuity } from "./verify-merged-task-pr-head-continuity.js";
 
 const reportedAdvances = new Set<string>();
+const verifiedAdvances = new Set<string>();
 
 /**
  * An open PR may have been fast-forwarded by a human. Verify both the complete
@@ -20,15 +21,6 @@ export async function verifyExternalOpenPrHeadAdvance(options: {
   recordedHeadSha: string;
   observedHeadSha: string;
 }): Promise<void> {
-  await verifyMergedTaskPrHeadContinuity({
-    github: options.github,
-    project: options.project,
-    cwd: options.cwd,
-    pullRequestNumber: options.pullRequestNumber,
-    recordedHeadSha: options.recordedHeadSha,
-    mergedHeadSha: options.observedHeadSha,
-  });
-
   const identity = [
     options.project.id,
     options.cardId,
@@ -36,6 +28,19 @@ export async function verifyExternalOpenPrHeadAdvance(options: {
     options.recordedHeadSha,
     options.observedHeadSha,
   ].join(":");
+  // Git commit SHAs are immutable. Reuse exact verified ancestry while the
+  // same open PR head is observed; do not re-fetch the full commit list every poll.
+  if (!verifiedAdvances.has(identity)) {
+    await verifyMergedTaskPrHeadContinuity({
+      github: options.github,
+      project: options.project,
+      cwd: options.cwd,
+      pullRequestNumber: options.pullRequestNumber,
+      recordedHeadSha: options.recordedHeadSha,
+      mergedHeadSha: options.observedHeadSha,
+    });
+    verifiedAdvances.add(identity);
+  }
   if (reportedAdvances.has(identity)) return;
   reportedAdvances.add(identity);
   logger
