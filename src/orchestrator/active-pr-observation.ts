@@ -1,4 +1,7 @@
-import { ciRepairEventId } from "../task-session/ci-repair-event-id.js";
+import {
+  ciRepairEventId,
+  ciRepairEligibleForExternalHead,
+} from "../task-session/ci-repair-event-id.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ProjectConfig } from "../config/config.js";
@@ -298,6 +301,7 @@ async function readActivePullRequest(
     });
     if (
       ci.status === "failed" &&
+      ciRepairEligibleForExternalHead(task, ci) &&
       !["exhausted", "stopped"].includes(task.ciRepair?.status ?? "") &&
       !queue.get(ciRepairEventId(task, pr.headRefOid!))
     )

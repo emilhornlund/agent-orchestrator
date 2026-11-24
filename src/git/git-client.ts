@@ -738,6 +738,99 @@ export class GitClient {
     await this.runAuthenticated(repositoryPath, ["fetch", remote, branch], project);
   }
 
+  /** Import branch objects without updating refs, FETCH_HEAD, or submodule worktrees. */
+  async fetchBranchObjects(
+    cwd: string,
+    remote: string,
+    branch: string,
+    project: ProjectConfig,
+  ): Promise<void> {
+    rejectJournaledDispatch();
+    await this.runAuthenticated(
+      cwd,
+      [
+        "fetch",
+        "--no-tags",
+        "--no-write-fetch-head",
+        "--no-auto-maintenance",
+        "--no-recurse-submodules",
+        "--refmap=",
+        "--",
+        remote,
+        `refs/heads/${branch}`,
+      ],
+      project,
+    );
+  }
+
+  async assertCleanLinkedWorktree(cwd: string, branch: string): Promise<void> {
+    if (!fs.lstatSync(path.join(cwd, ".git")).isFile())
+      throw new Error("Expected a linked task worktree");
+    const entries = (await this.runGit(cwd, ["worktree", "list", "--porcelain", "-z"]))
+      .split("\0\0")
+      .map((entry) => entry.split("\0"));
+    const registrations = entries.filter((entry) => entry.includes(`branch refs/heads/${branch}`));
+    if (
+      registrations.length !== 1 ||
+      registrations[0]?.[0] !== `worktree ${fs.realpathSync(cwd)}` ||
+      registrations[0].some((line) => /^(locked|prunable)( |$)/u.test(line))
+    )
+      throw new Error("Task branch does not have a unique, unlocked worktree registration");
+    const status = await this.runGit(cwd, [
+      "status",
+      "--porcelain=v1",
+      "--untracked-files=all",
+      "--ignore-submodules=none",
+    ]);
+    const index = await this.runGit(cwd, ["ls-files", "-v", "-z"]);
+    if (status.trim() || index.split("\0").some((entry) => /^[a-zS] /u.test(entry)))
+      throw new Error(
+        "Task worktree has dirty or hidden index entries; preserve and inspect local output",
+      );
+    for (const name of [
+      "MERGE_HEAD",
+      "CHERRY_PICK_HEAD",
+      "REVERT_HEAD",
+      "rebase-merge",
+      "rebase-apply",
+      "sequencer",
+      "BISECT_START",
+    ]) {
+      const gitPath = (await this.runGit(cwd, ["rev-parse", "--git-path", name])).trim();
+      if (fs.existsSync(path.resolve(cwd, gitPath)))
+        throw new Error(`Task worktree has unfinished Git state: ${name}`);
+    }
+  }
+
+  /** No new commit, hooks, autostash, ignored-file overwrite, or submodule checkout. */
+  async fastForwardTaskWorktree(cwd: string, expectedLocal: string, target: string): Promise<void> {
+    rejectJournaledDispatch();
+    if (
+      !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(target) ||
+      (await this.getHeadSha(cwd)) !== expectedLocal
+    )
+      throw new Error("Local HEAD changed before task fast-forward");
+    const grafts = (await this.runGit(cwd, ["rev-parse", "--git-path", "info/grafts"])).trim();
+    if (fs.existsSync(path.resolve(cwd, grafts)))
+      throw new Error("Local Git grafts prevent verifying worktree history");
+    assertJournaledTransport();
+    await this.runGit(cwd, [
+      "--no-replace-objects",
+      "-c",
+      "core.hooksPath=/dev/null",
+      "-c",
+      "merge.autoStash=false",
+      "-c",
+      "submodule.recurse=false",
+      "merge",
+      "--ff-only",
+      "--no-autostash",
+      "--no-overwrite-ignore",
+      "--",
+      target,
+    ]);
+  }
+
   async rebase(repositoryPath: string, baseRef: string, identity: GitIdentity): Promise<void> {
     void repositoryPath;
     void baseRef;

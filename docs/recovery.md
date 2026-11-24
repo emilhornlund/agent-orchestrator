@@ -315,6 +315,28 @@ episode; continuing failure or a new SHA alone cannot.
 
 ## Feedback and replies
 
+### External head adoption
+
+Upgrade and restart with the same runtime volumes and project identity. Previously idle sessions
+that reported an external-head pause are rechecked on the normal poll; no state edit or Trello move
+is needed. The specific legacy attention checkpoint for a mismatched PR identity/head can also
+resume from CI or Human Review once the full adoption proof succeeds. Unrelated attention and
+dependency recovery checkpoints and unresolved effects retain their existing fences.
+
+The queue retains its owner across interruption. If the branch is still at the recorded local head,
+the scheduler may apply the recorded fast-forward after fresh readback; if it is already at the
+intended head, it verifies rather than rerunning Git. A newer remote head can supersede an in-flight
+target only if it also contains the current local head. If the canonical publication was already
+updated, restart finishes the queue descriptor without updating Git again. Closure and merge use
+normal terminal reconciliation with interrupted artifacts preserved. Local changes, unpublished
+commits, and missing stop or mutation evidence are blockers, not authorization to discard work or
+retry an external effect.
+
+Completed feedback and reply identities remain in the ledger. The previous revision's evidence and
+budgets remain available through the adoption artifact. A continuing CI failure does not restart a
+stopped budget; an exact-head failed check absent from a complete retained failure set can establish
+a new episode. If the old failure set is unknown, it cannot establish that trigger.
+
 ### Retained published classification failure
 
 Keep the original named volumes and mount paths for coordination, context/artifacts, repository,

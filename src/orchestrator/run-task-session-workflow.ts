@@ -175,6 +175,8 @@ import {
   runWithPrimaryTaskSession,
 } from "../task-session/primary-task-session.js";
 import { observeTaskSessionReviewCards } from "./observe-task-session-review-cards.js";
+import { reconcileExternalOpenPrHead } from "./reconcile-external-open-pr-head.js";
+import { ciRepairEligibleForExternalHead } from "../task-session/ci-repair-event-id.js";
 import {
   completeMergedTaskSessionPullRequest,
   returnClosedTaskSessionPullRequestToBacklog,
@@ -1996,13 +1998,21 @@ async function runTaskSessionWorkflowAttempt(
     signal,
     observedReviewCardIds: humanReviewCards.map((card) => card.id),
   });
+  let observedExternalCardId: string | undefined;
   const observations = await observeTaskSessionReviewCards({
     project,
     cards: humanReviewCards,
     taskRecordStore: taskStore,
     github,
     cwd: project.repository.path,
-    ...(executionRecoveryCard === undefined
+    onExternalHead: (cardId) => {
+      observedExternalCardId ??= cardId;
+    },
+    ...(executionRecoveryCard === undefined ||
+    (canonicalTask?.recoveryWait?.kind === "dependency" &&
+      canonicalTask.externalHeadAdoption?.head === canonicalTask.pullRequest?.headSha &&
+      ["ci", "human-feedback"].includes(canonicalTask.phase) &&
+      executionRecoveryCard.idList === project.trello.reviewListId)
       ? {}
       : { terminalOnlyCardIds: new Set([executionRecoveryCard.id]) }),
   });
@@ -2173,6 +2183,42 @@ async function runTaskSessionWorkflowAttempt(
       });
       if (outcome === "completed") options.onHumanReviewCardLeft?.(cardId);
     }
+  }
+  const externalCardId =
+    pendingTerminalMutation?.kind === "external-pr-head"
+      ? pendingTerminalMutation.cardId
+      : observedExternalCardId;
+  if (
+    externalCardId &&
+    !observations.some((item) => item.state === "MERGED" || item.state === "CLOSED")
+  ) {
+    const card = humanReviewCards.find((item) => item.id === externalCardId);
+    if (!card) throw new Error("External PR head reconciliation lost its owned card");
+    const scope = `external-pr-head:${card.id}`;
+    try {
+      await reconcileExternalOpenPrHead({
+        project,
+        card,
+        git,
+        github,
+        taskStore,
+        queue,
+        maintenanceStore,
+        feedbackLedgerStore,
+        signal,
+      });
+      mutationBlockStore.resolve(scope);
+    } catch (error) {
+      signal.throwIfAborted();
+      const reason = sanitizeControlledText(
+        error instanceof Error ? error.message : "Reconciliation failed",
+      ).slice(0, 2000);
+      if (mutationBlockStore.report(scope, reason, reason))
+        logger
+          .child({ projectId: project.id, cardId: card.id })
+          .warn(`External PR head adoption deferred: ${reason}`);
+    }
+    return;
   }
   let executionRecoveryBlocked = false;
   const recoveryCheckedThisPoll = new Set<string>();
@@ -2404,6 +2450,7 @@ async function runTaskSessionWorkflowAttempt(
         ? feedbackReplyOperationId(observation.headSha, currentFeedback, feedbackLedger?.history)
         : null;
       const ciEventId = getCiRepairEventId(record, observation.headSha);
+      const ciEligible = ciRepairEligibleForExternalHead(record, observation.ciEvaluation);
       const maintenanceEventId = `pr-maintenance:${card.id}:${observation.headSha}`;
       const maintenanceNeeded =
         project.maintenance?.enabled !== false &&
@@ -2413,7 +2460,8 @@ async function runTaskSessionWorkflowAttempt(
         if (queued.kind === "ci-repair" && queued.eventId === ciEventId)
           queue.setQueuedCiEligibility(
             queued.eventId,
-            observation.ciEvaluation.status === "failed" &&
+            ciEligible &&
+              observation.ciEvaluation.status === "failed" &&
               !["exhausted", "stopped"].includes(record.ciRepair?.status ?? ""),
           );
         if (
@@ -2427,6 +2475,7 @@ async function runTaskSessionWorkflowAttempt(
           queue.retireSupersededObservation(queued.eventId);
       }
       if (
+        ciEligible &&
         observation.ciEvaluation.status === "failed" &&
         !["exhausted", "stopped"].includes(record.ciRepair?.status ?? "")
       )
@@ -2530,6 +2579,7 @@ async function runTaskSessionWorkflowAttempt(
       record !== null &&
       record.phase === "human-feedback" &&
       observation.ciEvaluation.status === "failed" &&
+      ciRepairEligibleForExternalHead(record, observation.ciEvaluation) &&
       !["exhausted", "stopped"].includes(record.ciRepair?.status ?? "")
     ) {
       taskStore.compareAndSwap(
@@ -2549,6 +2599,17 @@ async function runTaskSessionWorkflowAttempt(
     if (hasUnresolvedLegacyMaintenance) continue;
     const resumingCiReview = canResumeCiReviewRepair(record, queue.getActive());
     if (record === null || (record.phase !== "ci" && !resumingCiReview)) continue;
+    if (
+      observation.ciEvaluation.status === "failed" &&
+      !ciRepairEligibleForExternalHead(record, observation.ciEvaluation)
+    ) {
+      taskStore.compareAndSwap(
+        record.cardId,
+        record.revision,
+        transitionTaskExecutionRecord(record, event(record, "human-feedback-pending")),
+      );
+      continue;
+    }
     if (
       !resumingCiReview &&
       (observation.ciEvaluation.status === "waiting" ||
@@ -3564,13 +3625,18 @@ async function runTaskSessionWorkflowAttempt(
   )
     latestHumanReviewCards.push(await trello.getCard(latestCanonicalCardId));
   options.onHumanReviewCardsObserved?.(latestHumanReviewCards.map((card) => card.id));
+  let externalHeadDuringPoll = false;
   const latestObservations = await observeTaskSessionReviewCards({
     project,
     cards: latestHumanReviewCards,
     taskRecordStore: taskStore,
     github,
     cwd: project.repository.path,
+    onExternalHead: () => {
+      externalHeadDuringPoll = true;
+    },
   });
+  if (externalHeadDuringPoll) return;
   await reconcileUnobservedTerminalPrEvents({
     project,
     queue,

@@ -275,6 +275,12 @@ the final outcome.
 
 ## Automatic PR maintenance
 
+- Automatically reconcile an external fast-forward of the existing owned open PR, including a GitHub
+  **Update branch** merge, once the original PR identity, retained published history, and a safe
+  idle worktree are verified. Treat adoption as a serialized, recoverable prerequisite to further
+  automation. Preserve the task, branch, PR, feedback and prior execution evidence; refresh CI and
+  feedback against the new head without treating old quality results as current. Preserve local work
+  and defer when ownership, execution or publication effects, or history are uncertain.
 - While a PR awaits human review, the orchestrator automatically detects when its branch needs
   updating or has merge conflicts with the target branch.
 - For an already-published PR branch, update it by merging the latest target branch into the task

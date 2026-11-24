@@ -58,6 +58,7 @@ export interface ObserveTaskSessionReviewCardsOptions {
   github: GitHubClient;
   cwd?: string;
   terminalOnlyCardIds?: ReadonlySet<string>;
+  onExternalHead?: (cardId: string) => void;
 }
 
 function nextTimestamp(previous: string): string {
@@ -172,6 +173,34 @@ export async function observeTaskSessionReviewCards(
       observed.push(await terminalObservation(options, record, pullRequest));
       continue;
     }
+    if (pullRequest.headRefOid !== headSha || record.externalHeadIntent) {
+      if (
+        !pullRequest.headRefOid ||
+        !pullRequest.headRefName ||
+        !pullRequest.baseRefName ||
+        !pullRequest.headRepository ||
+        !pullRequest.headRepositoryOwner
+      )
+        throw new Error(
+          `Authoritative pull request identity or head changed for Human Review card ${card.id}`,
+        );
+      if (options.onExternalHead) {
+        // A hint only. Terminal observations must remain available even when
+        // the serialized writer cannot verify an external advance.
+        options.onExternalHead(card.id);
+      } else if (pullRequest.headRefOid !== headSha) {
+        await verifyExternalOpenPrHeadAdvance({
+          github,
+          project,
+          cwd: lookup.cwd,
+          cardId: card.id,
+          pullRequestNumber: record.pullRequest.number,
+          recordedHeadSha: headSha,
+          observedHeadSha: pullRequest.headRefOid,
+        });
+      }
+      continue;
+    }
     if (
       options.terminalOnlyCardIds?.has(card.id) ||
       (record.phase !== "human-feedback" &&
@@ -198,25 +227,6 @@ export async function observeTaskSessionReviewCards(
       throw new Error(
         `Open pull request metadata or ownership is ambiguous for Human Review card ${card.id}`,
       );
-    }
-    if (pullRequest.headRefOid !== headSha) {
-      if (!hasVerifiedOpenIdentity || !pullRequest.headRefOid) {
-        throw new Error(
-          `Authoritative pull request identity or head changed for Human Review card ${card.id}`,
-        );
-      }
-      await verifyExternalOpenPrHeadAdvance({
-        github,
-        project,
-        cwd: lookup.cwd,
-        cardId: card.id,
-        pullRequestNumber: expectedNumber,
-        recordedHeadSha: headSha,
-        observedHeadSha: pullRequest.headRefOid,
-      });
-      // A verified human extension is not authorization to advance the local
-      // task checkpoint. Preserve both heads until serialized reconciliation.
-      continue;
     }
     let baseRelation: "current" | "behind" | "diverged" | "uncertain" = "uncertain";
     if (hasVerifiedOpenIdentity && typeof github.comparePullRequestHeadToBase === "function") {

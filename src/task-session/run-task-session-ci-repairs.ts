@@ -160,7 +160,9 @@ export async function runTaskSessionCiRepairs(
   const cycleId =
     record.ciRepair?.cycleId ??
     (record.feedbackRemediation === undefined
-      ? `${options.operationKey}:ci`
+      ? record.externalHeadAdoption === undefined
+        ? `${options.operationKey}:ci`
+        : `${record.externalHeadAdoption.eventId}:ci`
       : `${options.operationKey}:ci:${record.feedbackRemediation.operationId}`);
   const maxAttempts =
     record.ciRepair === undefined
@@ -173,7 +175,9 @@ export async function runTaskSessionCiRepairs(
     maxAttempts,
     initiatingEventId:
       record.ciRepair === undefined
-        ? (record.feedbackRemediation?.operationId ?? `${options.operationKey}:initial-publication`)
+        ? (record.feedbackRemediation?.operationId ??
+          record.externalHeadAdoption?.eventId ??
+          `${options.operationKey}:initial-publication`)
         : (record.ciRepair.initiatingEventId ?? `${options.operationKey}:initial-publication`),
   };
   if (record.ciRepair?.cycleId !== cycleId) {

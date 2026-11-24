@@ -17,6 +17,7 @@ const eventSchema = z.strictObject({
     "implementation",
     "refinement",
     "terminal-pr",
+    "external-pr-head",
     "ci-repair",
     "feedback",
     "pr-maintenance",
@@ -133,6 +134,7 @@ export type TaskMutationEvent = z.infer<typeof eventSchema>;
 type QueueRecord = z.infer<typeof queueSchema>;
 const mutationPriority: Record<TaskMutationEvent["kind"], number> = {
   "terminal-pr": 0,
+  "external-pr-head": 0,
   feedback: 1,
   "ci-repair": 2,
   "pr-maintenance": 3,
@@ -146,6 +148,7 @@ function nextQueued(queue: QueueRecord): TaskMutationEvent | undefined {
     .sort(
       (left, right) =>
         mutationPriority[left.kind] - mutationPriority[right.kind] ||
+        Number(right.kind === "terminal-pr") - Number(left.kind === "terminal-pr") ||
         left.enqueuedAt.localeCompare(right.enqueuedAt) ||
         left.cardId.localeCompare(right.cardId) ||
         left.eventId.localeCompare(right.eventId),

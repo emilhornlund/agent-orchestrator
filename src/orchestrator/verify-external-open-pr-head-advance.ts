@@ -48,6 +48,6 @@ export async function verifyExternalOpenPrHeadAdvance(options: {
   logger
     .child({ projectId: options.project.id, cardId: options.cardId })
     .warn(
-      `Owned open PR head advanced externally from ${options.recordedHeadSha} to ${options.observedHeadSha}; original task retained, automated writes paused pending safe reconciliation`,
+      `Owned open PR head advanced externally from ${options.recordedHeadSha} to ${options.observedHeadSha}; waiting for the serialized writer to verify and reconcile`,
     );
 }
