@@ -227,7 +227,8 @@ it("rejects an unverified external head rewrite without accepting it as task out
 it("reads feedback, conversation, CI and base relation concurrently before confirming the PR head", async () => {
   const f = fixture();
   const feedback = deferred<Awaited<ReturnType<GitHubClient["findChangesRequestedPullRequest"]>>>();
-  const comments = deferred<Awaited<ReturnType<GitHubClient["getPullRequestConversationComments"]>>>();
+  const comments =
+    deferred<Awaited<ReturnType<GitHubClient["getPullRequestConversationComments"]>>>();
   const ci = deferred<Awaited<ReturnType<GitHubClient["getCiObservations"]>>>();
   const base = deferred<Awaited<ReturnType<GitHubClient["comparePullRequestHeadToBase"]>>>();
   vi.mocked(f.github.findChangesRequestedPullRequest).mockReturnValue(feedback.promise);
