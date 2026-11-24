@@ -39,6 +39,8 @@ describe("PR maintenance worktree identity", () => {
   it("continues accepting the exact legacy card-only worktree without an active attempt", () => {
     vi.spyOn(ProjectRunAuthority, "current").mockReturnValue(undefined);
     expect(isOwnedMaintenanceWorktreePath(project, "card", path.join(root, "card"))).toBe(true);
-    expect(isOwnedMaintenanceWorktreePath(project, "card", path.join(root, "card--other"))).toBe(false);
+    expect(
+      isOwnedMaintenanceWorktreePath(project, "card", path.join(root, "card--other")),
+    ).toBe(false);
   });
 });
