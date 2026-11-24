@@ -124,6 +124,9 @@ it.each([false, true])(
     const home = path.join(root, "home");
     fs.mkdirSync(bin);
     fs.mkdirSync(home);
+    const corepackCache = path.join(home, ".cache/node/corepack");
+    fs.mkdirSync(corepackCache, { recursive: true });
+    fs.writeFileSync(path.join(corepackCache, "cached-manager"), "cached");
     const resultRoot = path.join(
       f.project.contextRoot,
       "refinement-results",
@@ -134,6 +137,9 @@ it.each([false, true])(
       path.join(bin, "opencode"),
       `#!${process.execPath}
 const fs=require('node:fs');
+const cache=process.env.HOME+'/.cache/node/corepack/cached-manager';
+if(fs.readFileSync(cache,'utf8') !== 'cached') process.exit(33);
+try {fs.writeFileSync(cache,'unsafe');process.exit(34);} catch {}
 if (${existing} && fs.readFileSync('.opencode/agents/refine.md','utf8') !== 'Repository-specific instructions') process.exit(31);
 fs.writeFileSync('.opencode/.gitignore','CLI bootstrap metadata');
 fs.writeFileSync('.opencode/package.json','{}');
