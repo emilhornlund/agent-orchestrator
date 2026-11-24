@@ -23,6 +23,8 @@ export async function verifyExternalOpenPrHeadAdvance(options: {
 }): Promise<void> {
   const identity = [
     options.project.id,
+    options.project.repository.github,
+    options.cwd,
     options.cardId,
     options.pullRequestNumber,
     options.recordedHeadSha,
