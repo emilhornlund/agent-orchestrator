@@ -176,6 +176,40 @@ it("defers a verified external open-PR fast-forward without moving the owned che
   expect(f.github.getCiObservations).not.toHaveBeenCalled();
 });
 
+it("paces monitoring of a verified human-updated PR head without stale CI dispatch", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const nextHead = "b".repeat(40);
+  vi.mocked(f.github.getPullRequestStateByNumber).mockResolvedValue({
+    ...f.pr,
+    headRefOid: nextHead,
+  });
+  vi.mocked(f.github.getPullRequestCommitShas).mockResolvedValue([f.pr.headRefOid, nextHead]);
+  const writer = deferred<void>();
+  const running = withActivePrObservation(
+    {
+      ...f,
+      intervalMs: 100,
+      signal: new AbortController().signal,
+      onError: vi.fn(),
+    },
+    () => writer.promise,
+  );
+
+  await vi.advanceTimersByTimeAsync(100);
+  expect(readActivePrObservationHealth(f.authority)).toMatchObject({
+    status: "external-head-wait",
+    failures: 0,
+  });
+  const calls = vi.mocked(f.github.getPullRequestStateByNumber).mock.calls.length;
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(f.github.getPullRequestStateByNumber).toHaveBeenCalledTimes(calls);
+  expect(f.github.getCiObservations).not.toHaveBeenCalled();
+  expect(new TaskMutationQueue(f.project.contextRoot, f.project, f.authority).list()).toEqual([]);
+  writer.resolve();
+  await running;
+});
+
 it("rejects an unverified external head rewrite without accepting it as task output", async () => {
   const f = fixture();
   const nextHead = "b".repeat(40);
