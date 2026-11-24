@@ -351,6 +351,15 @@ async function verifyQuality(
   });
 }
 
+/** Validate the pinned attempt resource, not an inferred legacy card-only path. */
+export function isOwnedMaintenanceWorktreePath(
+  project: ProjectConfig,
+  cardId: string,
+  worktreePath: string,
+): boolean {
+  return path.resolve(worktreePath) === path.resolve(taskResources(project, cardId).path);
+}
+
 /** Additive maintenance owns one queue writer and never reinterprets legacy rebase intents. */
 export async function maintainOutdatedPr(
   options: MaintainOutdatedPrOptions,
@@ -392,7 +401,7 @@ export async function maintainOutdatedPr(
   if (
     // Attempt-scoped worktrees use <card-id>--<attempt-id>; never infer a
     // legacy card-only path when the canonical attempt pins a different one.
-    path.resolve(worktreePath) !== path.resolve(taskResources(project, card.id).path) ||
+    !isOwnedMaintenanceWorktreePath(project, card.id, worktreePath) ||
     fs.lstatSync(worktreePath).isSymbolicLink() ||
     fs.realpathSync(worktreePath) === fs.realpathSync(project.repository.path) ||
     (await git.getCommonGitDirectory(worktreePath)) !==
