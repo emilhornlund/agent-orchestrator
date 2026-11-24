@@ -332,6 +332,7 @@ const healthSchema = z.strictObject({
   diagnosticReference: z.string().optional(),
   since: z.string().datetime().optional(),
   recoveredAt: z.string().datetime().optional(),
+  consecutiveSuccesses: z.number().int().min(0).max(1).optional(),
 });
 export function readActivePrObservationHealth(authority: ProjectRunAuthority) {
   return authority.read(healthKey, healthSchema.parse);
@@ -423,20 +424,39 @@ export async function withActivePrObservation<T>(
               });
               if (result === "superseded") return;
               if (health?.failures) {
-                save({
-                  status: "healthy",
-                  failures: 0,
-                  retryAt: null,
-                  recoveredAt: new Date().toISOString(),
-                });
-                logger
-                  .child({
-                    projectId: options.project.id,
-                    ...(options.authority.cardId ? { cardId: options.authority.cardId } : {}),
-                  })
-                  .event(
-                    `Active PR observation recovered; attempt ${options.authority.store.attemptId}`,
-                  );
+                // One successful read between timeouts is not a recovery.
+                // Keep failure backoff and the original diagnostic identity
+                // until two consecutive complete snapshots are verified.
+                if ((health.consecutiveSuccesses ?? 0) === 0) {
+                  save({
+                    ...health,
+                    status: "recovering",
+                    consecutiveSuccesses: 1,
+                    retryAt: new Date(Date.now() + options.intervalMs).toISOString(),
+                  });
+                } else {
+                  const now = Date.now();
+                  const reportRecovery =
+                    health.recoveredAt === undefined ||
+                    now - Date.parse(health.recoveredAt) >= 15 * 60_000;
+                  save({
+                    ...health,
+                    status: "healthy",
+                    failures: 0,
+                    consecutiveSuccesses: 0,
+                    retryAt: null,
+                    ...(reportRecovery ? { recoveredAt: new Date(now).toISOString() } : {}),
+                  });
+                  if (reportRecovery)
+                    logger
+                      .child({
+                        projectId: options.project.id,
+                        ...(options.authority.cardId ? { cardId: options.authority.cardId } : {}),
+                      })
+                      .event(
+                        `Active PR observation recovered; attempt ${options.authority.store.attemptId}`,
+                      );
+                }
               }
             } catch (error) {
               if (control.signal.aborted || options.signal.aborted) return;
@@ -456,7 +476,11 @@ export async function withActivePrObservation<T>(
                     : controller.signal.aborted
                       ? "timeout"
                       : message;
-                const changed = health?.identity !== identity;
+                const changed =
+                  health?.identity !== identity ||
+                  (health?.status === "healthy" &&
+                    health.recoveredAt !== undefined &&
+                    Date.now() - Date.parse(health.recoveredAt) >= 60 * 60_000);
                 const diagnostic = changed
                   ? options.authority.store.writeArtifact(
                       Buffer.from(
@@ -471,12 +495,16 @@ export async function withActivePrObservation<T>(
                       "application/json",
                     ).id
                   : health?.diagnosticReference;
-                const since = health?.since ?? new Date().toISOString();
+                const since = changed
+                  ? new Date().toISOString()
+                  : (health?.since ?? new Date().toISOString());
                 save({
                   status: failures >= 2 ? "degraded" : "healthy",
                   failures,
                   identity,
                   since,
+                  consecutiveSuccesses: 0,
+                  ...(health?.recoveredAt === undefined ? {} : { recoveredAt: health.recoveredAt }),
                   ...(diagnostic === undefined ? {} : { diagnosticReference: diagnostic }),
                   retryAt: new Date(
                     Date.now() + Math.min(300_000, options.intervalMs * 2 ** Math.min(failures, 8)),
