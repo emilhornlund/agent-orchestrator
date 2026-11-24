@@ -307,6 +307,12 @@ it("persists degraded health across restart and requires a complete recovery obs
   expect(readActivePrArrivals(authority)).toEqual([]);
   await vi.advanceTimersByTimeAsync(800);
   expect(readActivePrObservationHealth(authority)).toMatchObject({
+    status: "recovering",
+    failures: 3,
+    consecutiveSuccesses: 1,
+  });
+  await vi.advanceTimersByTimeAsync(100);
+  expect(readActivePrObservationHealth(authority)).toMatchObject({
     status: "healthy",
     failures: 0,
   });
