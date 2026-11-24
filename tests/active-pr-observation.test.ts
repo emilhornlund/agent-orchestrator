@@ -169,7 +169,7 @@ it("defers a verified external open-PR fast-forward without moving the owned che
   });
   vi.mocked(f.github.getPullRequestCommitShas).mockResolvedValue([f.pr.headRefOid, nextHead]);
 
-  await expect(observeActivePullRequest(f)).resolves.toBe("superseded");
+  await expect(observeActivePullRequest(f)).resolves.toBe("external-head");
   expect(f.tasks.read("card")).toEqual(before);
   expect(readActivePrArrivals(f.authority)).toEqual([]);
   expect(new TaskMutationQueue(f.project.contextRoot, f.project, f.authority).list()).toEqual([]);
