@@ -314,6 +314,7 @@ export class TaskExecutionStore {
       event: "merged" | "closed-unmerged" | "failed";
       evidence: NonNullable<import("./run-record.js").RunRecord["terminalEvidence"]>;
     },
+    externalHeadAdoption?: { eventId: string; trustedHead: string },
   ): TaskExecutionRecord {
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) {
       throw new Error("Expected task execution record revision must be positive");
@@ -343,11 +344,12 @@ export class TaskExecutionStore {
         },
         validate: parseTaskExecutionRecord,
         ...(terminal === undefined ? {} : { terminal }),
+        ...(externalHeadAdoption === undefined ? {} : { externalHeadAdoption }),
       });
     }
 
-    if (terminal !== undefined)
-      throw new Error("Verified terminal transitions require canonical RunStore authority");
+    if (terminal !== undefined || externalHeadAdoption !== undefined)
+      throw new Error("Verified PR transitions require canonical RunStore authority");
 
     const filePath = this.getRecordPath(cardId);
 

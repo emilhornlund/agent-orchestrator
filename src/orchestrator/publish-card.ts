@@ -46,6 +46,7 @@ import { getElapsedWorkflowTime } from "./workflow-duration.js";
 import { WorkflowError } from "./workflow-error.js";
 import { writeTrustedCommitState } from "./trusted-commit-state.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import { TaskExecutionStore } from "../task-session/task-execution-store.js";
 import { resumeInitialPublication, PublicationWaitingError } from "./initial-publication.js";
 
 export interface PublishCardOptions {
@@ -525,7 +526,17 @@ export async function publishCard({
   let publishedCommitSha: string;
   let finalPullRequestDescription = pullRequestDescription;
   let verifiedDescriptionFacts: readonly string[] = verifiedDescriptionFactsOption?.() ?? [];
-  const verifyExisting = async () => {
+  const authorityForExistingPr = expectedExistingPullRequestUrl
+    ? ProjectRunAuthority.current(project.id)
+    : undefined;
+  const retainedPr = authorityForExistingPr
+    ? new TaskExecutionStore(
+        authorityForExistingPr.store.storageRoot,
+        project,
+        authorityForExistingPr,
+      ).read(card.id)?.pullRequest
+    : undefined;
+  const verifyExisting = async (expectedHeadSha?: string) => {
     if (expectedExistingPullRequestUrl)
       await verifyExistingPrOpen({
         project,
@@ -533,6 +544,7 @@ export async function publishCard({
         cardId: card.id,
         branch,
         pullRequestUrl: expectedExistingPullRequestUrl,
+        ...(expectedHeadSha === undefined ? {} : { expectedHeadSha }),
       });
   };
 
@@ -681,6 +693,11 @@ export async function publishCard({
       }
 
       cardLog.event(`Pushing branch ${branch}...`);
+      if (retainedPr?.headSha && remoteCommitSha !== retainedPr.headSha)
+        throw new Error(
+          "Published branch head changed during correction; preserving the unpublished commit",
+        );
+      await verifyExisting(retainedPr?.headSha);
       if (expectedExistingPullRequestUrl)
         await updateMaintenanceStatus(
           github,
@@ -692,7 +709,7 @@ export async function publishCard({
           cardLog,
         );
 
-      await verifyExisting();
+      await verifyExisting(retainedPr?.headSha);
       try {
         await git.push(worktreePath, "origin", branch, project);
       } catch (error) {
@@ -711,7 +728,7 @@ export async function publishCard({
       cardLog.event("Branch pushed");
     }
 
-    await verifyExisting();
+    await verifyExisting(retainedPr ? publishedCommitSha : undefined);
     cardLog.info("Checking for existing pull request...");
 
     if (signal?.aborted) {

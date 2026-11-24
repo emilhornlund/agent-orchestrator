@@ -71,6 +71,7 @@ import { diagnosticEventIdentityText } from "../security/bounded-diagnostic.js";
 import { sanitizeControlledText } from "../security/redact-secrets.js";
 import { getLegacyPublishedGitHubReadRecoveryPhase } from "../task-session/reconcile-task-session.js";
 import { canRecheckReviewedPublication } from "../task-session/uncommitted-publication-recovery.js";
+import { externalHeadAttentionPhase } from "./reconcile-external-open-pr-head.js";
 
 export function hasDueTaskSessionRecoveryWait(
   authorityRecord: import("../task-session/run-record.js").RunRecord | null,
@@ -82,6 +83,7 @@ export function hasDueTaskSessionRecoveryWait(
   const taskProjection = parseTaskExecutionRecord(projection);
   if (taskProjection.externalRecovery !== undefined) return true;
   if (canRecheckReviewedPublication(authorityRecord, taskProjection)) return true;
+  if (externalHeadAttentionPhase(authorityRecord, taskProjection) !== null) return true;
   const recoveryWait = taskProjection.recoveryWait;
   if (getLegacyPublishedGitHubReadRecoveryPhase(authorityRecord, taskProjection) !== null)
     return true;

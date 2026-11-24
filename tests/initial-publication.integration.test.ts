@@ -631,6 +631,12 @@ describe("setup-aware initial publication commit scope", () => {
                 path.join(f.root, "remote.git"),
                 "HEAD:refs/heads/agent/card",
               );
+              const head = f.isolated.git(
+                path.join(f.root, "remote.git"),
+                "rev-parse",
+                "refs/heads/agent/card",
+              );
+              f.services.change({ prs: f.services.read().prs.map((pr) => ({ ...pr, head })) });
             };
           const value = Reflect.get(target, property, target) as unknown;
           return typeof value === "function" ? value.bind(target) : value;
@@ -672,6 +678,18 @@ describe("setup-aware initial publication commit scope", () => {
           }),
         );
         correctionHeads.push(head);
+        // The caller of the shared publisher owns the verified publication CAS.
+        f.authority.run(() => {
+          const store = new TaskExecutionStore(f.project.contextRoot, f.project);
+          const current = store.read("card")!;
+          store.compareAndSwap("card", current.revision, {
+            ...current,
+            pullRequest: { ...current.pullRequest!, headSha: head },
+            reviewObservation: undefined,
+            revision: current.revision + 1,
+            updatedAt: new Date(Date.parse(current.updatedAt) + 1).toISOString(),
+          });
+        });
         expect(fs.readFileSync(path.join(f.worktreePath, "unrelated.setup"))).toEqual(
           originalExcludedBytes,
         );

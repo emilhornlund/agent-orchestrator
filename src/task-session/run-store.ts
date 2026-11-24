@@ -803,6 +803,7 @@ export class RunStore {
       validatedProjection: unknown,
     ) => {
       lifecycleTransition?: { event: RunEventType; to: RunLifecycleState };
+      companionProjection?: { key: string; value: unknown };
       runState?: Partial<
         Pick<
           RunRecord,
@@ -838,6 +839,8 @@ export class RunStore {
       throw new Error("Compatibility projection callback mutated the attempt snapshot");
     const validated = options.validate(output.value);
     const derived = options.deriveRunState?.(current, validated) ?? {};
+    if (derived.companionProjection?.key === options.key)
+      throw new Error("Companion projection must differ from the primary projection");
     const lifecycleTransition = derived.lifecycleTransition ?? options.lifecycleTransition;
     let lifecycle = current.lifecycle;
     const effectiveTransition = options.terminal
@@ -926,7 +929,15 @@ export class RunStore {
                   since: null,
                   retryAt: null,
                 })),
-      compatibility: { ...current.compatibility, [options.key]: validated },
+      compatibility: {
+        ...current.compatibility,
+        ...(derived.companionProjection === undefined
+          ? {}
+          : {
+              [derived.companionProjection.key]: derived.companionProjection.value,
+            }),
+        [options.key]: validated,
+      },
       ...(options.terminal === undefined
         ? {}
         : {

@@ -577,6 +577,7 @@ export class ProjectRunAuthority {
     initial: unknown;
     operation: (current: unknown) => { value: unknown; result: T };
     validate: (value: unknown) => TaskExecutionRecord;
+    externalHeadAdoption?: { eventId: string; trustedHead: string };
     terminal?: {
       event: "merged" | "closed-unmerged" | "failed";
       evidence: NonNullable<RunRecord["terminalEvidence"]>;
@@ -686,6 +687,30 @@ export class ProjectRunAuthority {
       validate: options.validate,
       deriveRunState: (current, rawProjection) => {
         const projection = options.validate(rawProjection);
+        let companionProjection: { key: string; value: unknown } | undefined;
+        if (options.externalHeadAdoption) {
+          const adoption = projection.externalHeadAdoption;
+          const key = ProjectRunAuthority.commitKey("trusted-commit", current.cardId);
+          const previous = options.validate(current.compatibility[options.key]);
+          const trusted = current.compatibility[key];
+          if (
+            !adoption ||
+            adoption.eventId !== options.externalHeadAdoption.eventId ||
+            previous.externalHeadIntent?.eventId !== adoption.eventId ||
+            previous.externalHeadIntent.targetHead !== adoption.head ||
+            previous.pullRequest?.headSha !== adoption.previousHead ||
+            projection.pullRequest?.headSha !== adoption.head ||
+            current.publicationState !== "open" ||
+            !trusted ||
+            typeof trusted !== "object" ||
+            !("commitSha" in trusted) ||
+            trusted.commitSha !== options.externalHeadAdoption.trustedHead
+          )
+            throw new RunStoreConflictError(
+              "External PR adoption no longer matches its publication or trusted commit intent",
+            );
+          companionProjection = { key, value: { ...trusted, commitSha: adoption.head } };
+        }
         if (projection.recoveryWait && projection.phase === "attention-required")
           throw new RunStoreConflictError(
             "Attention-required task state cannot retain a recoverable wait authorization",
@@ -778,6 +803,7 @@ export class ProjectRunAuthority {
           };
         }
         return {
+          ...(companionProjection === undefined ? {} : { companionProjection }),
           ...(lifecycleTransition === undefined ? {} : { lifecycleTransition }),
           runState: {
             publicationState:

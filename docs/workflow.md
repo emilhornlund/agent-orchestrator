@@ -462,6 +462,15 @@ was fulfilled. Unknown reply acceptance is reconciled by the original marker, in
 edit/deletion; a negative lookup never authorizes a blind resend. The service never approves a PR,
 dismisses a review, or resolves a reviewer thread.
 
+An external advance is a prerequisite to these operations, independent of the routine maintenance
+setting. Observation signals the scheduler; it does not change the worktree or publication. The
+leased scheduler verifies the numbered PR and configured Git endpoints, imports branch objects
+without advancing tracking refs, and records its exact local fast-forward intent. Once both local
+and remote heads are verified again, one RunStore update promotes the publication and trusted commit
+together and archives the prior head's quality and repair state. The next poll observes CI and
+outstanding feedback for the adopted head. Adoption itself does not dispatch OpenCode or write to
+Trello or GitHub.
+
 During correction, a managed activity block appears at the top of the PR description and changes as
 work proceeds through editing, validation and publication. It is cleared on verified completion;
 unknown execution is reported as requiring attention rather than silently declared stopped. Managed

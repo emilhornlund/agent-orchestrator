@@ -523,6 +523,19 @@ output, unresolved conflicts and ambiguous remote effects remain preserved recov
 Legacy rebase intents are still fenced. Do not manually retry an uncertain push or reset/discard its
 worktree. Ordinary initial publication remains supported.
 
+### External advances on owned open PRs
+
+Reviewers can push an additive update or use GitHub **Update branch** on an agent-owned PR. An idle
+task in Human Review fast-forwards its clean, owned worktree when GitHub and Git agree on the PR
+identity and ancestry. CI and eligible human feedback resume on the new head. Older validation and
+review results are retained with their original revision, not counted as passes on the new one.
+
+`External PR head adoption deferred` reports a blocker such as a dirty worktree, unpublished commit,
+unresolved writer or mutation, mismatched repository, or divergent history. Keep the worktree,
+branch, task and runtime volumes intact. Inspect the diagnostic and reconcile any interrupted
+operation through the normal recovery procedure; do not reset or force-push the branch or edit
+persisted state to match GitHub.
+
 ## Elapsed workflow time
 
 When a refinement card is successfully moved to `Backlog`, its concise Trello completion comment can

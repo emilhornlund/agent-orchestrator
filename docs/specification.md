@@ -651,6 +651,16 @@ without rewriting published task commits, using the agent to resolve conflicts w
   replace the PR to bypass a conflict.
 - Unresolved or unsafe conflicts are reported with recoverable state retained, rather than silently
   retried forever.
+- An externally advanced open PR (including a GitHub **Update branch** merge) is adopted on the
+  existing task only when the original numbered PR, repository, branches, remote head and additive
+  ancestry are verified and the isolated worktree has no unpublished changes or unresolved writer.
+  Adoption runs under the existing mutation queue, records local intent before the fast-forward, and
+  revalidates the remote before committing the new publication checkpoint. Ambiguous history, dirty
+  work and unresolved effects remain retained and block adoption.
+- After adoption or restart, exact-head CI and outstanding eligible feedback resume without
+  duplicating completed effects or dispatching implementation just because the head changed. Old
+  quality and repair evidence remains historical; a continued CI failure alone cannot renew a
+  stopped or exhausted episode. A human merge or closure takes precedence over adoption.
 
 ### REQ-MNT-003 — Reevaluate changes without introducing review gates
 

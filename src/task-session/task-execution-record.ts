@@ -716,6 +716,24 @@ const taskExecutionRecordSchema = z
     externalRecovery: externalRecoveryState.optional(),
     expectedBranch: nonBlankIdentifier.optional(),
     pullRequest: pullRequestSchema.optional(),
+    externalHeadIntent: z
+      .strictObject({
+        eventId: nonBlankIdentifier,
+        publishedHead: gitSha,
+        localHead: gitSha,
+        targetHead: gitSha,
+      })
+      .optional(),
+    externalHeadAdoption: z
+      .strictObject({
+        eventId: nonBlankIdentifier,
+        previousHead: gitSha,
+        head: gitSha,
+        previousState: primaryOperationSchema.shape.resultArtifact.unwrap(),
+        // null means the old episode's failures could not be established.
+        stoppedCiFailures: z.array(nonBlankIdentifier).nullable().optional(),
+      })
+      .optional(),
     terminalInterruption: z
       .strictObject({
         state: z.enum(["MERGED", "CLOSED"]),
