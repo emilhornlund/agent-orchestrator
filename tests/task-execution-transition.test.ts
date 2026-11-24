@@ -72,6 +72,10 @@ describe("transitionTaskExecutionRecord", () => {
     (status) => {
       const record: TaskExecutionRecord = {
         ...createRecord("human-feedback"),
+        retryCounters: {
+          ...createRecord("human-feedback").retryCounters,
+          ci: status === "exhausted" ? 2 : 0,
+        },
         ciRepair: {
           cycleId: "operation-one:ci",
           headSha: "a".repeat(40),
