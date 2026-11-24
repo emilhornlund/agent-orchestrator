@@ -138,6 +138,8 @@ function fixture() {
         updatedAt: null,
       },
     ]),
+    getPullRequestCommitShas: vi.fn(async () => [headSha]),
+    isAncestorCommit: vi.fn(async () => true),
     getCiObservations: vi.fn(async () => ({
       headSha,
       checks: [],
@@ -156,6 +158,99 @@ function fixture() {
     },
   };
 }
+
+it("defers a verified external open-PR fast-forward without moving the owned checkpoint", async () => {
+  const f = fixture();
+  const nextHead = "b".repeat(40);
+  const before = f.tasks.read("card");
+  vi.mocked(f.github.getPullRequestStateByNumber).mockResolvedValue({
+    ...f.pr,
+    headRefOid: nextHead,
+  });
+  vi.mocked(f.github.getPullRequestCommitShas).mockResolvedValue([f.pr.headRefOid, nextHead]);
+
+  await expect(observeActivePullRequest(f)).resolves.toBe("external-head");
+  expect(f.tasks.read("card")).toEqual(before);
+  expect(readActivePrArrivals(f.authority)).toEqual([]);
+  expect(new TaskMutationQueue(f.project.contextRoot, f.project, f.authority).list()).toEqual([]);
+  expect(f.github.getCiObservations).not.toHaveBeenCalled();
+});
+
+it("paces monitoring of a verified human-updated PR head without stale CI dispatch", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const nextHead = "b".repeat(40);
+  vi.mocked(f.github.getPullRequestStateByNumber).mockResolvedValue({
+    ...f.pr,
+    headRefOid: nextHead,
+  });
+  vi.mocked(f.github.getPullRequestCommitShas).mockResolvedValue([f.pr.headRefOid, nextHead]);
+  const writer = deferred<void>();
+  const running = withActivePrObservation(
+    {
+      ...f,
+      intervalMs: 100,
+      signal: new AbortController().signal,
+      onError: vi.fn(),
+    },
+    () => writer.promise,
+  );
+
+  await vi.advanceTimersByTimeAsync(100);
+  expect(readActivePrObservationHealth(f.authority)).toMatchObject({
+    status: "external-head-wait",
+    failures: 0,
+  });
+  const calls = vi.mocked(f.github.getPullRequestStateByNumber).mock.calls.length;
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(f.github.getPullRequestStateByNumber).toHaveBeenCalledTimes(calls);
+  expect(f.github.getCiObservations).not.toHaveBeenCalled();
+  expect(new TaskMutationQueue(f.project.contextRoot, f.project, f.authority).list()).toEqual([]);
+  writer.resolve();
+  await running;
+});
+
+it("rejects an unverified external head rewrite without accepting it as task output", async () => {
+  const f = fixture();
+  const nextHead = "b".repeat(40);
+  vi.mocked(f.github.getPullRequestStateByNumber).mockResolvedValue({
+    ...f.pr,
+    headRefOid: nextHead,
+  });
+  vi.mocked(f.github.getPullRequestCommitShas).mockResolvedValue([f.pr.headRefOid, nextHead]);
+  vi.mocked(f.github.isAncestorCommit).mockResolvedValue(false);
+
+  await expect(observeActivePullRequest(f)).rejects.toThrow("not descended");
+  expect(readActivePrArrivals(f.authority)).toEqual([]);
+});
+
+it("reads feedback, conversation, CI and base relation concurrently before confirming the PR head", async () => {
+  const f = fixture();
+  const feedback = deferred<Awaited<ReturnType<GitHubClient["findChangesRequestedPullRequest"]>>>();
+  const comments =
+    deferred<Awaited<ReturnType<GitHubClient["getPullRequestConversationComments"]>>>();
+  const ci = deferred<Awaited<ReturnType<GitHubClient["getCiObservations"]>>>();
+  const base = deferred<Awaited<ReturnType<GitHubClient["comparePullRequestHeadToBase"]>>>();
+  vi.mocked(f.github.findChangesRequestedPullRequest).mockReturnValue(feedback.promise);
+  vi.mocked(f.github.getPullRequestConversationComments).mockReturnValue(comments.promise);
+  vi.mocked(f.github.getCiObservations).mockReturnValue(ci.promise);
+  vi.mocked(f.github.comparePullRequestHeadToBase).mockReturnValue(base.promise);
+
+  const observing = observeActivePullRequest(f);
+  await vi.waitFor(() => {
+    expect(f.github.findChangesRequestedPullRequest).toHaveBeenCalledOnce();
+    expect(f.github.getPullRequestConversationComments).toHaveBeenCalledOnce();
+    expect(f.github.getCiObservations).toHaveBeenCalledOnce();
+    expect(f.github.comparePullRequestHeadToBase).toHaveBeenCalledOnce();
+  });
+  feedback.resolve(null);
+  comments.resolve([]);
+  ci.resolve({ headSha: f.pr.headRefOid, checks: [], expectationSources: [] });
+  base.resolve("current");
+
+  await expect(observing).resolves.toBeUndefined();
+  expect(readActivePrArrivals(f.authority)).toHaveLength(1);
+});
 
 it("retains deduplicated arrivals during a blocked writer without changing its checkpoint, including restart", async () => {
   vi.useFakeTimers();
@@ -273,6 +368,12 @@ it("persists degraded health across restart and requires a complete recovery obs
   });
   expect(readActivePrArrivals(authority)).toEqual([]);
   await vi.advanceTimersByTimeAsync(800);
+  expect(readActivePrObservationHealth(authority)).toMatchObject({
+    status: "recovering",
+    failures: 3,
+    consecutiveSuccesses: 1,
+  });
+  await vi.advanceTimersByTimeAsync(100);
   expect(readActivePrObservationHealth(authority)).toMatchObject({
     status: "healthy",
     failures: 0,
@@ -467,6 +568,10 @@ it("times out a delayed observer without overlapping it or invalidating the writ
   expect(lookup).toHaveBeenCalledOnce();
   expect(onError).toHaveBeenCalledOnce();
   expect(readActivePrObservationHealth(f.authority)).toMatchObject({ identity: "timeout" });
+  const diagnosticRef = onError.mock.calls[0]![1] as string;
+  expect(JSON.parse(f.store.readArtifact(diagnosticRef).toString("utf8"))).toMatchObject({
+    message: expect.stringContaining("pending: PR identity"),
+  });
   writer.resolve(42);
   await expect(result).resolves.toBe(42);
   late.resolve(f.pr);

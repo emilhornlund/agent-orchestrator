@@ -67,6 +67,29 @@ function createEvent(
 }
 
 describe("transitionTaskExecutionRecord", () => {
+  it.each(["passed", "stopped", "exhausted"] as const)(
+    "preserves a %s CI repair checkpoint during attention-required recovery",
+    (status) => {
+      const record: TaskExecutionRecord = {
+        ...createRecord("human-feedback"),
+        retryCounters: {
+          ...createRecord("human-feedback").retryCounters,
+          ci: status === "exhausted" ? 2 : 0,
+        },
+        ciRepair: {
+          cycleId: "operation-one:ci",
+          headSha: "a".repeat(40),
+          status,
+          ...(status === "stopped" ? { stopReason: "no-change" } : {}),
+        },
+      };
+      const next = transitionTaskExecutionRecord(record, createEvent("attention-required"));
+      expect(next.phase).toBe("attention-required");
+      expect(next.ciRepair).toEqual(record.ciRepair);
+      expect(next.pullRequest).toEqual(record.pullRequest);
+    },
+  );
+
   it.each(["implementation", "validation", "review", "ci", "attention-required"] as const)(
     "retires interrupted repairs on verified human merge from %s without fabricating passed checks",
     (phase) => {

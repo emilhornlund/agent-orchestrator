@@ -19,6 +19,7 @@ import {
   withProcessCancellationSignal,
 } from "../process/process-runtime.js";
 import { logger } from "../logging/logger.js";
+import { verifyExternalOpenPrHeadAdvance } from "./verify-external-open-pr-head-advance.js";
 import { notifyAttentionRequired, type EmailNotifier } from "../notifications/email-notifier.js";
 
 const arrivalSchema = z.strictObject({
@@ -50,11 +51,25 @@ interface ActivePrObservationOptions {
   authority: ProjectRunAuthority;
   terminalOnly?: boolean;
   signal?: AbortSignal;
+  onReadStage?: (stage: string, active: boolean) => void;
+}
+
+async function observedRead<T>(
+  options: ActivePrObservationOptions,
+  stage: string,
+  read: () => Promise<T>,
+): Promise<T> {
+  options.onReadStage?.(stage, true);
+  try {
+    return await read();
+  } finally {
+    options.onReadStage?.(stage, false);
+  }
 }
 
 export async function observeActivePullRequest(
   options: ActivePrObservationOptions,
-): Promise<void | "superseded"> {
+): Promise<void | "superseded" | "external-head"> {
   const id = options.authority.attemptScopeKey;
   if (inFlight.has(id)) return "superseded";
   inFlight.add(id);
@@ -67,7 +82,7 @@ export async function observeActivePullRequest(
 
 async function readActivePullRequest(
   options: ActivePrObservationOptions,
-): Promise<void | "superseded"> {
+): Promise<void | "superseded" | "external-head"> {
   const { project, github, authority } = options;
   authority.assertHeld();
   if (!authority.cardId || !project.contextRoot) return;
@@ -83,10 +98,12 @@ async function readActivePullRequest(
     project,
   };
   const readPr = () =>
-    github.getPullRequestStateByNumber({
-      ...lookup,
-      pullRequestNumber: task.pullRequest!.number,
-    });
+    observedRead(options, "PR identity", () =>
+      github.getPullRequestStateByNumber({
+        ...lookup,
+        pullRequestNumber: task.pullRequest!.number,
+      }),
+    );
   let pr = await readPr();
   options.signal?.throwIfAborted();
   if (!pr || pr.url !== task.pullRequest.url || !pr.headRefOid)
@@ -101,32 +118,66 @@ async function readActivePullRequest(
   if (!matchesRepository(pr))
     throw new Error("Active PR observation has ambiguous repository or terminal identity");
   if (options.terminalOnly && pr.state === "OPEN") return;
-  let current =
-    pr.state === "OPEN"
-      ? {
-          feedback: await github.findChangesRequestedPullRequest(lookup, true),
-          comments: await github.getPullRequestConversationComments({
-            ...lookup,
-            pullRequestUrl: pr.url,
-          }),
-          ci: await github.getCiObservations({
-            ...lookup,
-            defaultBranch: project.repository.defaultBranch,
-            headSha: pr.headRefOid,
-            pullRequestNumber: task.pullRequest.number,
-            requireAvailableReads: true,
-          }),
-        }
-      : null;
-  let baseRelation =
-    current !== null && project.maintenance?.enabled !== false
-      ? await github.comparePullRequestHeadToBase({
+  if (pr.state === "OPEN" && pr.headRefOid !== task.pullRequest.headSha) {
+    await observedRead(options, "external PR head verification", () =>
+      verifyExternalOpenPrHeadAdvance({
+        github,
+        project,
+        cwd: lookup.cwd,
+        cardId: task.cardId,
+        pullRequestNumber: task.pullRequest!.number,
+        recordedHeadSha: task.pullRequest!.headSha!,
+        observedHeadSha: pr.headRefOid!,
+      }),
+    );
+    // No new-head CI or feedback mutations may be queued against the
+    // previous publication checkpoint. Terminal PR observation remains live.
+    return "external-head";
+  }
+  let current: {
+    feedback: Awaited<ReturnType<GitHubClient["findChangesRequestedPullRequest"]>>;
+    comments: Awaited<ReturnType<GitHubClient["getPullRequestConversationComments"]>>;
+    ci: Awaited<ReturnType<GitHubClient["getCiObservations"]>>;
+  } | null = null;
+  let baseRelation: "current" | "behind" | "diverged" | "uncertain" = "uncertain";
+  if (pr.state === "OPEN") {
+    const observedHeadSha = pr.headRefOid;
+    const observedPullRequestUrl = pr.url;
+    // These reads are independent and bound to the same initial PR head.
+    // A second PR read below rejects any snapshot that changed mid-flight.
+    const [feedback, comments, ci, relation] = await Promise.all([
+      observedRead(options, "review feedback", () =>
+        github.findChangesRequestedPullRequest(lookup, true),
+      ),
+      observedRead(options, "conversation comments", () =>
+        github.getPullRequestConversationComments({
           ...lookup,
-          baseBranch: project.repository.defaultBranch,
-          headSha: pr.headRefOid,
+          pullRequestUrl: observedPullRequestUrl,
+        }),
+      ),
+      observedRead(options, "CI observations", () =>
+        github.getCiObservations({
+          ...lookup,
+          defaultBranch: project.repository.defaultBranch,
+          headSha: observedHeadSha,
+          pullRequestNumber: task.pullRequest!.number,
           requireAvailableReads: true,
-        })
-      : "uncertain";
+        }),
+      ),
+      project.maintenance?.enabled !== false
+        ? observedRead(options, "base comparison", () =>
+            github.comparePullRequestHeadToBase({
+              ...lookup,
+              baseBranch: project.repository.defaultBranch,
+              headSha: observedHeadSha,
+              requireAvailableReads: true,
+            }),
+          )
+        : Promise.resolve("uncertain" as const),
+    ]);
+    current = { feedback, comments, ci };
+    baseRelation = relation;
+  }
   if (current !== null) {
     const confirmed = await readPr();
     if (
@@ -274,13 +325,14 @@ async function readActivePullRequest(
 
 const healthKey = "active-pr-observation-health-v1";
 const healthSchema = z.strictObject({
-  status: z.enum(["healthy", "degraded", "recovering"]),
+  status: z.enum(["healthy", "degraded", "recovering", "external-head-wait"]),
   failures: z.number().int().min(0).max(16),
   retryAt: z.string().datetime().nullable(),
   identity: z.string().optional(),
   diagnosticReference: z.string().optional(),
   since: z.string().datetime().optional(),
   recoveredAt: z.string().datetime().optional(),
+  consecutiveSuccesses: z.number().int().min(0).max(1).optional(),
 });
 export function readActivePrObservationHealth(authority: ProjectRunAuthority) {
   return authority.read(healthKey, healthSchema.parse);
@@ -327,16 +379,32 @@ export async function withActivePrObservation<T>(
           .run(async () => {
             const controller = new AbortController();
             const signal = AbortSignal.any([options.signal, control.signal, controller.signal]);
-            const deadline = setTimeout(
-              () => controller.abort(new Error("Active PR observation deadline exceeded")),
-              options.timeoutMs ?? 90_000,
-            );
+            // Record the unfinished stage names at the deadline before
+            // transport cancellation drains and clears the pending map.
+            const pendingStages = new Map<string, number>();
+            const deadline = setTimeout(() => {
+              const pending = [...pendingStages.entries()]
+                .map(([stage, started]) => `${stage} (${Date.now() - started}ms)`)
+                .join(", ");
+              controller.abort(
+                new Error(
+                  `Active PR observation deadline exceeded${pending ? `; pending: ${pending}` : ""}`,
+                ),
+              );
+            }, options.timeoutMs ?? 90_000);
             try {
               if (health?.status === "degraded") save({ ...health, status: "recovering" });
               const transports = new Set<Promise<unknown>>();
               const task = withTrackedGitHubReads(transports, () =>
                 withProcessCancellationSignal(signal, () =>
-                  observeActivePullRequest({ ...options, signal }),
+                  observeActivePullRequest({
+                    ...options,
+                    signal,
+                    onReadStage: (stage, active) => {
+                      if (active) pendingStages.set(stage, Date.now());
+                      else pendingStages.delete(stage);
+                    },
+                  }),
                 ),
               );
               let abort: () => void = () => undefined;
@@ -355,28 +423,65 @@ export async function withActivePrObservation<T>(
                 }
               });
               if (result === "superseded") return;
-              if (health?.failures) {
+              if (result === "external-head") {
+                // Keep monitoring terminal PR outcomes but avoid a rapid loop
+                // against a human-advanced head that has not been adopted.
                 save({
-                  status: "healthy",
+                  status: "external-head-wait",
                   failures: 0,
-                  retryAt: null,
-                  recoveredAt: new Date().toISOString(),
+                  retryAt: new Date(Date.now() + 5 * 60_000).toISOString(),
                 });
-                logger
-                  .child({
-                    projectId: options.project.id,
-                    ...(options.authority.cardId ? { cardId: options.authority.cardId } : {}),
-                  })
-                  .event(
-                    `Active PR observation recovered; attempt ${options.authority.store.attemptId}`,
-                  );
+                return;
+              }
+              if (health?.status === "external-head-wait") {
+                save({ status: "healthy", failures: 0, retryAt: null });
+              }
+              if (health?.failures) {
+                // One successful read between timeouts is not a recovery.
+                // Keep failure backoff and the original diagnostic identity
+                // until two consecutive complete snapshots are verified.
+                if ((health.consecutiveSuccesses ?? 0) === 0) {
+                  save({
+                    ...health,
+                    status: "recovering",
+                    consecutiveSuccesses: 1,
+                    retryAt: new Date(Date.now() + options.intervalMs).toISOString(),
+                  });
+                } else {
+                  const now = Date.now();
+                  const reportRecovery =
+                    health.recoveredAt === undefined ||
+                    now - Date.parse(health.recoveredAt) >= 15 * 60_000;
+                  save({
+                    ...health,
+                    status: "healthy",
+                    failures: 0,
+                    consecutiveSuccesses: 0,
+                    retryAt: null,
+                    ...(reportRecovery ? { recoveredAt: new Date(now).toISOString() } : {}),
+                  });
+                  if (reportRecovery)
+                    logger
+                      .child({
+                        projectId: options.project.id,
+                        ...(options.authority.cardId ? { cardId: options.authority.cardId } : {}),
+                      })
+                      .event(
+                        `Active PR observation recovered; attempt ${options.authority.store.attemptId}`,
+                      );
+                }
               }
             } catch (error) {
               if (control.signal.aborted || options.signal.aborted) return;
               try {
                 const failures = Math.min((health?.failures ?? 0) + 1, 16);
+                const timeoutReason = controller.signal.aborted ? controller.signal.reason : null;
                 const message = sanitizeControlledText(
-                  error instanceof Error ? error.message : "Unknown observation failure",
+                  timeoutReason instanceof Error
+                    ? timeoutReason.message
+                    : error instanceof Error
+                      ? error.message
+                      : "Unknown observation failure",
                 ).slice(0, 2000);
                 const identity =
                   error instanceof ProcessExecutionError
@@ -384,7 +489,11 @@ export async function withActivePrObservation<T>(
                     : controller.signal.aborted
                       ? "timeout"
                       : message;
-                const changed = health?.identity !== identity;
+                const changed =
+                  health?.identity !== identity ||
+                  (health?.status === "healthy" &&
+                    health.recoveredAt !== undefined &&
+                    Date.now() - Date.parse(health.recoveredAt) >= 60 * 60_000);
                 const diagnostic = changed
                   ? options.authority.store.writeArtifact(
                       Buffer.from(
@@ -399,12 +508,16 @@ export async function withActivePrObservation<T>(
                       "application/json",
                     ).id
                   : health?.diagnosticReference;
-                const since = health?.since ?? new Date().toISOString();
+                const since = changed
+                  ? new Date().toISOString()
+                  : (health?.since ?? new Date().toISOString());
                 save({
                   status: failures >= 2 ? "degraded" : "healthy",
                   failures,
                   identity,
                   since,
+                  consecutiveSuccesses: 0,
+                  ...(health?.recoveredAt === undefined ? {} : { recoveredAt: health.recoveredAt }),
                   ...(diagnostic === undefined ? {} : { diagnosticReference: diagnostic }),
                   retryAt: new Date(
                     Date.now() + Math.min(300_000, options.intervalMs * 2 ** Math.min(failures, 8)),

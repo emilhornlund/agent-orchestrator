@@ -1067,7 +1067,9 @@ const taskExecutionRecordSchema = z
       if (
         record.ciRepair.status !== "active" &&
         !["ci", "human-feedback", "done"].includes(record.phase) &&
-        !(record.ciRepair.status === "exhausted" && record.phase === "attention-required")
+        // Attention-required preserves completed CI history even when another
+        // operation (or external PR update) puts the task into recovery.
+        record.phase !== "attention-required"
       ) {
         ctx.addIssue({
           code: "custom",
