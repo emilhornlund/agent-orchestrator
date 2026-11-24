@@ -138,6 +138,8 @@ function fixture() {
         updatedAt: null,
       },
     ]),
+    getPullRequestCommitShas: vi.fn(async () => [headSha]),
+    isAncestorCommit: vi.fn(async () => true),
     getCiObservations: vi.fn(async () => ({
       headSha,
       checks: [],
@@ -156,6 +158,37 @@ function fixture() {
     },
   };
 }
+
+it("defers a verified external open-PR fast-forward without moving the owned checkpoint", async () => {
+  const f = fixture();
+  const nextHead = "b".repeat(40);
+  const before = f.tasks.read("card");
+  vi.mocked(f.github.getPullRequestStateByNumber).mockResolvedValue({
+    ...f.pr,
+    headRefOid: nextHead,
+  });
+  vi.mocked(f.github.getPullRequestCommitShas).mockResolvedValue([f.pr.headRefOid, nextHead]);
+
+  await expect(observeActivePullRequest(f)).resolves.toBe("superseded");
+  expect(f.tasks.read("card")).toEqual(before);
+  expect(readActivePrArrivals(f.authority)).toEqual([]);
+  expect(new TaskMutationQueue(f.project.contextRoot, f.project, f.authority).list()).toEqual([]);
+  expect(f.github.getCiObservations).not.toHaveBeenCalled();
+});
+
+it("rejects an unverified external head rewrite without accepting it as task output", async () => {
+  const f = fixture();
+  const nextHead = "b".repeat(40);
+  vi.mocked(f.github.getPullRequestStateByNumber).mockResolvedValue({
+    ...f.pr,
+    headRefOid: nextHead,
+  });
+  vi.mocked(f.github.getPullRequestCommitShas).mockResolvedValue([f.pr.headRefOid, nextHead]);
+  vi.mocked(f.github.isAncestorCommit).mockResolvedValue(false);
+
+  await expect(observeActivePullRequest(f)).rejects.toThrow("not descended");
+  expect(readActivePrArrivals(f.authority)).toEqual([]);
+});
 
 it("retains deduplicated arrivals during a blocked writer without changing its checkpoint, including restart", async () => {
   vi.useFakeTimers();
@@ -467,6 +500,10 @@ it("times out a delayed observer without overlapping it or invalidating the writ
   expect(lookup).toHaveBeenCalledOnce();
   expect(onError).toHaveBeenCalledOnce();
   expect(readActivePrObservationHealth(f.authority)).toMatchObject({ identity: "timeout" });
+  const diagnosticRef = onError.mock.calls[0]![1] as string;
+  expect(JSON.parse(f.store.readArtifact(diagnosticRef).toString("utf8"))).toMatchObject({
+    message: expect.stringContaining("pending: PR identity"),
+  });
   writer.resolve(42);
   await expect(result).resolves.toBe(42);
   late.resolve(f.pr);
