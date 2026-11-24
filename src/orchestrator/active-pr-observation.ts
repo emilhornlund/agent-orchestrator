@@ -19,6 +19,7 @@ import {
   withProcessCancellationSignal,
 } from "../process/process-runtime.js";
 import { logger } from "../logging/logger.js";
+import { verifyExternalOpenPrHeadAdvance } from "./verify-external-open-pr-head-advance.js";
 import { notifyAttentionRequired, type EmailNotifier } from "../notifications/email-notifier.js";
 
 const arrivalSchema = z.strictObject({
@@ -50,6 +51,20 @@ interface ActivePrObservationOptions {
   authority: ProjectRunAuthority;
   terminalOnly?: boolean;
   signal?: AbortSignal;
+  onReadStage?: (stage: string, active: boolean) => void;
+}
+
+async function observedRead<T>(
+  options: ActivePrObservationOptions,
+  stage: string,
+  read: () => Promise<T>,
+): Promise<T> {
+  options.onReadStage?.(stage, true);
+  try {
+    return await read();
+  } finally {
+    options.onReadStage?.(stage, false);
+  }
 }
 
 export async function observeActivePullRequest(
@@ -83,10 +98,12 @@ async function readActivePullRequest(
     project,
   };
   const readPr = () =>
-    github.getPullRequestStateByNumber({
-      ...lookup,
-      pullRequestNumber: task.pullRequest!.number,
-    });
+    observedRead(options, "PR identity", () =>
+      github.getPullRequestStateByNumber({
+        ...lookup,
+        pullRequestNumber: task.pullRequest!.number,
+      }),
+    );
   let pr = await readPr();
   options.signal?.throwIfAborted();
   if (!pr || pr.url !== task.pullRequest.url || !pr.headRefOid)
@@ -101,32 +118,61 @@ async function readActivePullRequest(
   if (!matchesRepository(pr))
     throw new Error("Active PR observation has ambiguous repository or terminal identity");
   if (options.terminalOnly && pr.state === "OPEN") return;
-  let current =
-    pr.state === "OPEN"
-      ? {
-          feedback: await github.findChangesRequestedPullRequest(lookup, true),
-          comments: await github.getPullRequestConversationComments({
-            ...lookup,
-            pullRequestUrl: pr.url,
-          }),
-          ci: await github.getCiObservations({
-            ...lookup,
-            defaultBranch: project.repository.defaultBranch,
-            headSha: pr.headRefOid,
-            pullRequestNumber: task.pullRequest.number,
-            requireAvailableReads: true,
-          }),
-        }
-      : null;
-  let baseRelation =
-    current !== null && project.maintenance?.enabled !== false
-      ? await github.comparePullRequestHeadToBase({
+  if (pr.state === "OPEN" && pr.headRefOid !== task.pullRequest.headSha) {
+    await observedRead(options, "external PR head verification", () =>
+      verifyExternalOpenPrHeadAdvance({
+        github,
+        project,
+        cwd: lookup.cwd,
+        cardId: task.cardId,
+        pullRequestNumber: task.pullRequest!.number,
+        recordedHeadSha: task.pullRequest!.headSha!,
+        observedHeadSha: pr.headRefOid!,
+      }),
+    );
+    // No new-head CI or feedback mutations may be queued against the
+    // previous publication checkpoint. Terminal PR observation remains live.
+    return "superseded";
+  }
+  let current: {
+    feedback: Awaited<ReturnType<GitHubClient["findChangesRequestedPullRequest"]>>;
+    comments: Awaited<ReturnType<GitHubClient["getPullRequestConversationComments"]>>;
+    ci: Awaited<ReturnType<GitHubClient["getCiObservations"]>>;
+  } | null = null;
+  let baseRelation: "current" | "behind" | "diverged" | "uncertain" = "uncertain";
+  if (pr.state === "OPEN") {
+    // These reads are independent and bound to the same initial PR head.
+    // A second PR read below rejects any snapshot that changed mid-flight.
+    const [feedback, comments, ci, relation] = await Promise.all([
+      observedRead(options, "review feedback", () =>
+        github.findChangesRequestedPullRequest(lookup, true),
+      ),
+      observedRead(options, "conversation comments", () =>
+        github.getPullRequestConversationComments({ ...lookup, pullRequestUrl: pr.url }),
+      ),
+      observedRead(options, "CI observations", () =>
+        github.getCiObservations({
           ...lookup,
-          baseBranch: project.repository.defaultBranch,
-          headSha: pr.headRefOid,
+          defaultBranch: project.repository.defaultBranch,
+          headSha: pr.headRefOid!,
+          pullRequestNumber: task.pullRequest!.number,
           requireAvailableReads: true,
-        })
-      : "uncertain";
+        }),
+      ),
+      project.maintenance?.enabled !== false
+        ? observedRead(options, "base comparison", () =>
+            github.comparePullRequestHeadToBase({
+              ...lookup,
+              baseBranch: project.repository.defaultBranch,
+              headSha: pr.headRefOid!,
+              requireAvailableReads: true,
+            }),
+          )
+        : Promise.resolve("uncertain" as const),
+    ]);
+    current = { feedback, comments, ci };
+    baseRelation = relation;
+  }
   if (current !== null) {
     const confirmed = await readPr();
     if (
@@ -327,16 +373,32 @@ export async function withActivePrObservation<T>(
           .run(async () => {
             const controller = new AbortController();
             const signal = AbortSignal.any([options.signal, control.signal, controller.signal]);
-            const deadline = setTimeout(
-              () => controller.abort(new Error("Active PR observation deadline exceeded")),
-              options.timeoutMs ?? 90_000,
-            );
+            // Record the unfinished stage names at the deadline before
+            // transport cancellation drains and clears the pending map.
+            const pendingStages = new Map<string, number>();
+            const deadline = setTimeout(() => {
+              const pending = [...pendingStages.entries()]
+                .map(([stage, started]) => `${stage} (${Date.now() - started}ms)`)
+                .join(", ");
+              controller.abort(
+                new Error(
+                  `Active PR observation deadline exceeded${pending ? `; pending: ${pending}` : ""}`,
+                ),
+              );
+            }, options.timeoutMs ?? 90_000);
             try {
               if (health?.status === "degraded") save({ ...health, status: "recovering" });
               const transports = new Set<Promise<unknown>>();
               const task = withTrackedGitHubReads(transports, () =>
                 withProcessCancellationSignal(signal, () =>
-                  observeActivePullRequest({ ...options, signal }),
+                  observeActivePullRequest({
+                    ...options,
+                    signal,
+                    onReadStage: (stage, active) => {
+                      if (active) pendingStages.set(stage, Date.now());
+                      else pendingStages.delete(stage);
+                    },
+                  }),
                 ),
               );
               let abort: () => void = () => undefined;
@@ -375,8 +437,13 @@ export async function withActivePrObservation<T>(
               if (control.signal.aborted || options.signal.aborted) return;
               try {
                 const failures = Math.min((health?.failures ?? 0) + 1, 16);
+                const timeoutReason = controller.signal.aborted ? controller.signal.reason : null;
                 const message = sanitizeControlledText(
-                  error instanceof Error ? error.message : "Unknown observation failure",
+                  timeoutReason instanceof Error
+                    ? timeoutReason.message
+                    : error instanceof Error
+                      ? error.message
+                      : "Unknown observation failure",
                 ).slice(0, 2000);
                 const identity =
                   error instanceof ProcessExecutionError

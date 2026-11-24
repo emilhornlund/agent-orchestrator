@@ -15,6 +15,7 @@ import type { TrelloCard } from "../trello/trello-client.js";
 import { TaskExecutionStore } from "../task-session/task-execution-store.js";
 import { logger } from "../logging/logger.js";
 import { verifyMergedTaskPrHeadContinuity } from "./verify-merged-task-pr-head-continuity.js";
+import { verifyExternalOpenPrHeadAdvance } from "./verify-external-open-pr-head-advance.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { TaskMutationQueue } from "../task-session/task-mutation-queue.js";
 import { recordTerminalPrFence } from "../task-session/terminal-pr-fence.js";
@@ -180,11 +181,6 @@ export async function observeTaskSessionReviewCards(
         !owningCiReviewCheckpoint)
     )
       continue;
-    if (pullRequest.headRefOid !== headSha) {
-      throw new Error(
-        `Authoritative pull request identity or head changed for Human Review card ${card.id}`,
-      );
-    }
     const [owner, repository] = project.repository.github.split("/");
     const expectedNumber = Number(new URL(record.pullRequest.url).pathname.split("/").at(-1));
     const hasVerifiedOpenIdentity =
@@ -202,6 +198,25 @@ export async function observeTaskSessionReviewCards(
       throw new Error(
         `Open pull request metadata or ownership is ambiguous for Human Review card ${card.id}`,
       );
+    }
+    if (pullRequest.headRefOid !== headSha) {
+      if (!hasVerifiedOpenIdentity || !pullRequest.headRefOid) {
+        throw new Error(
+          `Authoritative pull request identity or head changed for Human Review card ${card.id}`,
+        );
+      }
+      await verifyExternalOpenPrHeadAdvance({
+        github,
+        project,
+        cwd: lookup.cwd,
+        cardId: card.id,
+        pullRequestNumber: expectedNumber,
+        recordedHeadSha: headSha,
+        observedHeadSha: pullRequest.headRefOid,
+      });
+      // A verified human extension is not authorization to advance the local
+      // task checkpoint. Preserve both heads until serialized reconciliation.
+      continue;
     }
     let baseRelation: "current" | "behind" | "diverged" | "uncertain" = "uncertain";
     if (hasVerifiedOpenIdentity && typeof github.comparePullRequestHeadToBase === "function") {

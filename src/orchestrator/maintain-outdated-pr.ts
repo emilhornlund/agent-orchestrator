@@ -390,8 +390,9 @@ export async function maintainOutdatedPr(
   )
     throw new Error("Maintenance task ownership is ambiguous");
   if (
-    path.resolve(worktreePath) !==
-      path.join(path.resolve(project.repository.worktreeRoot), card.id) ||
+    // Attempt-scoped worktrees use <card-id>--<attempt-id>; never infer a
+    // legacy card-only path when the canonical attempt pins a different one.
+    path.resolve(worktreePath) !== path.resolve(taskResources(project, card.id).path) ||
     fs.lstatSync(worktreePath).isSymbolicLink() ||
     fs.realpathSync(worktreePath) === fs.realpathSync(project.repository.path) ||
     (await git.getCommonGitDirectory(worktreePath)) !==

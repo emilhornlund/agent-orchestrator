@@ -30,6 +30,42 @@ const record: TaskExecutionRecord = {
 };
 
 describe("parseTaskExecutionRecord", () => {
+  it.each(["passed", "stopped", "exhausted"] as const)(
+    "preserves a %s CI repair checkpoint in attention-required recovery",
+    (status) => {
+      const preserved = parseTaskExecutionRecord({
+        ...record,
+        phase: "attention-required",
+        ciRepair: {
+          cycleId: "ci-cycle",
+          headSha: record.pullRequest!.headSha,
+          status,
+          ...(status === "stopped" ? { stopReason: "no-change" } : {}),
+          maxAttempts: 2,
+        },
+      });
+      expect(preserved.ciRepair?.status).toBe(status);
+      expect(parseTaskExecutionRecord(JSON.parse(JSON.stringify(preserved)))).toEqual(preserved);
+    },
+  );
+
+  it("rejects completed CI repair checkpoints during implementation or validation", () => {
+    for (const phase of ["implementation", "validation"] as const) {
+      expect(() =>
+        parseTaskExecutionRecord({
+          ...record,
+          phase,
+          ciRepair: {
+            cycleId: "ci-cycle",
+            headSha: record.pullRequest!.headSha,
+            status: "stopped",
+            stopReason: "no-change",
+          },
+        }),
+      ).toThrow("Completed CI repair state must remain");
+    }
+  });
+
   it.each(["active", "passed"] as const)(
     "rejects a completed review stop reason on a %s cycle",
     (status) => {
