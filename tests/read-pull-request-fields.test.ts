@@ -53,6 +53,18 @@ it("redacts registered credentials from the returned API payload", async () => {
   expect(JSON.parse(result)).toMatchObject({ body: "[REDACTED]" });
 });
 
+it("does not substitute ambient credentials for an unavailable App credential", async () => {
+  vi.stubEnv("GH_TOKEN", "ambient-token");
+  try {
+    await expect(
+      readPullRequestFields({ ...options, credential: { ...options.credential, environment: {} } }),
+    ).rejects.toThrow("invalid credential");
+    expect(fetchMock).not.toHaveBeenCalled();
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
 it.each([401, 403, 429, 503])(
   "reports HTTP %s without response bodies or credentials",
   async (status) => {

@@ -21,6 +21,9 @@ import {
 } from "../src/process/process-runtime.js";
 import { redactSecrets } from "../src/security/redact-secrets.js";
 import { appendSessionLog } from "../src/logging/session-log.js";
+import { GitHubCredentialProvider } from "../src/github/github-credential-provider.js";
+import { GitHubClient, isRetryableGitHubError } from "../src/github/github-client.js";
+import type { ProjectConfig } from "../src/config/config.js";
 
 const githubApp = {
   appId: "123456",
@@ -43,6 +46,59 @@ function tokenResponse(token: string, expiresAt: string): Response {
 }
 
 describe("GitHubAppAuthenticator", () => {
+  it.each([502, 429, 500, 503, 507, "network", 401, 403, 404, "configuration", "key"] as const)(
+    "preserves the structured App credential disposition for %s through provider and consumer wrappers",
+    async (failure) => {
+      const configuredProject = {
+        id: "project",
+        repository: {
+          github: repository,
+          githubApp:
+            failure === "configuration" ? { ...githubApp, privateKeyPath: "relative" } : githubApp,
+        },
+      } as ProjectConfig;
+      const request = vi.fn(async () => {
+        if (failure === "network") throw new TypeError("socket reset");
+        return response(null, typeof failure === "number" ? failure : 500);
+      });
+      const provider = new GitHubCredentialProvider({
+        authenticator: new GitHubAppAuthenticator({
+          readPrivateKey: async () => {
+            if (failure === "key") throw new Error("not readable");
+            return privateKeyPem;
+          },
+          request,
+        }),
+      });
+      const transient =
+        failure === "network" ||
+        (typeof failure === "number" && (failure === 429 || failure >= 500));
+      const run = vi.fn();
+      const client = new GitHubClient(run, provider);
+      const error = await client
+        .findPullRequest({
+          cwd: "/repo",
+          repository,
+          headBranch: "agent/card",
+          project: configuredProject,
+        })
+        .catch((error: unknown) => error);
+      expect(error).toMatchObject({ name: "GitHubCredentialResolutionError", transient });
+      expect(isRetryableGitHubError(error)).toBe(transient);
+      expect(
+        isRetryableGitHubError(
+          new Error(
+            transient ? "authentication failed" : "rate limit and network timeout (HTTP 502)",
+            { cause: new Error("GitHub operation failed", { cause: error }) },
+          ),
+        ),
+      ).toBe(transient);
+      expect(run).not.toHaveBeenCalled();
+      await expect(client.validateRepositoryAccess(configuredProject)).rejects.toMatchObject({
+        disposition: transient ? "unavailable" : "invalid",
+      });
+    },
+  );
   it("does not cancel a writer's shared token exchange when an observer stops", async () => {
     const observer = new AbortController();
     let resolve!: (response: Response) => void;

@@ -19,16 +19,23 @@ import { ProjectRunAuthority } from "../src/task-session/project-run-authority.j
 import type { RunRecord } from "../src/task-session/run-record.js";
 import { withGitHubOperationProject } from "../src/github/github-operation-context.js";
 import type { GitHubClient } from "../src/github/github-client.js";
+import { GitHubAppApiError } from "../src/github/github-app-authenticator.js";
+import { GitHubCredentialResolutionError } from "../src/github/github-credential-provider.js";
+import { FeedbackLedgerStore } from "../src/task-session/feedback-ledger-store.js";
 import { OpenCodeClient, type OpenCodeRunOptions } from "../src/opencode/opencode-client.js";
 import { CommandRunner, type CommandRunOptions } from "../src/process/command-runner.js";
 import { beginProcessEvidence, configureProcessRuntime } from "../src/process/process-runtime.js";
 import { inspectPublishedFeedbackRecovery } from "../src/orchestrator/published-feedback-recovery.js";
 import { pollProject } from "../src/orchestrator/poll-project.js";
-import { runOrchestrator } from "../src/orchestrator/run-orchestrator.js";
+import {
+  hasDueTaskSessionRecoveryWait,
+  runOrchestrator,
+} from "../src/orchestrator/run-orchestrator.js";
 import { runStartup } from "../src/startup/run-startup.js";
 import * as FeedbackClassifier from "../src/task-session/classify-current-feedback.js";
 import {
   readActivePrObservationHealth,
+  observeActivePullRequest,
   withActivePrObservation,
 } from "../src/orchestrator/active-pr-observation.js";
 import { beginInitialPublication } from "../src/orchestrator/initial-publication.js";
@@ -56,6 +63,7 @@ let originalPrimaryMode: string | undefined;
 const leases: ProjectOwnershipLease[] = [];
 interface LifecycleScenario {
   publishedReadRecovery?: "ci" | "publication" | "classification";
+  credentialRecovery?: "live" | "restart" | "legacy-502";
   preparedValidationFailure?: boolean;
   draft: boolean;
   terminal: "merged" | "closed";
@@ -98,6 +106,15 @@ afterEach(async () => {
 
 describe("task lifecycle through pollProject", () => {
   it.each<LifecycleScenario>([
+    ...(["live", "restart", "legacy-502"] as const).map((credentialRecovery) => ({
+      draft: false,
+      terminal: "merged" as const,
+      destination: "done" as const,
+      ackLoss: false,
+      quality: "both" as const,
+      feedbackQuality: "validation" as const,
+      credentialRecovery,
+    })),
     ...(["ci", "publication", "classification"] as const).map((publishedReadRecovery) => ({
       draft: false,
       terminal: "merged" as const,
@@ -299,7 +316,7 @@ describe("task lifecycle through pollProject", () => {
       }),
     ),
   ] as const)(
-    "preserves the owned lifecycle (quality=$quality, draft=$draft, terminal=$terminal, ackLoss=$ackLoss, correctionFailure=$correctionFailure, feedbackQuality=$feedbackQuality, legacyClassifierLayout=$legacyClassifierLayout, terminalDuringFeedback=$terminalDuringFeedback, preparedReview=$preparedReview, ciReviewHandoffs=$ciReviewHandoffs, feedbackReviewRecovery=$feedbackReviewRecovery, ciReviewRecovery=$ciReviewRecovery, ciQuality=$ciQuality, targetMerge=$targetMerge, ciBudget=$ciBudget, preparedValidationFailure=$preparedValidationFailure, publishedReadRecovery=$publishedReadRecovery)",
+    "preserves the owned lifecycle (quality=$quality, draft=$draft, terminal=$terminal, ackLoss=$ackLoss, correctionFailure=$correctionFailure, feedbackQuality=$feedbackQuality, legacyClassifierLayout=$legacyClassifierLayout, terminalDuringFeedback=$terminalDuringFeedback, preparedReview=$preparedReview, ciReviewHandoffs=$ciReviewHandoffs, feedbackReviewRecovery=$feedbackReviewRecovery, ciReviewRecovery=$ciReviewRecovery, ciQuality=$ciQuality, targetMerge=$targetMerge, ciBudget=$ciBudget, preparedValidationFailure=$preparedValidationFailure, publishedReadRecovery=$publishedReadRecovery, credentialRecovery=$credentialRecovery)",
     async ({
       draft,
       terminal,
@@ -314,6 +331,7 @@ describe("task lifecycle through pollProject", () => {
       preparedReview,
       preparedValidationFailure,
       publishedReadRecovery,
+      credentialRecovery,
       ciReviewHandoffs = false,
       feedbackReviewRecovery,
       ciReviewRecovery,
@@ -889,9 +907,13 @@ describe("task lifecycle through pollProject", () => {
           if (!correctionFeedback) return null;
           const pr = prs.get(input.headBranch);
           if (!pr) return null;
+          const headSha = credentialRecovery
+            ? ((await git.getRemoteBranchSha(source, "origin", input.headBranch, project)) ??
+              pr.headRefOid)
+            : pr.headRefOid;
           return {
             url: pr.url,
-            headSha: pr.headRefOid,
+            headSha,
             feedback: {
               reviews: [
                 {
@@ -1980,6 +2002,220 @@ describe("task lifecycle through pollProject", () => {
       const firstPr = prs.get(firstBranch);
       expect(firstPr).toBeDefined();
       expect(firstPr!.body).not.toContain(contextRoot);
+      if (credentialRecovery) {
+        const owner = activeAuthority!;
+        const tasks = new TaskExecutionStore(contextRoot, project, owner);
+        const worktree = path.join(worktrees, firstWorktreeName);
+        const outage = new GitHubCredentialResolutionError(
+          project,
+          new GitHubAppApiError("Bad Gateway", 502),
+        );
+        const reason = `Authoritative recovery snapshot could not be read: ${outage.message}`;
+        const checkpoint = owner.store.read()!;
+        if (credentialRecovery === "legacy-502") {
+          tasks.compareAndSwap("first", record!.revision, {
+            ...transitionTaskExecutionRecord(record!, {
+              type: "attention-required",
+              eventId: "historical-502-snapshot-failure",
+              projectId: project.id,
+              cardId: "first",
+              operationKey: record!.operationKey,
+              occurredAt: new Date(
+                Math.max(Date.now(), Date.parse(record!.updatedAt) + 1),
+              ).toISOString(),
+            }),
+            recoveryAttentionReason: reason,
+          });
+          expect(owner.store.read()).toMatchObject({
+            lifecycle: "waiting",
+            checkpoint: "human-review",
+            publicationState: "open",
+            wait: { reason: "task-attention-required", dependency: "operator", retryAt: null },
+          });
+          const retained = tasks.read("first")!;
+          const inspect = () =>
+            owner.run(async () =>
+              inspectPublishedFeedbackRecovery({
+                project,
+                authority: owner,
+                task: retained,
+                card: await trello.getCard("first"),
+                git,
+                github,
+                commands,
+                signal,
+              }),
+            );
+          await expect(inspect()).rejects.toThrow("process termination evidence");
+          owner.run(() => {
+            const evidence = beginProcessEvidence("opencode run --format json", worktree);
+            evidence.finish("success", { exitCode: 0, treeStopped: true });
+          });
+          const wrongOwner = vi.spyOn(github, "findPullRequestState").mockResolvedValueOnce({
+            ...firstPr!,
+            mergedAt: null,
+            headRepositoryOwner: { login: "another-owner" },
+          });
+          await expect(inspect()).rejects.toThrow("recorded open PR and exact head");
+          wrongOwner.mockRestore();
+          const queue = new TaskMutationQueue(contextRoot, project, owner);
+          queue.enqueue({
+            kind: "feedback",
+            projectId: project.id,
+            cardId: "first",
+            eventId: "older-writer",
+            operationKey: "older-writer",
+            enqueuedAt: record!.updatedAt,
+          });
+          expect(queue.claimNext()?.eventId).toBe("older-writer");
+          await expect(inspect()).rejects.toThrow();
+          expect(hasDueTaskSessionRecoveryWait(owner.store.read())).toBe(false);
+          queue.complete("older-writer");
+        } else {
+          const ci = github.getCiObservations.bind(github);
+          const unavailable = vi
+            .spyOn(github, "getCiObservations")
+            .mockImplementationOnce(ci)
+            .mockRejectedValueOnce(outage);
+          await poll();
+          unavailable.mockRestore();
+          const current = tasks.read("first");
+          expect(current).toMatchObject({
+            phase: "human-feedback",
+            recoveryWait: { kind: "dependency", reason },
+          });
+          const retryAt = Date.parse(current!.recoveryWait!.retryAt);
+          expect(hasDueTaskSessionRecoveryWait(owner.store.read(), retryAt - 1)).toBe(false);
+          expect(hasDueTaskSessionRecoveryWait(owner.store.read(), retryAt)).toBe(true);
+        }
+        expect(owner.store.read()?.budgets).toEqual(checkpoint.budgets);
+        expect(tasks.read("first")?.retryCounters).toEqual(record!.retryCounters);
+        correctionFeedback = true;
+        loseFeedbackWorkingAck = false;
+        firstPr!.reviewDecision = "CHANGES_REQUESTED";
+        await owner.run(() => observeActivePullRequest({ project, github, authority: owner }));
+        const queue = new TaskMutationQueue(contextRoot, project, owner);
+        const queued = queue
+          .list()
+          .find((event) => event.kind === "feedback" && event.status === "queued")!;
+        expect(queued).toMatchObject({
+          dispatchReady: false,
+          observationArtifactId: expect.any(String),
+        });
+        expect(
+          new FeedbackLedgerStore(contextRoot, project, owner).read("first")?.entries ?? [],
+        ).toEqual([]);
+        expect(feedbackPrimaryCorrections).toBe(0);
+        if (credentialRecovery !== "legacy-502")
+          vi.setSystemTime(Date.parse(tasks.read("first")!.recoveryWait!.retryAt));
+
+        const resumed = new AbortController();
+        let finalTask: TaskExecutionRecord | null = null;
+        let finalObservation: ReturnType<TaskMutationQueue["get"]>;
+        let finalLedger: ReturnType<FeedbackLedgerStore["read"]>;
+        let finalRun: RunRecord | null = null;
+        const runWorker = async (currentOwner: ProjectRunAuthority, run: () => Promise<void>) => {
+          const queue = new TaskMutationQueue(contextRoot, project, currentOwner);
+          const capture = () => {
+            finalTask = store.read("first");
+            finalObservation = queue.get(queued.eventId);
+            finalLedger = new FeedbackLedgerStore(contextRoot, project, currentOwner).read("first");
+            finalRun = currentOwner.store.read();
+          };
+          const timer = setInterval(() => {
+            capture();
+            const task = finalTask;
+            if (
+              task?.pullRequest?.headSha !== record!.pullRequest!.headSha &&
+              lists.get("first") === "review" &&
+              finalObservation?.status === "retired" &&
+              task?.phase === "human-feedback"
+            )
+              resumed.abort();
+          }, 50);
+          try {
+            await run();
+          } finally {
+            clearInterval(timer);
+            capture();
+          }
+        };
+        const deadline = setTimeout(() => resumed.abort(), 15_000);
+        try {
+          if (credentialRecovery === "live") {
+            await runWorker(owner, () =>
+              runOrchestrator(
+                trello,
+                git,
+                github,
+                openCode,
+                commands,
+                orchestrationConfig,
+                resumed.signal,
+                undefined,
+                undefined,
+                new Map([
+                  [project.id, { authority: owner, pinned, projectLease: lease, coordinationRoot }],
+                ]),
+              ),
+            );
+          } else {
+            await lease.release();
+            await runStartup(
+              orchestrationConfig,
+              { trello, git, github, opencode: openCode, commands },
+              resumed.signal,
+              {
+                validateToolchain: async () => undefined,
+                validateGitHubCli: async () => undefined,
+                validateProjectTrello: async () => undefined,
+                validateProjectGitHub: async () => undefined,
+                runOrchestrator: (...args) => {
+                  const resumedOwner = args[9]?.get(project.id)?.authority;
+                  if (!resumedOwner) throw new Error("Startup did not reacquire the owned task");
+                  expect(resumedOwner.store.attemptId).toBe(owner.store.attemptId);
+                  expect(resumedOwner.store.read()?.budgets).toEqual(checkpoint.budgets);
+                  authorities.set("first", resumedOwner);
+                  return runWorker(resumedOwner, () => runOrchestrator(...args));
+                },
+              },
+            );
+          }
+        } finally {
+          clearTimeout(deadline);
+        }
+        expect(finalTask).not.toBeNull();
+        const corrected = finalTask! as TaskExecutionRecord;
+        const persistedRun = finalRun as RunRecord | null;
+        const diagnostic = JSON.stringify({
+          phase: corrected.phase,
+          wait: persistedRun?.wait,
+          probe: persistedRun?.compatibility["legacy-published-feedback-recovery-v1"],
+          feedbackPrimaryCorrections,
+          lists: [...lists],
+        });
+        expect(corrected.phase, diagnostic).toBe("human-feedback");
+        expect(corrected.pullRequest?.headSha).not.toBe(record!.pullRequest!.headSha);
+        expect(corrected.pullRequest?.url).toBe(record!.pullRequest!.url);
+        expect(corrected.primarySessionId).toBe(record!.primarySessionId);
+        expect(corrected.expectedBranch).toBe(record!.expectedBranch);
+        expect(await git.getHeadSha(worktree)).toBe(corrected.pullRequest?.headSha);
+        expect(corrected.recoveryWait).toBeUndefined();
+        expect(corrected.recoveryAttentionReason).toBeUndefined();
+        expect(finalObservation!, diagnostic).toMatchObject({
+          status: "retired",
+          observationArtifactId: queued.observationArtifactId,
+        });
+        expect((finalLedger! as ReturnType<FeedbackLedgerStore["read"]>)?.entries).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ id: "202", actionability: "actionable" }),
+          ]),
+        );
+        expect(feedbackPrimaryCorrections).toBe(1);
+        expect(requests).toEqual([firstBranch]);
+        expect(lists.get("next")).toBe("ready");
+        return;
+      }
       if (targetMerge) {
         const published = record!.pullRequest!.headSha!;
         firstPr!.reviewDecision = "APPROVED";

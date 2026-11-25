@@ -337,7 +337,7 @@ budgets remain available through the adoption artifact. A continuing CI failure 
 stopped budget; an exact-head failed check absent from a complete retained failure set can establish
 a new episode. If the old failure set is unknown, it cannot establish that trigger.
 
-### Retained published classification failure
+### Retained published classification or GitHub App credential failure
 
 Keep the original named volumes and mount paths for coordination, context/artifacts, repository,
 worktree, and the service user's OpenCode home. Stop the previous service instance before acquiring
@@ -346,6 +346,18 @@ idle canonical attention checkpoint carrying the earlier classification-failure 
 verifies the original PR and exact head, trusted commit, local and remote branch, clean owned
 worktree, original session, prior process termination and absence of unresolved mutation ownership.
 An unverifiable prior execution is a blocker, not permission to replace the task.
+
+The same checks apply to older idle `ci` and `human-review` checkpoints that were escalated because
+the GitHub App installation-token exchange failed with HTTP 429, HTTP 5xx, or a network error while
+reading the authoritative recovery snapshot. In particular, this covers the HTTP 502 incident for
+[Klurigo PR #782](https://github.com/emilhornlund/klurigo/pull/782). Start the upgraded service
+normally with the original volumes and configuration. When GitHub is reachable and verification
+passes, polling restores the owning checkpoint and reads current feedback for the original PR. The
+observation artifacts are retained; the existing feedback ledger and mutation queue track the
+current requests, including edits/deletions and prior attempts. Reviewers do not need to resubmit
+requests that remain current. Do not edit runtime state or reset the card. Invalid App credentials,
+insufficient permissions, configuration failures, and unrelated attention reasons are not eligible
+for this restoration.
 
 For Klurigo, the expected identity from the incident is project `klurigo`, card
 `6b02ade22e99a0a22377c6f9`, attempt `d0f480db-592d-4fa8-80e5-164ae843e695`,

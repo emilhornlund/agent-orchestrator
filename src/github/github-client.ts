@@ -37,7 +37,7 @@ import {
 } from "../process/process-runtime.js";
 import {
   GitHubCredentialProvider,
-  GitHubCredentialResolutionError,
+  findGitHubCredentialResolutionError,
   type GitHubCredential,
   type GitHubCredentialEnvironment,
 } from "./github-credential-provider.js";
@@ -824,7 +824,9 @@ export type RunGitHubCommand = (
   onSuccessfulOutput?: (origin: GitHubOutputOrigin) => void,
 ) => Promise<string>;
 
-const transientHttpStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
+function isTransientHttpStatus(status: number): boolean {
+  return [408, 425, 429].includes(status) || (status >= 500 && status < 600);
+}
 
 function errorChain(error: unknown): Error[] {
   const errors: Error[] = [];
@@ -853,22 +855,23 @@ function hasTransientHttpStatus(error: unknown, message: string): boolean {
     statusValues.push(candidate.status, candidate.statusCode, candidate.response?.status);
   }
 
-  if (
-    statusValues.some((status) => typeof status === "number" && transientHttpStatuses.has(status))
-  ) {
+  if (statusValues.some((status) => typeof status === "number" && isTransientHttpStatus(status))) {
     return true;
   }
 
-  const statusMatches = message.match(/\b(?:HTTP\s+)?([45]\d{2})\b/gi) ?? [];
+  const statusMatches =
+    message.match(/\b(?:HTTP\s+[45]\d{2}|408|425|429|500|502|503|504)\b/gi) ?? [];
 
   return statusMatches.some((match) => {
     const status = Number(match.match(/\d{3}/)?.[0]);
-    return transientHttpStatuses.has(status);
+    return isTransientHttpStatus(status);
   });
 }
 
 /** Returns true only for failures that can reasonably change on a later read. */
 export function isRetryableGitHubError(error: unknown): boolean {
+  const credentials = findGitHubCredentialResolutionError(error);
+  if (credentials) return credentials.transient;
   if (
     errorChain(error).some(
       (entry) =>
@@ -932,6 +935,7 @@ export function isRetryableGitHubError(error: unknown): boolean {
       entry.includes("temporary network") ||
       entry.includes("temporary connectivity") ||
       entry.includes("temporary failure in name resolution") ||
+      entry.includes("could not resolve host") ||
       entry.includes("network error") ||
       entry.includes("network is unreachable") ||
       entry.includes("connection reset") ||
@@ -3479,13 +3483,10 @@ export class GitHubClient {
     try {
       credential = await this.resolveCredential(project);
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "GitHub credential resolution failed";
-      const status = message.match(/HTTP\s+(\d{3})/i)?.[1];
+      const failure = findGitHubCredentialResolutionError(error);
+      const status = failure?.status;
       throw new ProjectResourceError(
-        error instanceof GitHubCredentialResolutionError && error.transient
-          ? "unavailable"
-          : "invalid",
+        failure?.transient ? "unavailable" : "invalid",
         `GitHub authentication check failed for project "${project.id}"${status ? ` (HTTP ${status})` : "; verify configured credentials"}`,
         error,
       );
@@ -3500,11 +3501,7 @@ export class GitHubClient {
     } catch (error) {
       const message = error instanceof Error ? error.message : "GitHub repository lookup failed";
       const status = message.match(/(?:HTTP|status)\s+(401|403|404)\b/i)?.[1];
-      const transient =
-        isRetryableGitHubError(error) ||
-        /timed?\s*out|connection reset|connection refused|could not resolve|network|HTTP\s+5\d\d/i.test(
-          message,
-        );
+      const transient = isRetryableGitHubError(error);
       throw new ProjectResourceError(
         transient ? "unavailable" : "invalid",
         `GitHub repository access check failed for project "${project.id}" (${status ? `HTTP ${status}; verify repository and credentials` : transient ? "temporarily unavailable; retrying" : "verify repository access and credentials"})`,

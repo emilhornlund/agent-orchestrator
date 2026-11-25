@@ -282,7 +282,16 @@ async function readActivePullRequest(
     if (current.feedback !== null || current.comments.length > 0) {
       // Semantic classification is performed by the serialized scheduler, never
       // concurrently against its ledger. This arrival cannot dispatch a writer.
-      queue.enqueue({
+      const wasAwaitingClassification = queue
+        .list()
+        .some(
+          (event) =>
+            event.cardId === task.cardId &&
+            event.status === "queued" &&
+            event.kind === "feedback" &&
+            event.dispatchReady === false,
+        );
+      const queued = queue.enqueue({
         projectId: project.id,
         cardId: task.cardId,
         eventId: `observed-feedback:${id}`,
@@ -292,6 +301,12 @@ async function readActivePullRequest(
         dispatchReady: false,
         observationArtifactId: artifactId,
       });
+      if (!wasAwaitingClassification && queued.status === "queued")
+        logger
+          .child({ projectId: project.id, cardId: task.cardId })
+          .event(
+            `Observed feedback on ${pr.url}; retained for classification before dispatch (${queued.eventId})`,
+          );
     }
     const ci = evaluateCiChecks({
       expectedHeadSha: pr.headRefOid!,

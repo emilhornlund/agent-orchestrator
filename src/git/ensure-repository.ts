@@ -3,7 +3,7 @@ import fs from "node:fs";
 import type { ProjectConfig } from "../config/config.js";
 import {
   GitHubCredentialProvider,
-  GitHubCredentialResolutionError,
+  findGitHubCredentialResolutionError,
   type GitHubCredential,
 } from "../github/github-credential-provider.js";
 import { CommandRunner } from "../process/command-runner.js";
@@ -81,8 +81,8 @@ export async function ensureRepository(
     const safeError = redactError(error, credential?.secretValues);
     const safeMessage = redactSecrets(safeError.message, credential?.secretValues);
     const disposition =
-      (error instanceof GitHubCredentialResolutionError && error.transient) ||
-      isKnownTransientGitHubFailure(safeMessage)
+      (findGitHubCredentialResolutionError(error)?.transient ??
+      isKnownTransientGitHubFailure(safeMessage))
         ? "unavailable"
         : "invalid";
 

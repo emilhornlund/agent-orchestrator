@@ -34,6 +34,7 @@ export interface ObservedTaskSessionReviewCard {
   ciEvaluation: CiCheckEvaluation;
   expectedCheckNames: string[];
   feedbackIds: string[];
+  queuedFeedbackObservationIds?: readonly string[];
   requestedChanges: ChangesRequestedPullRequest | null;
   conversationComments: PullRequestConversationComment[];
   automationActor?: string | null;
@@ -125,6 +126,22 @@ export async function observeTaskSessionReviewCards(
   for (const card of cards) {
     const record = taskRecordStore.read(card.id);
     if (record === null) continue;
+    const authority = ProjectRunAuthority.current(project.id);
+    // A newer arrival may be queued while these reads or classification are in flight.
+    // Only supersede observations already retained before this authoritative refresh.
+    const queuedFeedbackObservationIds =
+      authority?.cardId === card.id
+        ? new TaskMutationQueue(authority.store.storageRoot, project, authority)
+            .list()
+            .filter(
+              (event) =>
+                event.cardId === card.id &&
+                event.kind === "feedback" &&
+                event.status === "queued" &&
+                event.observationArtifactId !== undefined,
+            )
+            .map((event) => event.eventId)
+        : undefined;
     const failedFeedbackReview =
       record.phase === "review" &&
       record.reviewRepair?.status === "exhausted" &&
@@ -317,6 +334,7 @@ export async function observeTaskSessionReviewCards(
       ciEvaluation,
       expectedCheckNames: expectationDecision.expectedCheckNames,
       feedbackIds,
+      ...(queuedFeedbackObservationIds === undefined ? {} : { queuedFeedbackObservationIds }),
       requestedChanges,
       conversationComments,
       baseRelation,

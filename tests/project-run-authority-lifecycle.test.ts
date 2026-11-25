@@ -198,10 +198,13 @@ describe("ProjectRunAuthority preparing lifecycle", () => {
         lifecycle: "waiting",
         checkpoint: "planning",
         wait: {
-          reason: "Essential dependency unavailable: github:read",
+          reason: "task-dependency-unavailable",
           dependency: "dependency",
         },
       });
+      expect(taskStore.read(task.cardId)?.recoveryWait?.reason).toBe(
+        "Essential dependency unavailable: github:read",
+      );
       const secondId = persistEssentialDependencyWait(
         resumed,
         task.cardId,

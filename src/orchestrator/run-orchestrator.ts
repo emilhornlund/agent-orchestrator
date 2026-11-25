@@ -66,12 +66,15 @@ import { parseTaskExecutionRecord } from "../task-session/task-execution-record.
 import { hasPendingSessionCreation } from "../task-session/reconcile-session-creation.js";
 import { isConclusiveOperationResolution } from "../task-session/run-record.js";
 import { isRetryableGitHubError } from "../github/github-client.js";
+import { findGitHubCredentialResolutionError } from "../github/github-credential-provider.js";
 import { isShutdownCancellation } from "../runtime/shutdown-cancellation.js";
 import { diagnosticEventIdentityText } from "../security/bounded-diagnostic.js";
 import { sanitizeControlledText } from "../security/redact-secrets.js";
 import { getLegacyPublishedGitHubReadRecoveryPhase } from "../task-session/reconcile-task-session.js";
 import { canRecheckReviewedPublication } from "../task-session/uncommitted-publication-recovery.js";
 import { externalHeadAttentionPhase } from "./reconcile-external-open-pr-head.js";
+import { readPublishedRecoveryWait } from "./published-feedback-recovery.js";
+import { TaskMutationQueue } from "../task-session/task-mutation-queue.js";
 
 export function hasDueTaskSessionRecoveryWait(
   authorityRecord: import("../task-session/run-record.js").RunRecord | null,
@@ -85,8 +88,10 @@ export function hasDueTaskSessionRecoveryWait(
   if (canRecheckReviewedPublication(authorityRecord, taskProjection)) return true;
   if (externalHeadAttentionPhase(authorityRecord, taskProjection) !== null) return true;
   const recoveryWait = taskProjection.recoveryWait;
-  if (getLegacyPublishedGitHubReadRecoveryPhase(authorityRecord, taskProjection) !== null)
-    return true;
+  if (getLegacyPublishedGitHubReadRecoveryPhase(authorityRecord, taskProjection) !== null) {
+    const deferred = readPublishedRecoveryWait(authorityRecord, taskProjection);
+    return deferred === null || now >= Date.parse(deferred.retryAt);
+  }
   if (
     taskProjection.phase === "attention-required" &&
     taskProjection.terminalFailure?.outcome === "pending" &&
@@ -473,7 +478,7 @@ async function runProjectWorkerInner(
         logger
           .child({ projectId: project.id })
           .warn(
-            `Active PR observation deferred${error instanceof ProcessExecutionError ? ` (${error.classification})` : ""}; project state and retained arrivals are unchanged; diagnostics: ${diagnosticReference ?? "unavailable"}`,
+            `Active PR observation deferred${error instanceof ProcessExecutionError ? ` (${error.classification})` : ""}; ${findGitHubCredentialResolutionError(error)?.message ?? "project state and retained arrivals are unchanged"}; diagnostics: ${diagnosticReference ?? "unavailable"}`,
           ),
     },
     execute,
@@ -509,6 +514,7 @@ async function runProjectWorkerLoop(
   let suppressedFailureIdentity: string | undefined;
   let restoredFailureIdentity: string | undefined;
   let pendingTrelloValidation = deferredTrelloValidation;
+  let lastWaitReport: { identity: string; at: number } | undefined;
   const runtimeStorageRoot = project.contextRoot ?? DEFAULT_CONTEXT_ROOT;
 
   if (runContext?.blockedReason) {
@@ -866,8 +872,17 @@ async function runProjectWorkerLoop(
       }
       const authorityRecord = runContext?.authority?.store.read();
       const recoverableTaskWaitDue = hasDueTaskSessionRecoveryWait(authorityRecord ?? null);
+      const taskValue = authorityRecord?.compatibility[`task-execution-${authorityRecord.cardId}`];
+      const waitingTask = taskValue === undefined ? undefined : parseTaskExecutionRecord(taskValue);
+      const publishedRecoveryWait =
+        authorityRecord &&
+        waitingTask &&
+        getLegacyPublishedGitHubReadRecoveryPhase(authorityRecord, waitingTask) !== null
+          ? readPublishedRecoveryWait(authorityRecord, waitingTask)
+          : null;
       const resumableLegacyAttempt =
         authorityRecord?.lifecycle === "waiting" &&
+        publishedRecoveryWait === null &&
         authorityRecord.legacy.recoveryDisposition === "task-session-reconcile";
       if (
         runContext?.authority &&
@@ -877,14 +892,42 @@ async function runProjectWorkerLoop(
             !resumableLegacyAttempt &&
             !recoverableTaskWaitDue))
       ) {
-        logger
-          .child({ projectId: project.id })
-          .info(
-            `Canonical attempt is waiting (${authorityRecord?.wait.reason ?? "checkpoint unavailable"}); no workflow mutations will be dispatched`,
-          );
+        const reason =
+          publishedRecoveryWait?.reason ??
+          waitingTask?.recoveryAttentionReason ??
+          waitingTask?.recoveryWait?.reason ??
+          authorityRecord?.wait.reason ??
+          "checkpoint unavailable";
+        const retryAt = publishedRecoveryWait?.retryAt ?? authorityRecord?.wait.retryAt;
+        const queuedFeedback =
+          authorityRecord?.publicationState === "open" &&
+          new TaskMutationQueue(runtimeStorageRoot, project, runContext.authority)
+            .list()
+            .some(
+              (event) =>
+                event.cardId === authorityRecord.cardId &&
+                event.kind === "feedback" &&
+                event.status === "queued",
+            );
+        const identity = `${authorityRecord?.attemptId}:${reason}:${queuedFeedback}`;
+        if (
+          lastWaitReport?.identity !== identity ||
+          Date.now() - lastWaitReport.at >= 15 * 60_000
+        ) {
+          logger
+            .child({
+              projectId: project.id,
+              ...(authorityRecord ? { cardId: authorityRecord.cardId } : {}),
+            })
+            .info(
+              `${queuedFeedback ? "Queued human feedback cannot dispatch" : "Canonical attempt is waiting"}: ${reason}${retryAt ? `; next recovery check at ${retryAt}` : "; no writer authorized"}`,
+            );
+          lastWaitReport = { identity, at: Date.now() };
+        }
         await sleep(pollIntervalMilliseconds, signal);
         continue;
       }
+      if (authorityRecord?.lifecycle !== "waiting") lastWaitReport = undefined;
       // An already-pinned publication has its own paced service readback.
       // Re-running deferred startup resource validation here would funnel a
       // Trello outage into the legacy exhausted/manual-restart block instead
@@ -1090,8 +1133,9 @@ async function runProjectWorkerLoop(
         continue;
       }
 
+      const credentialFailure = findGitHubCredentialResolutionError(error);
       if (
-        !(error instanceof RetryableGitHubReconciliationError) &&
+        (!(error instanceof RetryableGitHubReconciliationError) || credentialFailure?.transient) &&
         isRetryableGitHubError(error) &&
         runContext?.authority?.cardId
       ) {
@@ -1099,6 +1143,12 @@ async function runProjectWorkerLoop(
         const attemptKey = `${cardId}:github-essential-read`;
         const attempt = (githubReadAttempts.get(attemptKey) ?? 0) + 1;
         githubReadAttempts.set(attemptKey, attempt);
+        if (attempt === 1 && credentialFailure?.transient)
+          logger
+            .child({ projectId: project.id, cardId })
+            .warn(
+              `Transient GitHub App credential failure; retrying: ${credentialFailure.message}`,
+            );
         if (attempt < MAX_GITHUB_RECONCILIATION_ATTEMPTS) {
           await sleep(getRetryBackoffDelayMilliseconds(attempt), signal);
           continue;
@@ -1120,8 +1170,19 @@ async function runProjectWorkerLoop(
             logger
               .child({ projectId: project.id, cardId })
               .warn(
-                `Essential dependency wait ${waitId} scheduled after ${attempt} bounded GitHub read attempts`,
+                `Essential dependency wait ${waitId} scheduled after ${attempt} bounded GitHub read attempts; next retry at ${runContext.authority.store.read()?.wait.retryAt}`,
               );
+          await sleep(pollIntervalMilliseconds, signal);
+          continue;
+        }
+        if (
+          run &&
+          taskValue !== undefined &&
+          getLegacyPublishedGitHubReadRecoveryPhase(run, parseTaskExecutionRecord(taskValue)) !==
+            null
+        ) {
+          // A terminal-state read may fail before the strictly verified legacy
+          // probe runs. Keep the original attention evidence and retry the read.
           await sleep(pollIntervalMilliseconds, signal);
           continue;
         }
