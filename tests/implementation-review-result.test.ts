@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  hasUndisposedReviewConcerns,
+  withReviewRequirementText,
   parseCachedImplementationReviewResult,
   parsePrimaryReviewDispositionReport,
   parseImplementationReviewResult,
@@ -124,7 +124,7 @@ describe("parseImplementationReviewResult", () => {
     ).toBeDefined();
   });
 
-  it("lets a content-bound primary requirement dismissal resolve a reviewer-only concern", () => {
+  it("uses authoritative plan text for unmet requirements without changing the review verdict", () => {
     const review: ImplementationReviewResult = {
       ...result,
       verdict: "fail",
@@ -132,28 +132,21 @@ describe("parseImplementationReviewResult", () => {
         {
           requirementId: "REQ-1",
           status: "unsatisfied",
-          details: "The reviewer interpreted the requirement incorrectly.",
+          details: "Reload still loses the user's settings.",
+          requirement: "Untrusted replacement from reviewer output.",
           evidence: [],
         },
         result.requirementAssessments[1]!,
       ],
     };
-    const dismissal = {
-      requirementId: "REQ-1",
-      reviewedContentIdentity: contentIdentity,
-      status: "dismissed" as const,
-      rationale: "The primary confirms the requirement is implemented in the current source.",
-    };
-
-    expect(hasUndisposedReviewConcerns(review, [], [dismissal])).toBe(false);
-    expect(hasUndisposedReviewConcerns(review, [], [])).toBe(true);
-    expect(
-      hasUndisposedReviewConcerns(
-        review,
-        [],
-        [{ ...dismissal, reviewedContentIdentity: `sha256:${"b".repeat(64)}` }],
-      ),
-    ).toBe(true);
+    const enriched = withReviewRequirementText(review, [
+      { id: "REQ-1", text: "Retain settings across reloads." },
+    ]);
+    expect(enriched.verdict).toBe("fail");
+    expect(enriched.requirementAssessments[0]).toMatchObject({
+      requirement: "Retain settings across reloads.",
+      status: "unsatisfied",
+    });
   });
 
   it("round-trips a complete result bound to the expected source", () => {

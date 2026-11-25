@@ -1,5 +1,6 @@
 import type { TrelloCard } from "../trello/trello-client.js";
 import { buildPullRequestAttributionFooter } from "./pull-request-attribution.js";
+import { copyPullRequestQuality } from "./pull-request-quality.js";
 import {
   AGENT_ORCHESTRATOR_DESCRIPTION_END,
   AGENT_ORCHESTRATOR_DESCRIPTION_START,
@@ -25,7 +26,10 @@ export function enrichPullRequestDescription(
     const generatedStart = generatedBody.indexOf(AGENT_ORCHESTRATOR_DESCRIPTION_START);
     const generatedEnd = generatedBody.indexOf(AGENT_ORCHESTRATOR_DESCRIPTION_END);
     if (generatedStart < 0 || generatedEnd < generatedStart) return null;
-    return `${currentBody.slice(0, start)}${generatedBody.slice(generatedStart, generatedEnd + AGENT_ORCHESTRATOR_DESCRIPTION_END.length)}${currentBody.slice(end)}`;
+    return copyPullRequestQuality(
+      `${currentBody.slice(0, start)}${generatedBody.slice(generatedStart, generatedEnd + AGENT_ORCHESTRATOR_DESCRIPTION_END.length)}${currentBody.slice(end)}`,
+      generatedBody,
+    );
   }
 
   if (starts.length !== 0 || ends.length !== 0) return null;

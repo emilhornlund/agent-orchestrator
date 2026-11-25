@@ -56,9 +56,10 @@ the final outcome.
 - The implementation agent may evaluate, adapt, or disregard any advisory feedback, including all of
   it. The orchestrator does not require agreement from an AI reviewer and does not force the agent
   to apply recommendations.
-- An agent may finish remediation early when further changes would not be useful. Existing attempt
-  limits are maximums, not required counts; no additional configuration or approval mechanism is
-  needed.
+- Attempt limits are maximums, not required counts. If a completed attempt changes the source and
+  the next independent review or check still reports material unresolved issues, continue while the
+  relevant budget remains. A primary agent's stop request or dispute is not a termination signal.
+  The primary can explain a dispute; the next independent review assesses it against the evidence.
 - If an advisory remediation attempt produces no implementation changes, stop that remediation cycle
   and proceed toward publishing the existing meaningful changes. Do not repeatedly request review of
   unchanged code merely because the AI reviewer remains dissatisfied.
@@ -368,6 +369,10 @@ the final outcome.
 - The description is refreshed after significant changes, including human-review remediation, CI
   repairs, and target-branch synchronization, so it describes the current PR rather than its
   original implementation only.
+- Maintain one concise quality section, replacing superseded results and resolved findings while
+  preserving human-authored content and task links. Report each outstanding material finding with
+  its evidence, repository location and suggested correction when available. Describe unmet
+  requirements in plain language; keep operator diagnostics in retained execution records.
 - Whenever the agent works on an existing PR, the orchestrator prominently displays a temporary
   status **at the top of the PR description**, similar to Dependabot's rebase status.
 - The status identifies the current activity (such as requested changes, CI repair, branch

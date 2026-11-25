@@ -37,9 +37,6 @@ describe("renderPullRequestDescription", () => {
         "## Changes",
         "- Added the deterministic renderer.",
         "- Documented its contract.",
-        "",
-        "## Validation",
-        "- yarn validate passed.",
         AGENT_ORCHESTRATOR_DESCRIPTION_END,
         "",
         "## Task",
@@ -74,9 +71,9 @@ describe("renderPullRequestDescription", () => {
     expect(rendered).toContain("Summary ## agent heading");
     expect(rendered).toContain("- First line - injected list item");
     expect(rendered).toContain("- A [generated](link)");
-    expect(rendered).toContain("- Result [status start marker] forbidden");
+    expect(rendered).not.toContain("forbidden");
     expect(rendered).not.toContain(`${AGENT_ORCHESTRATOR_STATUS_START}\nforbidden`);
-    expect(rendered.match(/^## /gm)).toHaveLength(4);
+    expect(rendered.match(/^## /gm)).toHaveLength(3);
   });
 
   it("prevents generated blockquotes and list prefixes from creating headings", () => {
@@ -93,7 +90,7 @@ describe("renderPullRequestDescription", () => {
     expect(rendered).toContain("> \\# injected heading");
     expect(rendered).toContain("- \\# injected list heading");
     expect(rendered).toContain("- > \\# injected quoted heading");
-    expect(rendered.match(/^## /gm)).toHaveLength(4);
+    expect(rendered.match(/^## /gm)).toHaveLength(3);
   });
 
   it("renders empty arrays without blank list items or success claims", () => {
@@ -108,7 +105,7 @@ describe("renderPullRequestDescription", () => {
     );
 
     expect(rendered).toContain("## Changes\nNo changes were provided.");
-    expect(rendered).toContain("## Validation\n- No validation or test results were provided.");
+    expect(rendered).not.toContain("## Validation");
     expect(rendered).not.toContain("- \n");
     expect(rendered).not.toContain("passed");
   });
@@ -132,7 +129,6 @@ describe("renderPullRequestDescription", () => {
     expect(rendered.match(/^## (Summary|Changes|Validation|Task)$/gm)).toEqual([
       "## Summary",
       "## Changes",
-      "## Validation",
       "## Task",
     ]);
     expect(rendered.match(/agent-orchestrator-status:start/g)).toHaveLength(1);

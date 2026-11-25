@@ -6,6 +6,7 @@ import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import type { TrelloCard } from "../trello/trello-client.js";
 import {
   parseImplementationReviewResult,
+  withReviewRequirementText,
   type ImplementationReviewResult,
 } from "./implementation-review-result.js";
 import type { TaskSessionValidationResult } from "./run-task-session-validation.js";
@@ -58,7 +59,7 @@ export async function runPrMaintenanceReview(
     "Do not report unrelated refactoring opportunities, stylistic preferences without an applicable contract, optional enhancements beyond approved scope, unsupported hypothetical problems, or requests to redesign an otherwise correct implementation as blocking findings. These may not cause a failed review.",
     "Return ONLY one JSON object with exactly: version, projectId, cardId, verdict ('pass'|'fail'), requirementAssessments, blockingFindings, reviewedContentIdentity.",
     "Every requirementAssessments item has requirementId, status ('satisfied'|'unsatisfied'), details (nonblank string), evidence (array of nonblank strings). Include each requested ID exactly once.",
-    "Every blockingFindings entry MUST be an object, NEVER a string: {kind: 'defect'|'incomplete'|'contract-violation', summary: nonblank string, detail: nonblank string, location?: {filePath: repository-relative string, line?: positive integer}}. In detail, identify the specific defect or missing behavior, cite the violated approved requirement or repository contract when applicable, explain concrete evidence demonstrating why it is material and blocks, and state the expected correct behavior. Include the relevant source location when identifiable.",
+    "Every blockingFindings entry must be an object: {kind: 'defect'|'incomplete'|'contract-violation', summary: nonblank string, detail: nonblank string, location?: {filePath: repository-relative string, line?: positive integer}, recommendation?: nonblank string, requirementIds?: string[]}. Explain concrete evidence and impact. Include an actionable correction and location when available, and exact approved IDs in requirementIds if the finding explains why those requirements are unsatisfied.",
     "Verdict 'pass' requires all requirements satisfied and no blocking findings. A valid 'fail' requires an unsatisfied requirement or a structured blocking finding. Never change a genuine finding just to pass.",
     `Example structured failure: ${JSON.stringify({
       ...identity,
@@ -110,12 +111,15 @@ export async function runPrMaintenanceReview(
     if (result.exitCode !== 0)
       throw new Error(`Maintenance review exited with code ${result.exitCode}`);
     try {
-      return parseImplementationReviewResult(JSON.parse(result.output) as unknown, {
-        projectId: options.project.id,
-        cardId: options.card.id,
-        requirementIds: options.requirementIds,
-        contentIdentity: options.contentIdentity,
-      });
+      return withReviewRequirementText(
+        parseImplementationReviewResult(JSON.parse(result.output) as unknown, {
+          projectId: options.project.id,
+          cardId: options.card.id,
+          requirementIds: options.requirementIds,
+          contentIdentity: options.contentIdentity,
+        }),
+        options.approvedRequirements,
+      );
     } catch (error) {
       if (attempt === 1 || !(error instanceof SyntaxError || error instanceof ZodError))
         throw new Error(

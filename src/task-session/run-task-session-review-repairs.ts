@@ -14,6 +14,8 @@ import { findPrimaryRecoveryError } from "./persist-primary-operation-recovery.j
 import { extractOpenCodeTextOutput } from "../opencode/opencode-client.js";
 import { REVIEW_REPAIR_FINISHED_EARLY_MARKER } from "../opencode/build-task-session-review-repair-prompt.js";
 import { parsePrimaryReviewDispositionReport } from "./implementation-review-result.js";
+import { TaskSessionReviewUnavailableError } from "./run-task-session-review.js";
+import { presentExternalDiagnostic } from "../security/bounded-diagnostic.js";
 
 type TrackedFinding = NonNullable<
   NonNullable<TaskExecutionRecord["reviewRepair"]>["findings"]
@@ -207,18 +209,25 @@ function logReviewDiagnostic(
   fields: Record<string, unknown>,
 ): void {
   const cardLog = logger.child({ projectId: options.projectId, cardId: options.cardId });
+  const maximum =
+    options.store.read(options.cardId)?.reviewRepair?.maxAttempts ?? options.maxAttempts;
+  const attempts = Number(fields.remediationAttempt ?? 0);
+  const budget = `${attempts}/${maximum} repair attempts used; ${Math.max(0, maximum - attempts)} remaining`;
+  const iteration = fields.reviewPass === undefined ? "" : ` (iteration ${fields.reviewPass})`;
   // Detailed identities and finding transitions remain available for diagnosis,
   // without printing the bookkeeping payload on the operator console.
   cardLog.debug(`review-cycle ${JSON.stringify({ event, ...fields })}`);
   const summaries: Record<string, string> = {
-    "cycle-passed": "Review cycle completed",
-    "cycle-recovered": "Review cycle restored from saved results",
-    "cycle-exhausted": "Review repair limit reached; continuing toward publication",
-    "cycle-stopped": `Review repairs stopped (${fields.stopReason}); continuing toward publication`,
-    "remediation-started": `Review repair attempt ${fields.remediationAttempt} started`,
-    "remediation-completed": `Review repair attempt ${fields.remediationAttempt} completed`,
-    "cycle-cancelled": `Review cycle interrupted during ${fields.stage ?? fields.category}; state preserved`,
-    "cycle-failed": `Review cycle failed during ${fields.stage ?? fields.category}; state preserved`,
+    "review-round": `Independent review${iteration}: ${fields.verdict === "pass" ? "passed; review remediation complete" : "failed"}${fields.concerns ? ` — ${fields.concerns}` : ""}`,
+    "cycle-recovered": `Restored independent review${iteration}: ${fields.verdict === "pass" ? "passed" : "failed"}${fields.stopReason ? ` (${fields.stopReason})` : ""}`,
+    "cycle-exhausted":
+      "Review remediation stopped: repair limit reached; continuing toward publication",
+    "cycle-stopped":
+      "Review remediation stopped: repository content was unchanged after repair and checks; continuing toward publication",
+    "remediation-started": `Continuing remediation: starting review repair ${attempts} of ${maximum}`,
+    "remediation-completed": `Review repair ${attempts} of ${maximum}: local checks finished${fields.noChange ? "" : "; reviewing the updated source"}`,
+    "cycle-cancelled": `Review cycle${iteration} interrupted during ${fields.stage ?? fields.category}; state preserved`,
+    "cycle-failed": `Review cycle${iteration} could not complete during ${fields.stage ?? fields.category}; state preserved${fields.error ? `: ${fields.error}` : ""}`,
   };
   const summary = summaries[event];
   if (summary === undefined) return;
@@ -226,7 +235,21 @@ function logReviewDiagnostic(
     fields.validation === undefined
       ? ""
       : `; validation ${fields.validation}; coverage ${fields.coverage}`;
-  cardLog.event(`${summary}${quality}`);
+  cardLog.event(`${summary}; ${budget}${quality}`);
+}
+
+function summarizeConcerns(review: ImplementationReviewResult): string {
+  const entries = [
+    ...review.blockingFindings.map(({ summary }) => summary),
+    ...review.requirementAssessments.flatMap(({ status, requirement, details }) =>
+      status === "unsatisfied" ? [`Unmet: ${requirement ?? details}`] : [],
+    ),
+  ];
+  return entries
+    .slice(0, 4)
+    .map((entry) => presentExternalDiagnostic(entry, getProcessRuntime().secretValues, 200))
+    .concat(entries.length > 4 ? [`${entries.length - 4} more`] : [])
+    .join("; ");
 }
 
 function qualityDiagnostic(record: TaskExecutionRecord): {
@@ -264,7 +287,8 @@ function logReviewStageFailure(
   const cancelled = signal !== undefined && isShutdownCancellation(error, signal);
   logReviewDiagnostic(options, cancelled ? "cycle-cancelled" : "cycle-failed", {
     category: "review",
-    stage,
+    stage: error instanceof TaskSessionReviewUnavailableError ? error.stage : stage,
+    ...(error instanceof TaskSessionReviewUnavailableError ? { error: error.message } : {}),
     reviewPass: record.retryCounters.review + 1,
     remediationAttempt: record.retryCounters.review,
     ...(contentIdentity === undefined ? {} : { contentIdentity }),
@@ -382,6 +406,11 @@ function updateFindingLedger(
       );
     }
     if (old !== undefined) {
+      old.summary = finding.summary;
+      old.detail = finding.detail;
+      old.location = finding.location;
+      old.recommendation = finding.recommendation;
+      old.requirementIds = finding.requirementIds;
       old.status = "unresolved";
       old.justification = undefined;
       old.sourceIdentities = old.sourceIdentities.includes(contentIdentity)
@@ -430,12 +459,6 @@ async function completePrimaryRepair(
   await options.rerunQuality();
   const finalIdentity = await options.getCurrentContentIdentity();
   const noChange = finalIdentity === review.reviewedContentIdentity;
-  const finishAfterNextReview =
-    afterIdentity === review.reviewedContentIdentity
-      ? ("no-change" as const)
-      : outcome.finishedEarly
-        ? ("finished-early" as const)
-        : undefined;
   let latest = options.store.read(options.cardId);
   assertOwner(latest, options);
   const findingIds = new Set(
@@ -468,7 +491,7 @@ async function completePrimaryRepair(
         : {
             status: "active" as const,
             stopReason: undefined,
-            finishAfterNextReview,
+            finishAfterNextReview: undefined,
           }),
       activePrimaryOperation: undefined,
       finalReview: review,
@@ -557,9 +580,29 @@ export async function runTaskSessionReviewWithRepairs(
     ...qualityDiagnostic(record),
   });
 
+  // Older versions could persist a terminal result solely on the primary's
+  // request. Reuse the negative verdict to continue the same budget on recovery.
+  let retainedFailedReview: TaskSessionReviewRound | undefined;
+  if (
+    record.reviewRepair?.status === "exhausted" &&
+    record.reviewRepair.stopReason === "finished-early" &&
+    record.retryCounters.review < (record.reviewRepair.maxAttempts ?? options.maxAttempts)
+  ) {
+    const review = record.reviewRepair.finalReview;
+    if (
+      review?.verdict === "fail" &&
+      review.reviewedContentIdentity === (await options.getCurrentContentIdentity())
+    ) {
+      retainedFailedReview = { review, contentIdentity: review.reviewedContentIdentity };
+    }
+  }
+
   // A completed review round is durable. Recovery must not consume another
   // repair or run another review when its source snapshot is unchanged.
-  if (record.reviewRepair?.status === "exhausted" || record.reviewRepair?.status === "passed") {
+  if (
+    retainedFailedReview === undefined &&
+    (record.reviewRepair?.status === "exhausted" || record.reviewRepair?.status === "passed")
+  ) {
     if (
       record.reviewRepair.status === "passed" &&
       record.reviewRepair.findings?.some((finding) => finding.status === "unresolved")
@@ -579,6 +622,7 @@ export async function runTaskSessionReviewWithRepairs(
         reviewPass: record.retryCounters.review + 1,
         remediationAttempt: record.retryCounters.review,
         verdict: previous.verdict,
+        stopReason: record.reviewRepair.stopReason,
         contentIdentity: previous.reviewedContentIdentity,
         blockingFindingIds: boundedIds(previous.blockingFindings.map(({ id }) => id ?? "unknown")),
         ...qualityDiagnostic(record),
@@ -695,6 +739,12 @@ export async function runTaskSessionReviewWithRepairs(
         afterRepairIdentity,
       );
       record = completed.record;
+      logReviewDiagnostic(options, "remediation-completed", {
+        reviewPass: active.pass,
+        remediationAttempt: active.pass,
+        noChange: completed.noChange,
+        ...qualityDiagnostic(record),
+      });
       if (completed.noChange) {
         logReviewDiagnostic(options, "cycle-stopped", {
           stopReason: "no-change",
@@ -715,7 +765,8 @@ export async function runTaskSessionReviewWithRepairs(
     }
     let round: TaskSessionReviewRound;
     try {
-      round = await options.runReview(record.reviewRepair?.findings ?? []);
+      round =
+        retainedFailedReview ?? (await options.runReview(record.reviewRepair?.findings ?? []));
     } catch (error) {
       logReviewStageFailure(options, record, "execution", undefined, error);
       throw error;
@@ -739,12 +790,16 @@ export async function runTaskSessionReviewWithRepairs(
 
     let ledger: ReturnType<typeof updateFindingLedger>;
     try {
-      ledger = updateFindingLedger(
-        round.review,
-        round.contentIdentity,
-        record.reviewRepair?.findings ?? [],
-        cycleId,
-      );
+      ledger =
+        retainedFailedReview === undefined
+          ? updateFindingLedger(
+              round.review,
+              round.contentIdentity,
+              record.reviewRepair?.findings ?? [],
+              cycleId,
+            )
+          : { review: round.review, findings: record.reviewRepair?.findings ?? [] };
+      retainedFailedReview = undefined;
     } catch (error) {
       logReviewStageFailure(options, record, "result-validation", round.contentIdentity, error);
       throw error;
@@ -768,6 +823,7 @@ export async function runTaskSessionReviewWithRepairs(
       reviewPass: record.retryCounters.review + 1,
       remediationAttempt: record.retryCounters.review,
       verdict: ledger.review.verdict,
+      concerns: summarizeConcerns(ledger.review),
       contentIdentity: round.contentIdentity,
       blockingFindingIds: boundedIds(
         ledger.review.blockingFindings.map(({ id }) => id ?? "unknown"),
@@ -780,9 +836,6 @@ export async function runTaskSessionReviewWithRepairs(
     });
 
     const attempts = record.retryCounters.review;
-    const pendingFinish = record.reviewRepair?.finishAfterNextReview;
-    const finishAfterNextReview =
-      pendingFinish === true ? "finished-early" : pendingFinish || undefined;
     if (round.review.verdict === "pass") {
       record = updateRecord(options.store, record, {
         reviewRepair: {
@@ -794,39 +847,7 @@ export async function runTaskSessionReviewWithRepairs(
           findings: ledger.findings,
         },
       });
-      logReviewDiagnostic(options, "cycle-passed", {
-        reviewPass: attempts + 1,
-        remediationAttempt: attempts,
-        contentIdentity: round.contentIdentity,
-        blockingFindingIds: [],
-        ...qualityDiagnostic(record),
-      });
       return { ...trackedRound, attempts: record.retryCounters.review, record };
-    }
-
-    if (finishAfterNextReview) {
-      record = updateRecord(options.store, record, {
-        reviewRepair: {
-          cycleId,
-          status: "exhausted",
-          stopReason: finishAfterNextReview,
-          maxAttempts: record.reviewRepair?.maxAttempts ?? options.maxAttempts,
-          requirementDispositions: record.reviewRepair?.requirementDispositions,
-          finalReview: ledger.review,
-          findings: ledger.findings,
-        },
-      });
-      logReviewDiagnostic(options, "cycle-stopped", {
-        stopReason: finishAfterNextReview,
-        reviewPass: attempts + 1,
-        remediationAttempt: attempts,
-        contentIdentity: round.contentIdentity,
-        blockingFindingIds: boundedIds(
-          ledger.review.blockingFindings.map(({ id }) => id ?? "unknown"),
-        ),
-        ...qualityDiagnostic(record),
-      });
-      return { ...trackedRound, attempts, record };
     }
 
     if (attempts >= (record.reviewRepair?.maxAttempts ?? options.maxAttempts)) {

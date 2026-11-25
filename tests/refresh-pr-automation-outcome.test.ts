@@ -131,9 +131,9 @@ describe("current PR automation outcomes", () => {
         diagnostic: "Build did not register",
       },
     });
-    expect(f.getBody()).toContain("deadline expired");
-    expect(f.getBody()).toContain("Build did not register");
-    expect(f.getBody()).toContain("no new commit, validation run or fulfilled fix is claimed");
+    expect(f.getBody()).toContain("before all checks could be verified");
+    expect(f.getBody()).toContain("CI: pending; 1 not yet observed");
+    expect(f.getBody()).toContain("stopped because the repair left the source unchanged");
     expect(f.options.github.ensurePullRequestDraft).toHaveBeenCalledOnce();
   });
 
@@ -160,13 +160,48 @@ describe("current PR automation outcomes", () => {
     expect(body).toContain("Human introduction\n\nOriginal implementation description\n");
     expect(body).toContain("Human release instructions");
     expect(body).not.toContain("checks remain uncertain");
-    expect(body.match(/## Current automation outcome/gu)).toHaveLength(1);
+    expect(body.match(/## Quality checks/gu)).toHaveLength(1);
     await refreshPrAutomationOutcome({
       ...f.options,
       facts: ["Observed CI passed on this revision."],
       draft: false,
     });
     expect(f.options.github.editPullRequestDescription).toHaveBeenCalledTimes(2);
+  });
+
+  it("migrates duplicated legacy checks and replaces a resolved review across revisions", async () => {
+    const f = fixture();
+    const human =
+      "## Validation\nHuman release checks and manual notes.\n<!-- agent-orchestrator-publication:abc -->";
+    f.edit(
+      `<!-- agent-orchestrator-description:start -->\n## Summary\nGenerated summary\n\n## Changes\n- Generated change\n\n## Validation\n- command: old command\n\n## Outstanding issues\nOld defect\n<!-- agent-orchestrator-description:end -->\n\n## Task\n[Trello](https://trello.com/c/card)\n\n${human}\n\n<!-- agent-orchestrator-outcome:start -->\n## Current automation outcome\n- Old defect\n<!-- agent-orchestrator-outcome:end -->`,
+    );
+    await refreshPrAutomationOutcome({
+      ...f.options,
+      facts: [
+        "CI: passed.",
+        "Independent AI review: failed.",
+        "Outstanding defect: lock release rejection.",
+      ],
+      draft: true,
+    });
+    expect(f.getBody()).toContain("Outstanding defect: lock release rejection.");
+    expect(f.getBody()).not.toMatch(
+      /Old defect|old command|Current automation outcome|## Outstanding issues/u,
+    );
+    await refreshPrAutomationOutcome({
+      ...f.options,
+      headSha: "b".repeat(40),
+      facts: ["CI: pending.", "Independent AI review: passed."],
+      draft: true,
+    });
+    const body = f.getBody();
+    expect(body.match(/## Quality checks/gu)).toHaveLength(1);
+    expect(body).toContain(human);
+    expect(body).toContain("Generated summary");
+    expect(body).toContain("Generated change");
+    expect(body).toContain("https://trello.com/c/card");
+    expect(body).not.toMatch(/lock release rejection|CI: passed/u);
   });
 
   it("does not overwrite a detected concurrent edit and refreshes from human content on recovery", async () => {

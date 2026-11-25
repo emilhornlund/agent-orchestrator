@@ -14,6 +14,8 @@ const requirementAssessmentSchema = z.strictObject({
   status: z.enum(["satisfied", "unsatisfied"]),
   details: nonEmptyText,
   evidence: z.array(nonEmptyText),
+  // Attached from the stored plan by the orchestrator, never trusted from output.
+  requirement: nonEmptyText.optional(),
 });
 
 const reviewLocationSchema = z.strictObject({
@@ -34,6 +36,8 @@ const blockingFindingSchema = z.strictObject({
   summary: nonEmptyText,
   detail: nonEmptyText,
   location: reviewLocationSchema.optional(),
+  recommendation: nonEmptyText.optional(),
+  requirementIds: z.array(stableId).optional(),
 });
 
 const previousFindingAssessmentSchema = z
@@ -117,6 +121,28 @@ export const implementationReviewResultSchema = z
 
 export type ImplementationReviewResult = z.infer<typeof implementationReviewResultSchema>;
 
+export function withReviewRequirementText(
+  review: ImplementationReviewResult,
+  requirements: readonly { id: string; text: string }[],
+): ImplementationReviewResult {
+  const byId = new Map(requirements.map(({ id, text }) => [id, text]));
+  return {
+    ...review,
+    requirementAssessments: review.requirementAssessments.map(
+      ({ requirementId, status, details, evidence }) => {
+        const requirement = byId.get(requirementId);
+        return {
+          requirementId,
+          status,
+          details,
+          evidence,
+          ...(requirement === undefined ? {} : { requirement }),
+        };
+      },
+    ),
+  };
+}
+
 const primaryFindingDispositionSchema = z.strictObject({
   findingId: stableId,
   status: z.enum(["addressed", "dismissed"]),
@@ -137,53 +163,7 @@ const primaryFindingDispositionReportSchema = z.strictObject({
 
 export type PrimaryReviewDispositionReport = z.infer<typeof primaryFindingDispositionReportSchema>;
 
-export interface PersistedReviewFindingDisposition {
-  id: string;
-  sourceIdentities: readonly string[];
-  primaryDisposition?:
-    | {
-        reviewedContentIdentity: string;
-        status: "addressed" | "dismissed";
-        rationale: string;
-      }
-    | undefined;
-}
-
-export interface PersistedReviewRequirementDisposition {
-  requirementId: string;
-  reviewedContentIdentity: string;
-  status: "addressed" | "dismissed";
-  rationale: string;
-}
-
-export function hasUndisposedReviewConcerns(
-  review: ImplementationReviewResult,
-  findings: readonly PersistedReviewFindingDisposition[],
-  requirementDispositions: readonly PersistedReviewRequirementDisposition[],
-): boolean {
-  const findingsById = new Map(findings.map((finding) => [finding.id, finding]));
-  const requirementsById = new Map(
-    requirementDispositions.map((disposition) => [disposition.requirementId, disposition]),
-  );
-  const unresolvedFinding = review.blockingFindings.some((finding) => {
-    if (finding.id === undefined) return true;
-    const persisted = findingsById.get(finding.id)?.primaryDisposition;
-    return (
-      persisted?.status !== "dismissed" ||
-      persisted.reviewedContentIdentity !== review.reviewedContentIdentity
-    );
-  });
-  const unresolvedRequirement = review.requirementAssessments.some((assessment) => {
-    if (assessment.status !== "unsatisfied") return false;
-    const persisted = requirementsById.get(assessment.requirementId);
-    return (
-      persisted?.status !== "dismissed" ||
-      persisted.reviewedContentIdentity !== review.reviewedContentIdentity
-    );
-  });
-  return unresolvedFinding || unresolvedRequirement;
-}
-
+/** Historical publication label, retained for older checkpoints. */
 export const reviewConcernsDismissedAsNonMaterialLabel =
   "Failed (primary assessed review concerns as non-material)";
 

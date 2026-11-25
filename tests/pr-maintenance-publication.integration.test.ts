@@ -224,8 +224,8 @@ describe("additive published PR maintenance", () => {
       expect(f.github.ensurePullRequestDraft).toHaveBeenCalled();
       const body = await f.github.getPullRequestDescription();
       expect(body).toContain("Human summary\n\nOriginal task implementation");
-      expect(body).toContain("Current automation outcome");
-      expect(body).toContain("CI for this revision has not yet been verified");
+      expect(body).toContain("## Quality checks");
+      expect(body).toContain("CI: pending.");
       expect(f.options.maintenanceStore.inspect()[0]?.qualityVerification?.status).toBe(
         "uncertain",
       );

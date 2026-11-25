@@ -3,7 +3,7 @@ import type { ProjectConfig } from "../config/config.js";
 import type { CardAttachmentPromptContext } from "../context/card-attachment-prompt.js";
 import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
-import { getSessionLogPath, getSessionLogReference } from "../logging/session-log.js";
+import { getSessionLogPath } from "../logging/session-log.js";
 import { logger } from "../logging/logger.js";
 import type { EmailNotifier } from "../notifications/email-notifier.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
@@ -11,6 +11,9 @@ import { buildTaskSessionReviewRepairPrompt } from "../opencode/build-task-sessi
 import { inspectPrimaryOpenCodeSession } from "../opencode/inspect-primary-session.js";
 import {
   publicationQualityFacts,
+  recordedTaskQualityFacts,
+  reviewConcernFacts,
+  taskRepairFacts,
   feedbackDispositionFacts,
 } from "./publication-quality-summary.js";
 import type { CommandRunner } from "../process/command-runner.js";
@@ -31,11 +34,7 @@ import { verifyExistingPrOpen } from "./verify-existing-pr-open.js";
 import { TaskExecutionStore } from "../task-session/task-execution-store.js";
 import { TaskMutationQueue } from "../task-session/task-mutation-queue.js";
 import type { TaskExecutionRecord } from "../task-session/task-execution-record.js";
-import {
-  hasUndisposedReviewConcerns,
-  reviewConcernsDismissedAsNonMaterialLabel,
-  type ImplementationReviewResult,
-} from "../task-session/implementation-review-result.js";
+import { type ImplementationReviewResult } from "../task-session/implementation-review-result.js";
 import { TaskPlanStore } from "../task-session/task-plan-store.js";
 import { transitionTaskExecutionRecord } from "../task-session/task-execution-transition.js";
 import { runWithPrimaryTaskSession } from "../task-session/primary-task-session.js";
@@ -81,8 +80,7 @@ import { feedbackClassificationCheckpoint } from "../task-session/feedback-class
 import { OPERATION_RECOVERY_MAX_EXECUTIONS } from "../task-session/operation-recovery-policy.js";
 import { updateMaintenanceStatus } from "./maintenance-status.js";
 import type { ManagedPullRequestStatus } from "../github/pull-request-status.js";
-import { prepareInitialPublicationBody } from "./publish-card.js";
-import { enrichPullRequestDescription } from "../github/enrich-pull-request-description.js";
+import { updatePullRequestQuality } from "../github/pull-request-quality.js";
 import {
   ensureFeedbackCardLocation,
   prepareFeedbackCardMove,
@@ -532,37 +530,13 @@ export async function runTaskSessionFeedbackCycle(
         project,
       });
     const facts = [
-      `Correction ${correction.operationId} made no repository changes; no new commit or fulfilled request is claimed.`,
-      "No new validation, coverage or independent review was run by this no-op correction.",
-      `Latest recorded quality evidence (with its original source identity): ${JSON.stringify(current.publicationQuality ?? { status: "unavailable" })}`,
-      `Outstanding human feedback: ${
-        outstanding.length === 0
-          ? "none"
-          : JSON.stringify(
-              outstanding.map((entry) => ({
-                id: `${entry.kind}:${entry.id}`,
-                status: entry.resolution ?? (entry.status === "pending" ? "pending" : "unresolved"),
-                reason: entry.unresolvedReason ?? "Awaiting fulfillment evidence",
-              })),
-            )
-      }`,
+      "Human feedback: the correction attempt left the source unchanged; no requests were verified fixed by this attempt.",
+      ...(outstanding.length === 0
+        ? []
+        : [
+            `Human feedback: ${outstanding.length} requests remain open or unverified; see the PR discussion.`,
+          ]),
     ];
-    const generated = await prepareInitialPublicationBody(
-      {
-        project,
-        card,
-        worktreePath,
-        branch: record.expectedBranch!,
-        trello,
-        git,
-        github,
-        reviewResult:
-          outstanding.length === 0 ? "No outstanding human feedback" : "Unresolved human feedback",
-        remediationResult: "No repository changes from the correction attempt",
-        verifiedDescriptionFacts: () => facts,
-      },
-      false,
-    );
     const request = {
       cwd: project.repository.path,
       repository: project.repository.github,
@@ -570,16 +544,10 @@ export async function runTaskSessionFeedbackCycle(
       project,
     };
     const currentBody = await github.getPullRequestDescription(request);
-    const nextBody = enrichPullRequestDescription(
-      currentBody,
-      generated,
-      card,
-      project.repository.gitIdentity.name,
-    );
-    if (nextBody === null)
-      throw new Error(
-        "Human-owned PR description has no safely replaceable managed section; no-op feedback outcome remains pending",
-      );
+    const nextBody = updatePullRequestQuality(currentBody, facts, record.pullRequest!.headSha, {
+      replacing: ["Human feedback:", "Human request "],
+      fallback: [...recordedTaskQualityFacts(project, current), "CI: pending."],
+    });
     if (nextBody !== currentBody)
       await github.editPullRequestDescription({
         ...request,
@@ -1435,23 +1403,20 @@ export async function runTaskSessionFeedbackCycle(
       commitMessage,
       reviewResult:
         finalReview.review === null ? "Unavailable" : reviewPassed ? "Passed" : "Failed",
-      remediationResult:
-        "Available feedback corrections for human review; remaining issues are disclosed",
+      remediationResult: "Human feedback: available corrections published for review.",
       ...(options.emailNotifier === undefined ? {} : { emailNotifier: options.emailNotifier }),
       claimHumanReviewNotification: (commitSha) =>
         taskStore.claimHumanReviewNotification(card.id, commitSha),
       verifiedDescriptionFacts: () => [
-        ...publicationQualityFacts(preparedEvidence, {
-          planAvailable: storedPlan !== null,
-          diagnosticLogReference: getSessionLogReference(project.id, card.id),
-        }),
+        ...publicationQualityFacts(preparedEvidence),
+        ...taskRepairFacts(taskStore.read(card.id)),
         ...feedbackDispositionFacts(verification.dispositions),
-        "Remediation outcome: available corrections delivered to human review; failed/skipped checks and unresolved findings remain disclosed.",
-        ...(taskStore.read(card.id)?.reviewUnavailable === undefined
-          ? []
-          : [
-              `Independent review unavailable: ${taskStore.read(card.id)!.reviewUnavailable!.diagnostic}`,
-            ]),
+        ...reviewConcernFacts(
+          preparedEvidence.review === null
+            ? taskStore.read(card.id)?.reviewUnavailable?.priorReview
+            : undefined,
+          true,
+        ),
       ],
       signal,
       initialEvidence: qualityEvidence,
@@ -1459,23 +1424,10 @@ export async function runTaskSessionFeedbackCycle(
         prepareFeedbackCardMove(cardLocation, project.trello.reviewListId, `${operationId}:review`),
       afterHumanReviewTransition: () => reconcilePendingFeedbackCardMove(cardLocation),
       getPreparedReviewPublication: () => {
-        const current = taskStore.read(card.id);
-        const material =
-          preparedEvidence.review !== null &&
-          hasUndisposedReviewConcerns(
-            preparedEvidence.review,
-            current?.reviewRepair?.findings ?? [],
-            current?.reviewRepair?.requirementDispositions ?? [],
-          );
+        const material = preparedEvidence.review?.verdict === "fail";
         return {
           reviewResult:
-            preparedEvidence.review === null
-              ? "Unavailable"
-              : material
-                ? "Failed"
-                : preparedEvidence.review.verdict === "pass"
-                  ? "Passed"
-                  : reviewConcernsDismissedAsNonMaterialLabel,
+            preparedEvidence.review === null ? "Unavailable" : material ? "Failed" : "Passed",
           reviewDisclosure: material ? preparedEvidence.review : null,
           qualityNeedsDraft: !decideValidatedHumanReviewPublication(preparedEvidence).allowed,
           readinessEvidence: preparedEvidence,

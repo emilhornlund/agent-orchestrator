@@ -285,15 +285,13 @@ export async function runTaskSessionCiRepairs(
       });
     }
     try {
-      let finishEarly = active?.finishEarly === true;
       if (!resumeReviewRepair) {
-        const outcome = await options.repairPrimarySession(
+        await options.repairPrimarySession(
           diagnostics,
           attempt,
           options.expectedPrimarySessionId,
           operationId,
         );
-        finishEarly ||= outcome?.finishEarly === true;
       }
       const afterPrimary = options.store.read(options.cardId);
       const reservation = afterPrimary?.ciRepair?.activePrimaryOperation;
@@ -313,13 +311,6 @@ export async function runTaskSessionCiRepairs(
           reason: "no-change",
         };
       }
-      if (finishEarly && !reservation.finishEarly)
-        updateRecord(options.store, afterPrimary, {
-          ciRepair: {
-            ...afterPrimary.ciRepair!,
-            activePrimaryOperation: { ...reservation, finishEarly: true },
-          },
-        });
       resumeReviewRepair = false;
       await options.rerunLocalGatesAndReview();
       headSha = await options.publishSamePullRequest();
@@ -363,16 +354,6 @@ export async function runTaskSessionCiRepairs(
             status: "active",
           },
         });
-      }
-      if (finishEarly) {
-        const latest = options.store.read(options.cardId)!;
-        endCiRepair(options.store, latest, "finished-early");
-        return {
-          status: "stopped",
-          attempts: latest.retryCounters.ci,
-          headSha,
-          reason: "finished-early",
-        };
       }
     } catch (error) {
       throw new TaskSessionCiRepairError(

@@ -490,7 +490,7 @@ describe("runTaskSessionValidationWithRepairs", () => {
       expect(options.prompt).toContain("yarn validate");
       expect(options.prompt).toContain("assertion failed");
       expect(options.prompt).toContain("attempt 1 of 2");
-      expect(options.prompt).toContain(VALIDATION_REPAIR_EARLY_FINISH_MARKER);
+      expect(options.prompt).not.toContain(VALIDATION_REPAIR_EARLY_FINISH_MARKER);
       expect(options.prompt).toContain(plan.requirements[0]?.text);
       expect(fixture.executionStore.read(card.id)?.retryCounters.validation).toBe(1);
       fs.writeFileSync(path.join(fixture.worktreePath, "src.ts"), "after repair\n", "utf8");
@@ -768,7 +768,7 @@ describe("runTaskSessionValidationWithRepairs", () => {
     expect(fixture.runOpenCode).toHaveBeenCalledOnce();
   });
 
-  it("honors explicit early finish after one changed repair and preserves its final failed evidence on restart", async () => {
+  it("ignores a stop marker after changed source and stops only when the next repair makes no progress", async () => {
     const fixture = createFixture();
     fixture.project.opencode.remediation.validationMaxPasses = 4;
     fixture.runCommand.mockResolvedValue({
@@ -794,20 +794,20 @@ describe("runTaskSessionValidationWithRepairs", () => {
 
     const first = await runRepairs(fixture);
 
-    expect(first.attempts).toBe(1);
+    expect(first.attempts).toBe(2);
     expect(first.record.validationRepair).toMatchObject({
       status: "exhausted",
       maxAttempts: 4,
-      stopReason: "finished-early",
+      stopReason: "no-change",
       evidence: { status: "failed" },
     });
-    expect(fixture.runOpenCode).toHaveBeenCalledOnce();
+    expect(fixture.runOpenCode).toHaveBeenCalledTimes(2);
     expect(fixture.runCommand).toHaveBeenCalledTimes(2);
 
     const resumed = await runRepairs(fixture);
     expect(resumed.validation.status).toBe("failed");
-    expect(resumed.attempts).toBe(1);
-    expect(fixture.runOpenCode).toHaveBeenCalledOnce();
+    expect(resumed.attempts).toBe(2);
+    expect(fixture.runOpenCode).toHaveBeenCalledTimes(2);
     expect(fixture.runCommand).toHaveBeenCalledTimes(2);
   });
 

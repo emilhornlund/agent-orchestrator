@@ -499,7 +499,7 @@ describe("setup-aware initial publication commit scope", () => {
     expect(published.body).toContain("Changed file: source.txt");
     expect(published.body).toContain("Validation: failed (exit 1)");
     expect(published.body).toContain("Coverage: skipped (not configured)");
-    expect(published.body).toContain("## Outstanding issues");
+    expect(published.body).toContain("## Quality checks");
     expect(published.body).toContain("https://trello.com/c/card");
     const restarted = reopenPublicationFixture(f.root);
     await through(restarted, "comment");
@@ -2124,7 +2124,7 @@ describe("initial publication production checkpoint with independent simulated s
     await through(f, "pr", openCode);
     const pullRequest = f.services.read().prs[0];
     expect(pullRequest?.draft).toBe(scenario.draft);
-    expect(pullRequest?.body).toContain(`Review: ${scenario.result}`);
+    expect(pullRequest?.body).toContain(`Independent AI review: ${scenario.result}`);
     if (scenario.expectedText !== undefined)
       expect(pullRequest?.body).toContain(scenario.expectedText);
     if (scenario.forbiddenText !== undefined)

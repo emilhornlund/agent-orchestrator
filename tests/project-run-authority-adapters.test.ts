@@ -214,7 +214,7 @@ describe("lease-backed project store projections", () => {
       qualityCalls: 3,
     });
     expect(envelopeStore.read()?.budgets.review).toMatchObject({
-      limit: 4,
+      limit: 3,
       used: 3,
       episodeId: ciReviewCycleId,
     });
@@ -231,7 +231,7 @@ describe("lease-backed project store projections", () => {
       qualityCalls: 3,
     });
     expect(envelopeStore.read()?.budgets.review).toMatchObject({
-      limit: 4,
+      limit: 3,
       used: 3,
       episodeId: ciReviewCycleId,
     });

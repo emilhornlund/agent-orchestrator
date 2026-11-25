@@ -1,6 +1,5 @@
 import type { CardAttachmentPromptContext } from "../context/card-attachment-prompt.js";
 import type { OpenCodeClient, OpenCodeRunOptions } from "../opencode/opencode-client.js";
-import { extractOpenCodeTextOutput } from "../opencode/opencode-client.js";
 import { buildTaskSessionValidationRepairPrompt } from "../opencode/build-task-session-validation-repair-prompt.js";
 import type { TrelloCard } from "../trello/trello-client.js";
 import { loadOwnedTaskExecutionRecord } from "./task-execution-ownership.js";
@@ -120,16 +119,6 @@ function validationResultFromEvidence(
     timedOut: status === "timed-out",
     aborted: status === "aborted",
   };
-}
-
-function explicitlyFinishedEarly(output: string): boolean {
-  try {
-    return extractOpenCodeTextOutput(output)
-      .split(/\r?\n/u)
-      .some((line) => line.trim() === VALIDATION_REPAIR_EARLY_FINISH_MARKER);
-  } catch {
-    return false;
-  }
 }
 
 function toValidationEvidence(
@@ -301,7 +290,14 @@ export async function runTaskSessionValidationWithRepairs(
   }
   const maxAttempts = repairState?.maxAttempts ?? configuredMaximum;
 
-  if (repairState?.status === "exhausted") {
+  if (
+    repairState?.status === "exhausted" &&
+    !(
+      repairState.stopReason === "finished-early" &&
+      currentRecord.phase === "validation" &&
+      currentRecord.retryCounters.validation < maxAttempts
+    )
+  ) {
     const evidence = repairState.evidence;
     const coverageEvidence = repairState.coverageEvidence;
     const expectedValidationCommand = project.repository.validationCommand ?? "";
@@ -538,11 +534,7 @@ export async function runTaskSessionValidationWithRepairs(
           cycleId,
           status: "active",
           maxAttempts,
-          ...(noContentChange
-            ? { finishAfterNextCheck: "no-change" }
-            : explicitlyFinishedEarly(resumedRepairResult.output)
-              ? { finishAfterNextCheck: "finished-early" }
-              : {}),
+          ...(noContentChange ? { finishAfterNextCheck: "no-change" } : {}),
           ...(currentRepair?.evidence === undefined ? {} : { evidence: currentRepair.evidence }),
           ...(currentRepair?.coverageEvidence === undefined
             ? {}
@@ -635,7 +627,12 @@ export async function runTaskSessionValidationWithRepairs(
     const attempts = currentRecord.retryCounters.validation;
 
     const finishReason = currentRecord.validationRepair?.finishAfterNextCheck;
-    if (finishReason !== undefined) {
+    if (
+      finishReason === "no-change" &&
+      currentRecord.validationRepair?.evidence?.contentIdentity ===
+        validationResult.contentIdentity &&
+      validationResult.contentIdentity === coverageResult.contentIdentity
+    ) {
       currentRecord = updateRecord(validation.taskRecordStore, currentRecord, {
         validationRepair: {
           cycleId,
@@ -836,13 +833,11 @@ export async function runTaskSessionValidationWithRepairs(
           };
         }
       }
-      const finishedEarly = explicitlyFinishedEarly(repairResult.output);
       currentRecord = updateRecord(validation.taskRecordStore, currentRecord, {
         validationRepair: {
           cycleId,
           status: "active",
           maxAttempts,
-          ...(finishedEarly ? { finishAfterNextCheck: "finished-early" as const } : {}),
         },
       });
     }

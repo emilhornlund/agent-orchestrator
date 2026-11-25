@@ -1386,7 +1386,7 @@ describe("task lifecycle through pollProject", () => {
               type: "text",
               part: {
                 type: "text",
-                text: JSON.stringify(dispositions),
+                text: `${JSON.stringify(dispositions)}\nREVIEW_REPAIR_FINISHED_EARLY`,
               },
             }),
             errorOutput: "",
@@ -1783,7 +1783,7 @@ describe("task lifecycle through pollProject", () => {
             ],
           });
           expect(preparedPr?.isDraft).toBe(true);
-          expect(preparedPr?.body).toContain("Review: Failed (human review required");
+          expect(preparedPr?.body).toMatch(/Independent AI review: failed/iu);
           expect(preparedPr?.body).toContain(
             "The changed publication source restores the default value.",
           );
@@ -1791,10 +1791,11 @@ describe("task lifecycle through pollProject", () => {
           expect(persistedPublicationQuality.review).toBeNull();
           expect(store.read("first")?.reviewUnavailable).toMatchObject({
             contentIdentity: persistedPublicationQuality.contentIdentity,
+            diagnostic: "Independent implementation review exited with code 1",
           });
           expect(preparedPr?.isDraft).toBe(true);
-          expect(preparedPr?.body).toContain("Review: Unavailable");
-          expect(preparedPr?.body).toContain(
+          expect(preparedPr?.body).toContain("Independent AI review: unavailable");
+          expect(preparedPr?.body).not.toContain(
             "Independent implementation review exited with code 1",
           );
         }
@@ -1914,7 +1915,7 @@ describe("task lifecycle through pollProject", () => {
         const ciRun = authorities.get("first")?.store.read();
         expect(ciTask?.phase).toBe("human-feedback");
         expect(prs.get(firstBranch)?.body).not.toContain("Agent Orchestrator status:");
-        expect(prs.get(firstBranch)?.body).toContain("Observed CI for this revision");
+        expect(prs.get(firstBranch)?.body).toContain("CI:");
         expect(
           ciPrimaryCorrections,
           JSON.stringify({
@@ -1961,7 +1962,7 @@ describe("task lifecycle through pollProject", () => {
         expect(ciTask?.retryCounters.review).toBe(2);
         expect(ciRun?.budgets.review).toMatchObject({
           episodeId: ciTask?.reviewRepair?.cycleId,
-          limit: 3,
+          limit: 2,
           used: 2,
         });
         expect(requests).toEqual([firstBranch]);
@@ -2000,7 +2001,7 @@ describe("task lifecycle through pollProject", () => {
           maintenanceBase,
         ]);
         expect(firstPr!.body).toContain("Human release instructions: retain this text.");
-        expect(firstPr!.body).toContain("Current automation outcome");
+        expect(firstPr!.body).toContain("## Quality checks");
         expect(firstPr!.body).not.toContain(contextRoot);
         expect(firstPr!.body).toContain("Human note added during maintenance review.");
         expect(firstPr!.body).not.toContain("Agent Orchestrator status:");
@@ -2023,7 +2024,7 @@ describe("task lifecycle through pollProject", () => {
         expect(firstPr?.body).toContain("Retained advisory edge case");
         expect(
           progressMessages.filter((message) =>
-            message.startsWith("Review repair attempt 1 started"),
+            message.startsWith("Continuing remediation: starting review repair 1 of"),
           ),
         ).toHaveLength(1);
       }
@@ -2170,17 +2171,17 @@ describe("task lifecycle through pollProject", () => {
           );
           expect(firstPr?.body).toContain("REQ-1");
           expect(firstPr?.body).toContain("unsatisfied");
-          expect(firstPr?.body).toContain("Review: Failed (human review required");
+          expect(firstPr?.body).toMatch(/Independent AI review: failed/iu);
         } else {
-          expect(firstPr?.body).toContain("Review: Unavailable");
+          expect(firstPr?.body).toContain("Independent AI review: unavailable");
           expect(firstPr?.body).toContain("Independent implementation review exited with code 1");
-          expect(firstPr?.body).not.toContain("Review: Passed");
+          expect(firstPr?.body).not.toContain("Independent AI review: passed");
         }
       }
       expect(firstPr?.body).not.toContain("All configured validation and coverage passed.");
       expect(firstPr?.body).not.toContain('"diagnostic":');
       expect(firstPr?.body).not.toContain('"completedAt":');
-      if (quality === "none") expect(firstPr?.body).toContain("Not configured; skipped");
+      if (quality === "none") expect(firstPr?.body).toContain("skipped (not configured)");
       expect(
         fs.existsSync(validationMarker),
         JSON.stringify({
@@ -2662,7 +2663,7 @@ describe("task lifecycle through pollProject", () => {
             status: "no-op",
             outcomeReported: true,
           });
-          expect(firstPr?.body).toContain("No repository changes");
+          expect(firstPr?.body).toContain("left the source unchanged");
           expect(firstPr?.isDraft).toBe(true);
           expect(lists.get("first")).toBe("review");
           await poll();
@@ -2701,7 +2702,7 @@ describe("task lifecycle through pollProject", () => {
           expect(Object.values(corrected.feedbackRemediation?.reviewSourceAttempts ?? {})).toEqual([
             3,
           ]);
-          expect(firstPr?.body).toContain("Unavailable");
+          expect(firstPr?.body).toContain("Independent AI review: unavailable");
         }
         expect(lists.get("next")).toBe("ready");
         return;

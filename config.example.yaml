@@ -110,7 +110,7 @@ projects:
       remediation:
         model: "your-remediation-model"
         variant: "xhigh"
-        # The initial review is not counted; follow-up reviews run only between remediation passes.
+        # Repair attempts only. Independent reviews, including after the last changed repair, do not count.
         maxPasses: 1
       commit:
         model: "your-commit-model"

@@ -326,20 +326,22 @@ describe("runTaskSessionCiRepairs", () => {
     });
   });
 
-  it("publishes available early-finish output once without spending the remaining episode", async () => {
+  it("continues observing CI after a primary stop request and spends the remaining budget on failure", async () => {
     const f = fixture();
+    f.base.publishSamePullRequest
+      .mockResolvedValueOnce("b".repeat(40))
+      .mockResolvedValueOnce("c".repeat(40));
     const result = await runTaskSessionCiRepairs({
       ...f.base,
       repairPrimarySession: async () => ({ finishEarly: true }),
       observeChecks: async (sha) => f.evaluation(sha, "failed"),
     });
     expect(result).toMatchObject({
-      status: "stopped",
-      reason: "finished-early",
-      attempts: 1,
-      headSha: "b".repeat(40),
+      status: "exhausted",
+      attempts: 2,
+      headSha: "c".repeat(40),
     });
-    expect(f.base.publishSamePullRequest).toHaveBeenCalledOnce();
+    expect(f.base.publishSamePullRequest).toHaveBeenCalledTimes(2);
   });
   it("resumes an active final-pass CI repair with its exact durable ID and pass", async () => {
     const f = fixture();

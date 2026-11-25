@@ -350,7 +350,7 @@ describe("runOrchestrator", () => {
 
       expect(workerBudgets?.budgets).toMatchObject({
         validation: { limit: 4, used: 0 },
-        review: { limit: 1, used: 0 },
+        review: { limit: 0, used: 0 },
       });
     } finally {
       await lease.release();

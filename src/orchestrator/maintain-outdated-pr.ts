@@ -14,6 +14,11 @@ import { recordTerminalPrFence } from "../task-session/terminal-pr-fence.js";
 import { getSessionLogPath } from "../logging/session-log.js";
 import { presentExternalDiagnostic } from "../security/bounded-diagnostic.js";
 import { refreshPrAutomationOutcome } from "./refresh-pr-automation-outcome.js";
+import {
+  maintenanceQualityFacts,
+  recordedTaskQualityFacts,
+} from "./publication-quality-summary.js";
+import { logger } from "../logging/logger.js";
 import type { ManagedPullRequestStatus } from "../github/pull-request-status.js";
 import type { GitHubClient } from "../github/github-client.js";
 import type { TrelloCard } from "../trello/trello-client.js";
@@ -88,6 +93,7 @@ async function reportBlocked(
   options: MaintainOutdatedPrOptions,
   diagnostic: string,
 ): Promise<"blocked"> {
+  logger.child({ projectId: options.project.id, cardId: options.card.id }).warn(diagnostic);
   await refreshPrAutomationOutcome({
     github: options.github,
     project: options.project,
@@ -96,9 +102,12 @@ async function reportBlocked(
     headSha: options.task.pullRequest!.headSha!,
     draft: true,
     facts: [
-      diagnostic,
-      "Published history, unshipped commits, merge state and dirty output are preserved; no safe update is claimed.",
+      "Branch update: could not be completed safely. The published branch was left unchanged.",
     ],
+    retain: {
+      replacing: ["Branch update:"],
+      fallback: [...recordedTaskQualityFacts(options.project, options.task), "CI: unavailable."],
+    },
   });
   await activity(options, null);
   return "blocked";
@@ -736,12 +745,7 @@ export async function maintainOutdatedPr(
       pullRequestUrl: operation.pullRequest.url,
       headSha: resultingHead,
       draft: true,
-      facts: [
-        `Merged target ${operation.targetBaseHead} additively into published task head ${operation.expectedRemoteHead}; published commit identities are unchanged.`,
-        `Current committed task paths: ${await git.getChangedFiles(worktreePath, operation.targetBaseHead)}`,
-        `Maintenance validation, coverage and independent review: ${JSON.stringify(operation.qualityVerification)}`,
-        "CI for this revision has not yet been verified; the existing PR remains draft pending observation.",
-      ],
+      facts: [...maintenanceQualityFacts(project, operation.qualityVerification), "CI: pending."],
     });
     const task = options.taskStore.read(card.id);
     if (

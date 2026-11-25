@@ -28,7 +28,7 @@ import type {
 } from "../github/github-client.js";
 import { establishCiCheckExpectations } from "../github/ci-check-expectations.js";
 import { evaluateCiChecks } from "../github/evaluate-ci-checks.js";
-import { getSessionLogPath, getSessionLogReference } from "../logging/session-log.js";
+import { getSessionLogPath } from "../logging/session-log.js";
 import type { EmailNotifier } from "../notifications/email-notifier.js";
 import {
   buildFailedEmail,
@@ -39,7 +39,6 @@ import {
 } from "../notifications/email-notifier.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import { runBoundedCiReview } from "../task-session/run-bounded-ci-review.js";
-import { extractOpenCodeTextOutput } from "../opencode/opencode-client.js";
 import { z } from "zod";
 import {
   inspectPublishedFeedbackRecovery,
@@ -76,10 +75,8 @@ import { sanitizeControlledText } from "../security/redact-secrets.js";
 import { hasVerifiedWorkflowMove } from "./reconcile-workflow-mutations.js";
 import { buildTaskSessionReviewRepairPrompt } from "../opencode/build-task-session-review-repair-prompt.js";
 import {
-  hasUndisposedReviewConcerns,
   parseCachedImplementationReviewResult,
   type ImplementationReviewResult,
-  reviewConcernsDismissedAsNonMaterialLabel,
 } from "../task-session/implementation-review-result.js";
 import { buildTaskSessionCiRepairPrompt } from "../opencode/build-task-session-ci-repair-prompt.js";
 import {
@@ -243,7 +240,12 @@ import {
 } from "../task-session/persist-primary-operation-recovery.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { isShutdownCancellation } from "../runtime/shutdown-cancellation.js";
-import { publicationQualityFacts } from "./publication-quality-summary.js";
+import {
+  publicationQualityFacts,
+  repairSummary,
+  reviewConcernFacts,
+  taskRepairFacts,
+} from "./publication-quality-summary.js";
 import {
   getProcessRuntime,
   isVerifiedStoppedExecution,
@@ -858,63 +860,6 @@ function toPersistedQualityEvidence(result: TaskSessionValidationResult): Persis
     diagnostic: result.diagnostic,
     contentIdentity: result.contentIdentity,
   };
-}
-
-function buildUnavailableReviewResult(
-  diagnostic: string,
-  currentContentIdentity: string,
-  priorReview: ImplementationReviewResult | undefined,
-  reviewRepair: TaskExecutionRecord["reviewRepair"],
-): string {
-  const priorDetails: string[] = [];
-  if (priorReview?.verdict === "fail") {
-    const findings = new Map(
-      (reviewRepair?.findings ?? []).map((finding) => [finding.id, finding]),
-    );
-    for (const finding of priorReview.blockingFindings.slice(0, 20)) {
-      const id = finding.id ?? "unassigned finding";
-      priorDetails.push(`Prior finding ${id}: ${finding.summary}. ${finding.detail}`);
-      const disposition = findings.get(id)?.primaryDisposition;
-      if (
-        finding.id !== undefined &&
-        disposition?.reviewedContentIdentity === priorReview.reviewedContentIdentity
-      )
-        priorDetails.push(
-          `Primary disposition for prior source ${priorReview.reviewedContentIdentity}: ${disposition.status}; ${disposition.rationale}`,
-        );
-      else
-        priorDetails.push(`No matching primary disposition is recorded for prior finding ${id}.`);
-    }
-    const requirementDispositions = new Map(
-      (reviewRepair?.requirementDispositions ?? []).map((disposition) => [
-        disposition.requirementId,
-        disposition,
-      ]),
-    );
-    for (const assessment of priorReview.requirementAssessments
-      .filter(({ status }) => status === "unsatisfied")
-      .slice(0, 20)) {
-      priorDetails.push(
-        `Prior requirement ${assessment.requirementId} was assessed as unsatisfied: ${assessment.details}. Evidence: ${assessment.evidence.join(", ") || "none reported"}.`,
-      );
-      const disposition = requirementDispositions.get(assessment.requirementId);
-      if (disposition?.reviewedContentIdentity === priorReview.reviewedContentIdentity)
-        priorDetails.push(
-          `Primary disposition for prior requirement ${assessment.requirementId} on source ${priorReview.reviewedContentIdentity}: ${disposition.status}; ${disposition.rationale}`,
-        );
-      else
-        priorDetails.push(
-          `No matching primary disposition is recorded for prior requirement ${assessment.requirementId}.`,
-        );
-    }
-  }
-  const priorDisclosure =
-    priorReview?.verdict === "fail"
-      ? ` Prior reviewer concerns refer to source ${priorReview.reviewedContentIdentity}, not the current source. ${priorDetails.join(" ")}`
-      : "";
-  return sanitizeControlledText(
-    `Unavailable (independent review of current source ${currentContentIdentity} could not be completed: ${diagnostic}.${priorDisclosure})`,
-  ).slice(0, 8_000);
 }
 
 function previousFindingIdsFromReview(value: unknown): string[] {
@@ -3027,15 +2972,6 @@ async function runTaskSessionWorkflowAttempt(
               );
             }
             const sameCiReviewEpisode = latest.reviewRepair?.cycleId === ciReviewCycleId;
-            const pendingFinish = latest.reviewRepair?.finishAfterNextReview;
-            const stoppedReview = latest.reviewRepair?.stopReason;
-            const finishAfterNextReview =
-              pendingFinish === true
-                ? ("finished-early" as const)
-                : pendingFinish ||
-                  (stoppedReview === "no-change" || stoppedReview === "finished-early"
-                    ? stoppedReview
-                    : undefined);
             const ciFailedTransitionInput = sameCiReviewEpisode
               ? {
                   ...latest,
@@ -3044,7 +2980,7 @@ async function runTaskSessionWorkflowAttempt(
                     status: "active" as const,
                     stopReason: undefined,
                     activePrimaryOperation: undefined,
-                    finishAfterNextReview,
+                    finishAfterNextReview: undefined,
                     finalReview: undefined,
                   },
                 }
@@ -3151,15 +3087,6 @@ async function runTaskSessionWorkflowAttempt(
             const validationRecord = taskStore.read(card.id);
             if (validationRecord?.reviewRepair?.cycleId !== ciReviewCycleId)
               throw new Error("CI correction lost its durable review budget episode");
-            let finishEarly = false;
-            try {
-              finishEarly = extractOpenCodeTextOutput(repaired.output)
-                .split(/\r?\n/u)
-                .some((line) => line.trim() === "CI_REPAIR_FINISHED_EARLY");
-            } catch {
-              /* An optional completion marker is not a primary success gate. */
-            }
-            return { finishEarly };
           },
           rerunLocalGatesAndReview: async () => {
             await updateMaintenanceStatus(
@@ -3315,15 +3242,25 @@ async function runTaskSessionWorkflowAttempt(
                   : latestReview === null
                     ? "Unavailable"
                     : "Failed",
-              remediationResult: `CI repair attempt ${taskStore.read(card.id)?.retryCounters.ci ?? 1}`,
+              remediationResult: repairSummary(
+                "CI remediation",
+                taskStore.read(card.id)?.retryCounters.ci ?? 1,
+                taskStore.read(card.id)?.ciRepair?.maxAttempts ??
+                  project.opencode.remediation.ciMaxPasses ??
+                  2,
+              ),
               ...(emailNotifier === undefined ? {} : { emailNotifier }),
               claimHumanReviewNotification: (commitSha) =>
                 taskStore.claimHumanReviewNotification(card.id, commitSha),
               verifiedDescriptionFacts: () => [
-                ...publicationQualityFacts(preparedGate, {
-                  planAvailable: planStore.read(card.id) !== null,
-                  diagnosticLogReference: getSessionLogReference(project.id, card.id),
-                }),
+                ...publicationQualityFacts(preparedGate),
+                ...taskRepairFacts(taskStore.read(card.id)),
+                ...reviewConcernFacts(
+                  preparedGate.review === null
+                    ? taskStore.read(card.id)?.reviewUnavailable?.priorReview
+                    : undefined,
+                  true,
+                ),
               ],
               signal,
               initialEvidence: gateInput,
@@ -6183,61 +6120,6 @@ async function runTaskSessionWorkflowAttempt(
         });
       }
       const retainedReview = beforePublication.reviewUnavailable?.priorReview;
-      const retainedReviewFacts: string[] = [];
-      if (reason === "review-unavailable" && retainedReview?.verdict === "fail") {
-        const reviewedIdentity = retainedReview.reviewedContentIdentity;
-        retainedReviewFacts.push(
-          `A prior independent review returned a negative result for source ${reviewedIdentity}; the follow-up review for current source ${failedEvidence.currentContentIdentity} was unavailable (${unavailableDiagnostic}). The following concerns and dispositions refer only to the prior source snapshot and are not a current review result.`,
-        );
-        const trackedFindings = new Map(
-          (beforePublication.reviewRepair?.findings ?? []).map((finding) => [finding.id, finding]),
-        );
-        for (const finding of retainedReview.blockingFindings.slice(0, 20)) {
-          const id = finding.id ?? "unassigned finding";
-          retainedReviewFacts.push(
-            `Prior review concern ${id} (${finding.kind}): ${finding.summary}. ${finding.detail}`,
-          );
-          const disposition = trackedFindings.get(id)?.primaryDisposition;
-          if (disposition?.reviewedContentIdentity === reviewedIdentity)
-            retainedReviewFacts.push(
-              `Primary-session disposition for prior concern ${id} on source ${reviewedIdentity}: ${disposition.status}; ${disposition.rationale}`,
-            );
-          else
-            retainedReviewFacts.push(
-              `No matching primary-session disposition is recorded for prior concern ${id} on source ${reviewedIdentity}.`,
-            );
-        }
-        const requirementDispositions = new Map(
-          (beforePublication.reviewRepair?.requirementDispositions ?? []).map((disposition) => [
-            disposition.requirementId,
-            disposition,
-          ]),
-        );
-        for (const assessment of retainedReview.requirementAssessments
-          .filter(({ status }) => status === "unsatisfied")
-          .slice(0, 20)) {
-          retainedReviewFacts.push(
-            `Prior review assessed requirement ${assessment.requirementId} as unsatisfied: ${assessment.details}. Evidence: ${assessment.evidence.join(", ") || "none reported"}.`,
-          );
-          const disposition = requirementDispositions.get(assessment.requirementId);
-          if (disposition?.reviewedContentIdentity === reviewedIdentity)
-            retainedReviewFacts.push(
-              `Primary-session disposition for requirement ${assessment.requirementId} on prior source ${reviewedIdentity}: ${disposition.status}; ${disposition.rationale}`,
-            );
-          else
-            retainedReviewFacts.push(
-              `No matching primary-session disposition is recorded for requirement ${assessment.requirementId} on prior source ${reviewedIdentity}.`,
-            );
-        }
-      }
-      const safeRetainedReviewFacts = retainedReviewFacts.map((fact) =>
-        sanitizeControlledText(fact.replace(/[\r\n]+/gu, " ").slice(0, 2_000)),
-      );
-      const retainedReviewDisclosure = safeRetainedReviewFacts.join(" | ");
-      const boundedRetainedReviewDisclosure =
-        retainedReviewDisclosure.length > 6_000
-          ? `${retainedReviewDisclosure.slice(0, 6_000)}; further prior concerns remain in preserved task state`
-          : retainedReviewDisclosure;
       let preparedEvidence = failedEvidence;
       const publishOptions = {
         trello,
@@ -6250,25 +6132,17 @@ async function runTaskSessionWorkflowAttempt(
         worktreePath,
         branch: worktree.branch,
         reviewResult:
-          reason === "review-unavailable"
-            ? `Unavailable (AI review execution failed)${boundedRetainedReviewDisclosure.length === 0 ? "" : `; prior source-bound review concerns: ${boundedRetainedReviewDisclosure}`}`
-            : "Not run (local validation exhausted)",
-        remediationResult:
-          reason === "review-unavailable"
-            ? "Not completed: AI review unavailable"
-            : `${quality.attempts} validation repair(s); local quality failed`,
+          reason === "review-unavailable" ? "Unavailable" : "Skipped (local validation exhausted)",
+        remediationResult: taskRepairFacts(taskStore.read(activeCard.id))[0] ?? "Not required",
         ...(emailNotifier === undefined ? {} : { emailNotifier }),
         claimHumanReviewNotification: (commitSha: string) =>
           taskStore.claimHumanReviewNotification(activeCard.id, commitSha),
         verifiedDescriptionFacts: () => [
           ...publicationQualityFacts(preparedEvidence, {
-            planAvailable: planStore.read(activeCard.id) !== null,
-            diagnosticLogReference: getSessionLogReference(project.id, activeCard.id),
+            reviewSkipped: reason !== "review-unavailable",
           }),
-          reason === "review-unavailable"
-            ? `AI implementation review unavailable: ${unavailableDiagnostic}`
-            : "AI implementation review: not run because validation was exhausted",
-          ...safeRetainedReviewFacts,
+          ...taskRepairFacts(taskStore.read(activeCard.id)),
+          ...reviewConcernFacts(retainedReview, true),
         ],
         signal,
         beforePushVerification: async () => {
@@ -6657,7 +6531,6 @@ async function runTaskSessionWorkflowAttempt(
             );
             if (repaired.exitCode !== 0)
               throw new Error(`Primary review repair exited with code ${repaired.exitCode}`);
-            cardLog.event(`Review repair attempt ${attempt} completed`);
             current = taskStore.read(activeCard.id);
             if (current === null) throw new Error("Task record disappeared after review repair");
             const implemented = transitionTaskExecutionRecord(
@@ -6769,21 +6642,11 @@ async function runTaskSessionWorkflowAttempt(
       coverage: currentCoverage,
       review: finalReview.review,
     };
-    const hasUndisposedReviewConcern = hasUndisposedReviewConcerns(
-      finalReview.review,
-      finalReview.record.reviewRepair?.findings ?? [],
-      finalReview.record.reviewRepair?.requirementDispositions ?? [],
-    );
-    let exhaustedReview =
-      finalReview.review.verdict === "fail" && hasUndisposedReviewConcern
-        ? finalReview.review
-        : undefined;
+    let exhaustedReview = finalReview.review.verdict === "fail" ? finalReview.review : undefined;
     let reviewResult =
       finalReview.review.verdict === "pass"
         ? "Passed"
-        : !hasUndisposedReviewConcern
-          ? reviewConcernsDismissedAsNonMaterialLabel
-          : "Failed (human review required; material findings unresolved)";
+        : "Failed (human review required; material findings unresolved)";
     let preparedReviewPublication: PreparedReviewPublication = {
       reviewResult,
       reviewDisclosure: exhaustedReview ?? null,
@@ -7100,7 +6963,7 @@ async function runTaskSessionWorkflowAttempt(
         const priorReview =
           current.reviewUnavailable?.priorReview ??
           (finalReview.review.verdict === "fail" ? finalReview.review : undefined);
-        current = updateRecord(taskStore, current, {
+        updateRecord(taskStore, current, {
           reviewRepair:
             current.reviewRepair === undefined
               ? undefined
@@ -7124,12 +6987,7 @@ async function runTaskSessionWorkflowAttempt(
             review: null,
           },
         });
-        reviewResult = buildUnavailableReviewResult(
-          unavailableDiagnostic,
-          freshIdentity,
-          priorReview,
-          current.reviewRepair,
-        );
+        reviewResult = "Unavailable";
         exhaustedReview = undefined;
         preparedReviewPublication = {
           reviewResult,
@@ -7146,7 +7004,7 @@ async function runTaskSessionWorkflowAttempt(
           throw new Error(
             "Current publication review outcome is missing without an unavailable-review marker",
           );
-        current = updateRecord(taskStore, current, {
+        updateRecord(taskStore, current, {
           publicationQuality: {
             contentIdentity: freshIdentity,
             validation: toPersistedQualityEvidence(freshValidation),
@@ -7176,20 +7034,11 @@ async function runTaskSessionWorkflowAttempt(
                   }),
           },
         });
-        const hasCurrentMaterialConcerns =
-          currentReview.verdict === "fail" &&
-          hasUndisposedReviewConcerns(
-            currentReview,
-            current.reviewRepair?.findings ?? [],
-            current.reviewRepair?.requirementDispositions ?? [],
-          );
-        exhaustedReview = hasCurrentMaterialConcerns ? currentReview : undefined;
+        exhaustedReview = currentReview.verdict === "fail" ? currentReview : undefined;
         reviewResult =
           currentReview.verdict === "pass"
             ? "Passed"
-            : hasCurrentMaterialConcerns
-              ? "Failed (human review required; material findings unresolved)"
-              : reviewConcernsDismissedAsNonMaterialLabel;
+            : "Failed (human review required; material findings unresolved)";
         preparedReviewPublication = {
           reviewResult,
           reviewDisclosure: exhaustedReview ?? null,
@@ -7228,16 +7077,22 @@ async function runTaskSessionWorkflowAttempt(
         commitSha: recoveredTrustedCommit.commitSha,
         reviewResult,
         qualityNeedsDraft: !decideValidatedHumanReviewPublication(preparedEvidence).allowed,
-        remediationResult: `${finalReview.attempts} review repair(s)`,
+        remediationResult:
+          taskRepairFacts(taskStore.read(activeCard.id), { validation: false })[0] ??
+          "Not required",
         ...(exhaustedReview === undefined ? {} : { exhaustedReview }),
         ...(emailNotifier === undefined ? {} : { emailNotifier }),
         claimHumanReviewNotification: (commitSha) =>
           taskStore.claimHumanReviewNotification(activeCard.id, commitSha),
         verifiedDescriptionFacts: () => [
-          ...publicationQualityFacts(preparedEvidence, {
-            planAvailable: planStore.read(activeCard.id) !== null,
-            diagnosticLogReference: getSessionLogReference(project.id, activeCard.id),
-          }),
+          ...publicationQualityFacts(preparedEvidence),
+          ...taskRepairFacts(taskStore.read(activeCard.id)),
+          ...reviewConcernFacts(
+            preparedEvidence.review === null
+              ? taskStore.read(activeCard.id)?.reviewUnavailable?.priorReview
+              : undefined,
+            true,
+          ),
         ],
         signal,
         ...(recoveryRecord?.pullRequest?.url === undefined
@@ -7281,17 +7136,23 @@ async function runTaskSessionWorkflowAttempt(
         ...(setupDisposition === undefined ? {} : { setupDisposition }),
         reviewResult,
         qualityNeedsDraft: !decideValidatedHumanReviewPublication(preparedEvidence).allowed,
-        remediationResult: `${finalReview.attempts} review repair(s)`,
+        remediationResult:
+          taskRepairFacts(taskStore.read(activeCard.id), { validation: false })[0] ??
+          "Not required",
         ...(exhaustedReview === undefined ? {} : { exhaustedReview }),
         getPreparedReviewPublication: () => preparedReviewPublication,
         ...(emailNotifier === undefined ? {} : { emailNotifier }),
         claimHumanReviewNotification: (commitSha) =>
           taskStore.claimHumanReviewNotification(activeCard.id, commitSha),
         verifiedDescriptionFacts: () => [
-          ...publicationQualityFacts(preparedEvidence, {
-            planAvailable: planStore.read(activeCard.id) !== null,
-            diagnosticLogReference: getSessionLogReference(project.id, activeCard.id),
-          }),
+          ...publicationQualityFacts(preparedEvidence),
+          ...taskRepairFacts(taskStore.read(activeCard.id)),
+          ...reviewConcernFacts(
+            preparedEvidence.review === null
+              ? taskStore.read(activeCard.id)?.reviewUnavailable?.priorReview
+              : undefined,
+            true,
+          ),
         ],
         signal,
         initialEvidence,

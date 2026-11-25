@@ -53,7 +53,7 @@ export function buildTaskSessionValidationRepairPrompt(
       : JSON.stringify(input.approvedPlan, null, 2),
     ...taskSessionRepositoryGuidance,
     `This is bounded validation repair attempt ${input.attempt} of ${input.maxAttempts}.`,
-    `If no further source changes are useful, you may finish early by printing exactly ${"VALIDATION_REPAIR_FINISHED_EARLY"} on its own line. This does not claim that validation passed.`,
+    "If you cannot justify further changes, explain why. The orchestrator checks for source changes and reruns the configured checks on changed source.",
     `Validation command: ${JSON.stringify(input.validation.command)}`,
     `Validation status: ${input.validation.status}`,
     `Validation exit code: ${input.validation.exitCode === null ? "unavailable" : input.validation.exitCode}`,
