@@ -843,7 +843,12 @@ export class ProjectRunAuthority {
             ...(projection.recoveryWait
               ? {
                   wait: {
-                    reason: projection.recoveryWait.reason,
+                    // The canonical reason is an identifier. Keep provider details
+                    // (including repository paths) in the task recovery projection.
+                    reason:
+                      projection.recoveryWait.kind === "dependency"
+                        ? "task-dependency-unavailable"
+                        : "task-manual-move-required",
                     dependency:
                       projection.recoveryWait.notificationId.split("/").at(-1) ?? "task-session",
                     since: projection.recoveryWait.since,

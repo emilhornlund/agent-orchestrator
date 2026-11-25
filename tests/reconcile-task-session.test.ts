@@ -14,6 +14,7 @@ import { ProjectRunAuthority } from "../src/task-session/project-run-authority.j
 import {
   persistTaskSessionContextWait,
   reconcileTaskSession,
+  getLegacyPublishedGitHubReadRecoveryPhase,
   type TaskSessionRecoverySnapshot,
 } from "../src/task-session/reconcile-task-session.js";
 import type {
@@ -457,6 +458,45 @@ describe("reconcileTaskSession", () => {
       ).resolves.toMatchObject({ status: "attention-required" });
       expect(reads).toBe(0);
       expect(f.store.read("card")?.phase).toBe("attention-required");
+    },
+  );
+
+  it.each([
+    ["owner/repo", "GitHub App installation token exchange failed with HTTP 502", "ci"],
+    ["Owner/Repo", "GitHub App installation token exchange failed with HTTP 429", "ci"],
+    [
+      "owner/repo",
+      "GitHub App installation token exchange failed during the network request",
+      "ci",
+    ],
+    ["other/repo", "GitHub App installation token exchange failed with HTTP 502", null],
+    ["owner/repo", "GitHub App installation token exchange failed with HTTP 403", null],
+    ["owner/repo", "GitHub App configuration is invalid or missing", null],
+    [
+      "owner/repo",
+      "GitHub App installation token exchange failed with HTTP 502; unknown mutation",
+      null,
+    ],
+  ] as const)(
+    "selects historical CI recovery for %s: %s only with matching transient evidence",
+    (repository, failure, phase) => {
+      const f = canonicalSetupFixture("ci");
+      const record = f.store.read("card")!;
+      f.store.compareAndSwap("card", record.revision, {
+        ...transitionTaskExecutionRecord(record, {
+          type: "attention-required",
+          eventId: "legacy-authentication",
+          projectId: record.projectId,
+          cardId: record.cardId,
+          operationKey: record.operationKey,
+          occurredAt: new Date().toISOString(),
+        }),
+        recoveryAttentionReason: `Authoritative recovery snapshot could not be read: GitHub authentication failed for project "${record.projectId}" repository "${repository}": ${failure}`,
+      });
+      expect(
+        getLegacyPublishedGitHubReadRecoveryPhase(f.runStore.read(), f.store.read("card")!),
+      ).toBe(phase);
+      expect(hasDueTaskSessionRecoveryWait(f.runStore.read())).toBe(phase !== null);
     },
   );
   it("paces unreadable GitHub snapshot responses without losing the resumable phase", async () => {

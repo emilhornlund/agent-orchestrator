@@ -20,12 +20,11 @@ export type ReadPullRequestFields = (options: {
  * even in JSON output, which cannot establish byte-exact publication acceptance. */
 export const readPullRequestFields: ReadPullRequestFields = async (options) => {
   const runtime = getProcessRuntime();
+  const ambient = options.credential.mode === "ambient";
   let token =
-    options.credential.environment.GH_TOKEN ??
-    options.credential.environment.GITHUB_TOKEN ??
-    process.env.GH_TOKEN ??
-    process.env.GITHUB_TOKEN;
-  if (!token) {
+    options.credential.environment.GH_TOKEN ?? options.credential.environment.GITHUB_TOKEN;
+  if (ambient) token ??= process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN;
+  if (ambient && !token) {
     try {
       // Credential acquisition is intentionally in-memory only. Never record
       // the auth command's secret stdout or retain an error containing it.

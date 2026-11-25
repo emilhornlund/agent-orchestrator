@@ -10,6 +10,10 @@ import { transitionTaskExecutionRecord } from "./task-execution-transition.js";
 import { loadOwnedTaskExecutionRecord } from "./task-execution-ownership.js";
 import { assertOwnedTaskWorktreePath } from "./run-task-session-implementation.js";
 import { isRetryableGitHubError, MalformedGitHubResponseError } from "../github/github-client.js";
+import {
+  githubAppTokenNetworkFailure,
+  isTransientGitHubAppTokenStatus,
+} from "../github/github-app-authenticator.js";
 import { isConclusiveOperationResolution, type RunRecord } from "./run-record.js";
 import { isRetryableTrelloError } from "../trello/trello-client.js";
 import { assertSetupInventoryIdentity, captureSetupEffects } from "../process/run-setup.js";
@@ -99,6 +103,7 @@ export function getLegacyPublishedGitHubReadRecoveryPhase(
   record: TaskExecutionRecord,
 ): "ci" | "human-feedback" | null {
   const classificationFailure = isLegacyFeedbackClassificationFailure(record);
+  const credentialFailure = isLegacyPublishedGitHubCredentialFailure(run, record);
   if (
     !run ||
     run.lifecycle !== "waiting" ||
@@ -120,7 +125,8 @@ export function getLegacyPublishedGitHubReadRecoveryPhase(
     (!record.recoveryAttentionReason?.startsWith(
       "Authoritative recovery snapshot could not be read: GitHub CLI returned an invalid ",
     ) &&
-      !classificationFailure) ||
+      !classificationFailure &&
+      !credentialFailure) ||
     record.validationRepair?.activePrimaryOperation ||
     record.reviewRepair?.activePrimaryOperation ||
     record.ciRepair?.activePrimaryOperation ||
@@ -163,6 +169,38 @@ export function getLegacyPublishedGitHubReadRecoveryPhase(
   )
     return null;
   return classificationFailure || run.checkpoint === "human-review" ? "human-feedback" : "ci";
+}
+
+/** Historical records only retained the provider's sanitized diagnostic, not the typed error. */
+export function isLegacyPublishedGitHubCredentialFailure(
+  run: RunRecord | null,
+  record: TaskExecutionRecord,
+): boolean {
+  if (
+    !run ||
+    (run.checkpoint !== "ci" && run.checkpoint !== "human-review") ||
+    run.wait.dependency !== "operator" ||
+    run.wait.retryAt !== null ||
+    record.recoveryWait !== undefined
+  )
+    return false;
+  const diagnostic =
+    /^Authoritative recovery snapshot could not be read: GitHub authentication failed for project "([^"]+)" repository "([^"]+)": (.+)$/u.exec(
+      record.recoveryAttentionReason ?? "",
+    );
+  if (
+    !diagnostic ||
+    diagnostic[1] !== run.projectId ||
+    diagnostic[2]?.toLowerCase() !== run.pinned.repository.toLowerCase()
+  )
+    return false;
+  const status = /^GitHub App installation token exchange failed with HTTP (\d{3})$/u.exec(
+    diagnostic[3]!,
+  );
+  return (
+    diagnostic[3] === githubAppTokenNetworkFailure ||
+    (status !== null && isTransientGitHubAppTokenStatus(Number(status[1])))
+  );
 }
 
 export function isLegacyFeedbackClassificationFailure(record: TaskExecutionRecord): boolean {
@@ -220,6 +258,9 @@ function persistWait(
   const since = record.recoveryWait?.since ?? new Date(now).toISOString();
   const retryAt = new Date(now + interval).toISOString();
   const notificationId = `${record.projectId}/${record.cardId}/${record.operationKey}/${kind}`;
+  reason = sanitizeControlledText(redactSecrets(reason, getProcessRuntime().secretValues))
+    .slice(0, 2_000)
+    .trim();
   const next: TaskExecutionRecord = {
     ...record,
     ...patch,
@@ -589,14 +630,17 @@ export async function reconcileTaskSession(
     }
   }
   if (record.phase === "attention-required") {
-    if (isLegacyFeedbackClassificationFailure(record))
+    const run = ProjectRunAuthority.current(project.id)?.store.read() ?? null;
+    if (
+      isLegacyFeedbackClassificationFailure(record) ||
+      isLegacyPublishedGitHubCredentialFailure(run, record)
+    )
       return {
         status: "attention-required",
         reason:
-          "Published classification recovery requires the owned PR and stopped-process inspection",
+          "Published checkpoint recovery requires the owned PR and stopped-process inspection",
         record,
       };
-    const run = ProjectRunAuthority.current(project.id)?.store.read() ?? null;
     recoveredReviewedPublication = canRecheckReviewedPublication(run, record);
     const resumePhase = recoveredReviewedPublication
       ? "publication"

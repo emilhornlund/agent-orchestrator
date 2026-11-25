@@ -39,9 +39,16 @@ export class GitHubAppNetworkError extends Error {
   readonly operation = "installation token exchange" as const;
 
   constructor() {
-    super("GitHub App installation token exchange failed during the network request");
+    super(githubAppTokenNetworkFailure);
     this.name = "GitHubAppNetworkError";
   }
+}
+
+export const githubAppTokenNetworkFailure =
+  "GitHub App installation token exchange failed during the network request";
+
+export function isTransientGitHubAppTokenStatus(status: number | undefined): boolean {
+  return status === 429 || (status !== undefined && status >= 500 && status < 600);
 }
 
 export class GitHubAppApiError extends Error {

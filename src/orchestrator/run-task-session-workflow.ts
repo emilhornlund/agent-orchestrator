@@ -39,12 +39,18 @@ import {
 } from "../notifications/email-notifier.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import { runBoundedCiReview } from "../task-session/run-bounded-ci-review.js";
-import { z } from "zod";
 import {
   inspectPublishedFeedbackRecovery,
+  parsePublishedRecoveryWait,
+  publishedRecoveryWaitKey,
+  readPublishedRecoveryWait,
   restorePublishedFeedbackCheckpoint,
 } from "./published-feedback-recovery.js";
-import { isLegacyFeedbackClassificationFailure } from "../task-session/reconcile-task-session.js";
+import {
+  getLegacyPublishedGitHubReadRecoveryPhase,
+  isLegacyFeedbackClassificationFailure,
+  isLegacyPublishedGitHubCredentialFailure,
+} from "../task-session/reconcile-task-session.js";
 import { captureRepositorySnapshot, repositorySnapshotsEqual } from "../opencode/commit-result.js";
 import {
   CommitMessageAdviceUnavailableError,
@@ -1614,18 +1620,27 @@ async function runTaskSessionWorkflowAttempt(
     worktreePath: string,
   ) => {
     const authority = ProjectRunAuthority.current(project.id);
-    if (authority && isLegacyFeedbackClassificationFailure(record)) {
-      const recoveryKey = "legacy-published-feedback-recovery-v1";
-      const recoverySchema = z.strictObject({ reason: z.string(), retryAt: z.string().datetime() });
-      const prior = authority.read(recoveryKey, recoverySchema.parse);
+    const run = authority?.store.read();
+    const phase = getLegacyPublishedGitHubReadRecoveryPhase(run ?? null, record);
+    const log = logger.child({ projectId: project.id, cardId: card.id });
+    if (
+      authority &&
+      run &&
+      phase &&
+      (isLegacyFeedbackClassificationFailure(record) ||
+        isLegacyPublishedGitHubCredentialFailure(run, record))
+    ) {
+      const prior = readPublishedRecoveryWait(run, record);
       if (prior && Date.now() < Date.parse(prior.retryAt))
         return {
           status: "waiting" as const,
-          checkpoint: "human-feedback" as const,
+          checkpoint: phase,
           reason: prior.reason,
           record,
         };
       try {
+        if (hasUnresolvedLegacyMaintenance)
+          throw new Error("Published checkpoint has unresolved legacy maintenance effects");
         const proof = await inspectPublishedFeedbackRecovery({
           project,
           authority,
@@ -1636,15 +1651,13 @@ async function runTaskSessionWorkflowAttempt(
           commands,
           signal,
         });
-        restorePublishedFeedbackCheckpoint(taskStore, record);
-        logger
-          .child({ projectId: project.id, cardId: card.id })
-          .event(
-            `Restored published feedback checkpoint for ${proof.pullRequestUrl}; attempt ${proof.attemptId}`,
-          );
+        restorePublishedFeedbackCheckpoint(taskStore, record, proof.phase);
+        log.event(
+          `Restored published ${proof.phase} checkpoint for ${proof.pullRequestUrl}; attempt ${proof.attemptId}; cleared: ${record.recoveryAttentionReason}`,
+        );
         return {
           status: "resume" as const,
-          phase: "human-feedback" as const,
+          phase: proof.phase,
           record: taskStore.read(card.id)!,
         };
       } catch (error) {
@@ -1652,22 +1665,26 @@ async function runTaskSessionWorkflowAttempt(
         const reason = sanitizeControlledText(
           error instanceof Error ? error.message : "Published feedback recovery inspection failed",
         ).slice(0, 2_000);
-        const deferred = { reason, retryAt: new Date(Date.now() + 60_000).toISOString() };
+        const deferred = {
+          reason,
+          retryAt: new Date(
+            Date.now() + Math.max(options.retryIntervalMs ?? 0, 60_000),
+          ).toISOString(),
+          taskRevision: record.revision,
+        };
         authority.mutate(
-          recoveryKey,
+          publishedRecoveryWaitKey,
           deferred,
           () => ({ value: deferred, result: undefined }),
-          recoverySchema.parse,
+          parsePublishedRecoveryWait,
         );
         if (prior?.reason !== reason)
-          logger
-            .child({ projectId: project.id, cardId: card.id })
-            .warn(
-              `Published feedback recovery deferred for ${record.pullRequest?.url}; attempt ${authority.store.attemptId}; ${reason}`,
-            );
+          log.warn(
+            `Published checkpoint recovery blocked for ${record.pullRequest?.url}; retry at ${deferred.retryAt}: ${reason}`,
+          );
         return {
           status: "waiting" as const,
-          checkpoint: "human-feedback" as const,
+          checkpoint: phase,
           reason,
           record,
         };
@@ -1706,6 +1723,18 @@ async function runTaskSessionWorkflowAttempt(
       if (bound === null) return null;
       recovery = await reconcile(bound);
     }
+    if (recovery.status === "attention-required" && record.phase !== "attention-required")
+      log.error(`Task entered attention-required from ${record.phase}: ${recovery.reason}`);
+    if (
+      recovery.status === "waiting" &&
+      recovery.record.recoveryWait?.kind === "dependency" &&
+      (record.recoveryWait?.kind !== "dependency" || record.recoveryWait.reason !== recovery.reason)
+    )
+      log.warn(
+        `Dependency retry scheduled for ${recovery.checkpoint} at ${recovery.record.recoveryWait.retryAt}: ${recovery.reason}`,
+      );
+    if (recovery.status === "resume" && record.recoveryWait?.kind === "dependency")
+      log.event(`Dependency recovered; verified and resumed ${recovery.phase} checkpoint`);
     return recovery;
   };
   const queue = new TaskMutationQueue(root, project);
@@ -2286,13 +2315,6 @@ async function runTaskSessionWorkflowAttempt(
         recoveryPath,
       );
       if (recovery === null || recovery.status !== "resume") {
-        if (
-          recovery?.status === "attention-required" &&
-          recoveryRecord.phase !== "attention-required"
-        )
-          logger
-            .child({ projectId: project.id, cardId: observation.cardId })
-            .error(`Published task recovery requires attention: ${recovery.reason}`);
         executionRecoveryBlocked = true;
         continue;
       }
@@ -2411,6 +2433,9 @@ async function runTaskSessionWorkflowAttempt(
           );
         if (
           (queued.kind === "feedback" &&
+            (queued.observationArtifactId === undefined ||
+              (!noOpReportPending &&
+                observation.queuedFeedbackObservationIds?.includes(queued.eventId))) &&
             queued.eventId !== selectedFeedbackId &&
             queued.eventId !== replyEventId) ||
           (queued.kind === "ci-repair" && queued.eventId !== ciEventId) ||
@@ -3532,14 +3557,6 @@ async function runTaskSessionWorkflowAttempt(
       recoveryPath,
     );
     if (recovery === null || recovery.status !== "resume") {
-      if (isLegacyFeedbackClassificationFailure(recoveryRecord)) return;
-      logger
-        .child({ projectId: project.id, cardId: executionRecoveryCard.id })
-        .event(
-          recovery === null
-            ? "Published task recovery remains waiting for reconstruction evidence"
-            : `Published task recovery remains ${recovery.status}${"reason" in recovery ? ` (${recovery.reason})` : ""}; no writer was scheduled`,
-        );
       return;
     }
     recoveryCheckedThisPoll.add(canonicalCardId);
@@ -4596,19 +4613,9 @@ async function runTaskSessionWorkflowAttempt(
         reviewRemediationFailure: undefined,
       });
     }
-    const priorRecoveryNotificationId = record.recoveryWait?.notificationId;
     const recovery = await reconcileOwnedTaskForResume(card, record, worktreePath);
     if (recovery === null) return;
     if (recovery.status !== "resume") {
-      if (recovery.status === "waiting") {
-        if (recovery.record.recoveryWait?.notificationId !== priorRecoveryNotificationId) {
-          logger
-            .child({ projectId: project.id, cardId: card.id })
-            .warn(
-              `Recovery wait ${recovery.record.recoveryWait?.notificationId ?? "unknown"}: verified ${recovery.checkpoint} checkpoint; authoritative dependency read will be retried on a later project poll: ${recovery.reason}`,
-            );
-        }
-      }
       if (recovery.status === "attention-required" && record.phase !== "attention-required")
         throw new Error(
           `Task-session restart requires attention for ${card.id}: ${recovery.reason}`,

@@ -8,6 +8,7 @@ import {
   GitHubAppConfigurationError,
   GitHubAppCredentialError,
   GitHubAppNetworkError,
+  isTransientGitHubAppTokenStatus,
 } from "./github-app-authenticator.js";
 
 export type GitHubCredentialEnvironment = Record<string, string>;
@@ -40,6 +41,7 @@ function describeCredentialFailure(cause: unknown): string {
 
 export class GitHubCredentialResolutionError extends Error {
   readonly transient: boolean;
+  readonly status: number | undefined;
   readonly projectId: string;
   readonly repository: string;
 
@@ -47,17 +49,32 @@ export class GitHubCredentialResolutionError extends Error {
     const safeCause = describeCredentialFailure(cause);
 
     super(
-      `GitHub authentication failed for project "${project.id}" repository "${project.repository.github}": ${describeCredentialFailure(cause)}`,
+      `GitHub authentication failed for project "${project.id}" repository "${project.repository.github}": ${safeCause}`,
       { cause: new Error(safeCause) },
     );
     this.name = "GitHubCredentialResolutionError";
+    this.status = cause instanceof GitHubAppApiError ? cause.status : undefined;
     this.transient =
-      cause instanceof GitHubAppNetworkError ||
-      (cause instanceof GitHubAppApiError &&
-        (cause.status === 429 || (cause.status !== undefined && cause.status >= 500)));
+      cause instanceof GitHubAppNetworkError || isTransientGitHubAppTokenStatus(this.status);
     this.projectId = project.id;
     this.repository = project.repository.github;
   }
+}
+
+/** The first typed credential disposition wins over wrapper messages and transport heuristics. */
+export function findGitHubCredentialResolutionError(
+  error: unknown,
+): GitHubCredentialResolutionError | undefined {
+  const seen = new Set<Error>();
+  for (
+    let current = error;
+    current instanceof Error && !seen.has(current);
+    current = current.cause
+  ) {
+    if (current instanceof GitHubCredentialResolutionError) return current;
+    seen.add(current);
+  }
+  return undefined;
 }
 
 function getGitAskPassPath(): string {

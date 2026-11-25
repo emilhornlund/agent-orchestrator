@@ -1,13 +1,16 @@
 import path from "node:path";
+import { z } from "zod";
 import type { ProjectConfig } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
 import type { GitHubClient } from "../github/github-client.js";
 import { inspectPrimaryOpenCodeSession } from "../opencode/inspect-primary-session.js";
 import type { CommandRunner } from "../process/command-runner.js";
-import type { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
+import type { RunRecord } from "../task-session/run-record.js";
 import {
   getLegacyPublishedGitHubReadRecoveryPhase,
   isLegacyFeedbackClassificationFailure,
+  isLegacyPublishedGitHubCredentialFailure,
 } from "../task-session/reconcile-task-session.js";
 import { assertOwnedTaskWorktreePath } from "../task-session/run-task-session-implementation.js";
 import { startupStopProofForExecution } from "../task-session/startup-stop-attestation.js";
@@ -17,14 +20,33 @@ import { TaskMutationQueue } from "../task-session/task-mutation-queue.js";
 import { assertTaskResourceProvenance, runTaskResources } from "../task-session/task-resources.js";
 import type { TrelloCard } from "../trello/trello-client.js";
 import { readPendingCommitState, readTrustedCommitState } from "./trusted-commit-state.js";
-import { readTerminalPrFence } from "../task-session/terminal-pr-fence.js";
+import { otherTaskWriterIsActive, readTerminalPrFence } from "../task-session/terminal-pr-fence.js";
+import { parseTaskMutationBlock } from "./task-mutation-block-store.js";
 import {
   readOwnedProcessInventory,
   processInventoryEntryStopped,
   journalProvesGitHubProcessNeverStarted,
 } from "../task-session/owned-process-inventory.js";
 
-/** Narrow recovery for an idle, published classification failure. This does not
+export const publishedRecoveryWaitKey = "legacy-published-feedback-recovery-v1";
+const publishedRecoveryWaitSchema = z.strictObject({
+  reason: z.string(),
+  retryAt: z.string().datetime(),
+  taskRevision: z.number().int().optional(),
+});
+
+export function readPublishedRecoveryWait(run: RunRecord, task: TaskExecutionRecord) {
+  const wait = publishedRecoveryWaitSchema
+    .nullable()
+    .parse(run.compatibility[publishedRecoveryWaitKey] ?? null);
+  return wait && (wait.taskRevision === undefined || wait.taskRevision === task.revision)
+    ? wait
+    : null;
+}
+
+export const parsePublishedRecoveryWait = publishedRecoveryWaitSchema.parse;
+
+/** Narrow recovery for an idle, published read or classification failure. This does not
  * authorize resuming a failed mutation or an unknown writer. */
 export async function inspectPublishedFeedbackRecovery(options: {
   project: ProjectConfig;
@@ -39,14 +61,18 @@ export async function inspectPublishedFeedbackRecovery(options: {
   const { project, authority, card, task, git, github, commands, signal } = options;
   authority.assertHeld();
   const run = authority.store.read();
+  const phase = getLegacyPublishedGitHubReadRecoveryPhase(run, task);
   if (
     readTerminalPrFence(authority) ||
     !run ||
     card.id !== run.cardId ||
     !task.pullRequest ||
     !task.primarySessionId ||
-    !isLegacyFeedbackClassificationFailure(task) ||
-    getLegacyPublishedGitHubReadRecoveryPhase(run, task) !== "human-feedback"
+    phase === null ||
+    !(
+      isLegacyFeedbackClassificationFailure(task) ||
+      isLegacyPublishedGitHubCredentialFailure(run, task)
+    )
   )
     throw new Error("Attempt is not an idle published feedback-classification checkpoint");
   if (
@@ -56,16 +82,22 @@ export async function inspectPublishedFeedbackRecovery(options: {
   )
     throw new Error("Published feedback recovery requires the original Human Review membership");
   const queue = new TaskMutationQueue(run.pinned.storageRoot, project, authority);
-  if (
-    queue.getActive() ||
+  const hasMutationConflict = () =>
+    task.externalHeadIntent !== undefined ||
+    otherTaskWriterIsActive(authority) ||
+    (authority.read(ProjectRunAuthority.mutationBlocksKey(project.id), parseTaskMutationBlock)
+      ?.blockers.length ?? 0) > 0 ||
+    queue.getActive() !== null ||
     queue
       .list()
       .some(
         (item) =>
-          ["active", "failed"].includes(item.status) ||
-          (item.status === "queued" && item.cardId !== card.id),
-      )
-  )
+          item.status === "queued" &&
+          (item.cardId !== card.id ||
+            item.kind === "terminal-pr" ||
+            item.kind === "external-pr-head"),
+      );
+  if (hasMutationConflict())
     throw new Error("Published feedback recovery has conflicting mutation ownership");
   const resources = runTaskResources(run);
   if (
@@ -171,7 +203,8 @@ export async function inspectPublishedFeedbackRecovery(options: {
   authority.assertHeld();
   if (
     store.read(card.id)?.revision !== task.revision ||
-    queue.getActive() ||
+    getLegacyPublishedGitHubReadRecoveryPhase(authority.store.read(), task) !== phase ||
+    hasMutationConflict() ||
     readTerminalPrFence(authority)
   )
     throw new Error("Published feedback recovery task or queue changed during inspection");
@@ -181,16 +214,18 @@ export async function inspectPublishedFeedbackRecovery(options: {
     branch: resources.branch,
     head,
     pullRequestUrl: task.pullRequest.url,
+    phase,
   };
 }
 
 export function restorePublishedFeedbackCheckpoint(
   store: TaskExecutionStore,
   task: TaskExecutionRecord,
+  phase: "ci" | "human-feedback",
 ): void {
   store.compareAndSwap(task.cardId, task.revision, {
     ...task,
-    phase: "human-feedback",
+    phase,
     recoveryAttentionReason: undefined,
     recoveryWait: undefined,
     revision: task.revision + 1,

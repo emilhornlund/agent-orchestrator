@@ -620,7 +620,7 @@ leaves the card in `Backlog` with project release pending original-comment recon
 delivery never authorizes a blind resend.
 
 `Attention Required` is diagnostic, not permission to discard state or start a new task.
-Trello/GitHub timeouts, connectivity errors, rate limits and HTTP 500/502/503/504 retain verified
+Trello/GitHub timeouts, connectivity errors, rate limits and transient server errors retain verified
 state with bounded immediate attempts and controlled rechecks. Owned attempts persist dependency
 waits and resume when outcomes are verified; legacy reconciliation blocks use their documented
 explicit recovery condition. Unknown mergeability is not proof of conflict, success or deletion.
@@ -628,6 +628,16 @@ Unknown writes retain their original identity for readback, not blind retries. A
 configuration and malformed-state errors produce sanitized diagnostics. Alerts are deduplicated and
 are not sent for intentional shutdown or quality exhaustion alone. No policy automatically retries a
 confirmed Failed card.
+
+GitHub App token-exchange network errors, HTTP 429, and HTTP 5xx are dependency failures. Check the
+project/card log for the credential diagnostic, the next scheduled retry, and the verified
+checkpoint resumption. HTTP 401/403 from token exchange and invalid App configuration require
+checking the installation, repository access, and key configuration. App authentication does not
+fall back to ambient credentials. An `Observed feedback` event means the service retained an
+arrival, not that it dispatched OpenCode. A `Queued human feedback cannot dispatch` or
+`Published checkpoint recovery blocked` message identifies the wait or verification blocker. See
+[published-task recovery](recovery.md#retained-published-classification-or-github-app-credential-failure)
+for the upgrade path and evidence to preserve.
 
 Notification delivery is isolated from workflow state. Existing card-transition email is attempted
 only after its Trello move succeeds. A delivery failure is logged with project and card context when
