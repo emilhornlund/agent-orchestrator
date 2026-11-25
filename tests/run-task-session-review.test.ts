@@ -431,9 +431,7 @@ describe("runTaskSessionReview", () => {
     expect(run?.prompt).toContain(
       "kind (string enum 'defect', 'incomplete', or 'contract-violation')",
     );
-    expect(run?.prompt).toContain(
-      "explain concrete current-source evidence demonstrating why it is material and blocks",
-    );
+    expect(run?.prompt).toContain("detail explaining the concrete evidence and impact");
     expect(run?.prompt).toContain("verify each previously reported blocking finding");
     expect(run?.prompt).toContain("detect material regressions introduced by remediation");
     expect(run?.prompt).toContain("independently reassess every approved requirement");

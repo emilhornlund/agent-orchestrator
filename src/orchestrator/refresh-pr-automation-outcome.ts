@@ -1,46 +1,7 @@
 import type { ProjectConfig } from "../config/config.js";
 import type { GitHubClient } from "../github/github-client.js";
 import type { TrelloCard } from "../trello/trello-client.js";
-
-const START = "<!-- agent-orchestrator-outcome:start -->";
-const END = "<!-- agent-orchestrator-outcome:end -->";
-
-function outcomeSection(headSha: string, trelloUrl: string, facts: readonly string[]): string {
-  return [
-    START,
-    "## Current automation outcome",
-    `Revision: ${headSha}`,
-    "These are the latest observed results; older validation summaries describe earlier snapshots.",
-    ...facts.map((fact) => `- ${fact.replaceAll("<!-- agent-orchestrator-", "[managed marker: ")}`),
-    `Trello: ${trelloUrl}`,
-    END,
-  ].join("\n");
-}
-
-/** Atomically replace a prior revision's recognized outcome with a pending observation. */
-export function resetStalePrAutomationOutcome(
-  body: string,
-  headSha: string,
-  trelloUrl: string,
-): string {
-  const starts = [...body.matchAll(/<!-- agent-orchestrator-outcome:start -->/gu)];
-  const ends = [...body.matchAll(/<!-- agent-orchestrator-outcome:end -->/gu)];
-  if (starts.length !== 1 || ends.length !== 1 || starts[0]!.index > ends[0]!.index) return body;
-  const start = starts[0]!.index;
-  const end = ends[0]!.index + END.length;
-  const revisions = [
-    ...body.slice(start, end).matchAll(/^Revision: ([0-9a-f]{40}|[0-9a-f]{64})\r?$/gimu),
-  ];
-  if (revisions.length !== 1 || revisions[0]![1]!.toLowerCase() === headSha.toLowerCase())
-    return body;
-  return (
-    body.slice(0, start) +
-    outcomeSection(headSha, trelloUrl, [
-      "CI results for this revision have not yet been observed.",
-    ]) +
-    body.slice(end)
-  );
-}
+import { updatePullRequestQuality } from "../github/pull-request-quality.js";
 
 /** Preserve every byte outside the uniquely owned current-outcome section. */
 export async function refreshPrAutomationOutcome(options: {
@@ -54,6 +15,7 @@ export async function refreshPrAutomationOutcome(options: {
   pullRequestUrl: string;
   headSha: string;
   facts: readonly string[];
+  retain?: NonNullable<Parameters<typeof updatePullRequestQuality>[3]>;
   draft: boolean;
   readiness?: {
     headBranch: string;
@@ -67,20 +29,7 @@ export async function refreshPrAutomationOutcome(options: {
   };
   if (options.draft) await options.github.ensurePullRequestDraft(request);
   const current = await options.github.getPullRequestDescription(request);
-  const starts = [...current.matchAll(/<!-- agent-orchestrator-outcome:start -->/gu)];
-  const ends = [...current.matchAll(/<!-- agent-orchestrator-outcome:end -->/gu)];
-  if (
-    starts.length !== ends.length ||
-    starts.length > 1 ||
-    (starts[0] && starts[0].index > ends[0]!.index)
-  )
-    throw new Error(
-      "PR outcome markers are ambiguous; preserving human description for reconciliation",
-    );
-  const section = outcomeSection(options.headSha, options.card.url, options.facts);
-  const next = starts[0]
-    ? current.slice(0, starts[0].index) + section + current.slice(ends[0]!.index + END.length)
-    : `${current}\n\n${section}`;
+  const next = updatePullRequestQuality(current, options.facts, options.headSha, options.retain);
   if (next !== current)
     await options.github.editPullRequestDescription({
       ...request,

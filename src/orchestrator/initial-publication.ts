@@ -34,6 +34,7 @@ import { transitionTaskExecutionRecord } from "../task-session/task-execution-tr
 import { readPendingCommitState, writeTrustedCommitState } from "./trusted-commit-state.js";
 import type { PublishCardOptions } from "./publish-card.js";
 import { prepareInitialPublicationBody } from "./publish-card.js";
+import { reviewNotificationConcerns } from "./publication-quality-summary.js";
 import type { OpenCodeClient } from "../opencode/opencode-client.js";
 import { getElapsedWorkflowTime } from "./workflow-duration.js";
 import { getTaskSessionSourceSnapshotIdentity } from "../task-session/source-snapshot.js";
@@ -970,29 +971,33 @@ export async function resumeInitialPublication(options: {
           : storedTask?.reviewRepair?.status === "exhausted"
             ? storedTask.reviewRepair.finalReview
             : undefined;
-      const body = await prepareInitialPublicationBody({
-        project,
-        git,
-        github,
-        trello,
-        ...(options.opencode === undefined ? {} : { opencode: options.opencode }),
-        card: {
-          id: checkpoint.cardId,
-          name: checkpoint.title,
-          url: checkpoint.cardUrl,
-          desc: checkpoint.cardDescription,
-          idList: run.pinned.lists.working,
-          idLabels: [],
+      const body = await prepareInitialPublicationBody(
+        {
+          project,
+          git,
+          github,
+          trello,
+          ...(options.opencode === undefined ? {} : { opencode: options.opencode }),
+          card: {
+            id: checkpoint.cardId,
+            name: checkpoint.title,
+            url: checkpoint.cardUrl,
+            desc: checkpoint.cardDescription,
+            idList: run.pinned.lists.working,
+            idLabels: [],
+          },
+          worktreePath: cwd,
+          branch: checkpoint.branch,
+          reviewResult: checkpoint.reviewResult,
+          remediationResult: checkpoint.remediationResult,
+          qualityNeedsDraft: checkpoint.qualityNeedsDraft ?? false,
+          verifiedDescriptionFacts: () => checkpoint!.verifiedFacts,
+          ...(exhaustedReview === undefined ? {} : { exhaustedReview }),
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
         },
-        worktreePath: cwd,
-        branch: checkpoint.branch,
-        reviewResult: checkpoint.reviewResult,
-        remediationResult: checkpoint.remediationResult,
-        qualityNeedsDraft: checkpoint.qualityNeedsDraft ?? false,
-        verifiedDescriptionFacts: () => checkpoint!.verifiedFacts,
-        ...(exhaustedReview === undefined ? {} : { exhaustedReview }),
-        ...(options.signal === undefined ? {} : { signal: options.signal }),
-      });
+        true,
+        sha,
+      );
       checkpoint = {
         ...checkpoint,
         body: sanitizeControlledText(body),
@@ -1242,6 +1247,7 @@ export async function resumeInitialPublication(options: {
       };
       save(authority, checkpoint);
     }
+    const reviewConcerns = reviewNotificationConcerns(checkpoint.reviewDisclosure);
     const comment = sanitizeControlledText(
       [
         "Agent Orchestrator completed publication.",
@@ -1250,6 +1256,7 @@ export async function resumeInitialPublication(options: {
         `Draft: ${checkpoint.draft}`,
         `Review: ${checkpoint.reviewResult}`,
         `Remediation: ${checkpoint.remediationResult}`,
+        ...reviewConcerns.map((concern) => `- ${concern}`),
         ...(checkpoint.elapsedWorkflowTime
           ? [`Elapsed workflow time: ${checkpoint.elapsedWorkflowTime}`]
           : []),
@@ -1304,7 +1311,7 @@ export async function resumeInitialPublication(options: {
         outstandingIssues: publicationNotificationIssues(
           checkpoint.reviewResult,
           checkpoint.remediationResult,
-        ).concat(checkpoint.qualityNeedsDraft ? checkpoint.verifiedFacts : []),
+        ).concat(reviewConcerns, checkpoint.qualityNeedsDraft ? checkpoint.verifiedFacts : []),
         publicationContext: `Verified initial publication; draft: ${checkpoint.draft}.`,
         ...(checkpoint.elapsedWorkflowTime
           ? { elapsedWorkflowTime: checkpoint.elapsedWorkflowTime }
@@ -1353,7 +1360,7 @@ export async function resumeInitialPublication(options: {
           outstandingIssues: publicationNotificationIssues(
             checkpoint.reviewResult,
             checkpoint.remediationResult,
-          ).concat(checkpoint.qualityNeedsDraft ? checkpoint.verifiedFacts : []),
+          ).concat(reviewConcerns, checkpoint.qualityNeedsDraft ? checkpoint.verifiedFacts : []),
           publicationContext: `Verified initial publication; draft: ${checkpoint.draft}.`,
           ...(checkpoint.elapsedWorkflowTime
             ? { elapsedWorkflowTime: checkpoint.elapsedWorkflowTime }

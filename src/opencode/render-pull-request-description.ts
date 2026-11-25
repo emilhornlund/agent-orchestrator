@@ -21,6 +21,7 @@ function normalizeGeneratedText(value: string, attributionFooter: string): strin
     .replaceAll(AGENT_ORCHESTRATOR_DESCRIPTION_START, "[description start marker]")
     .replaceAll(AGENT_ORCHESTRATOR_DESCRIPTION_END, "[description end marker]")
     .replaceAll(attributionFooter, "[application footer text]")
+    .replaceAll("<!-- agent-orchestrator-", "[managed marker: ")
     .replace(
       /^((?:(?:>\s*)|(?:(?:[-+*]|\d+[.)])\s+))*)(#{1,6})(?=\s)/,
       (_match: string, prefix: string, hashes: string) => `${prefix}\\${hashes}`,
@@ -49,13 +50,6 @@ function renderPullRequestDescriptionBody(
   const changes = description.changes.map(
     (change) => `- ${normalizeGeneratedText(change, attributionFooter)}`,
   );
-  const validation =
-    description.validation.length === 0
-      ? ["- No validation or test results were provided."]
-      : description.validation.map(
-          (result) => `- ${normalizeGeneratedText(result, attributionFooter)}`,
-        );
-
   return [
     AGENT_ORCHESTRATOR_DESCRIPTION_START,
     "## Summary",
@@ -63,9 +57,6 @@ function renderPullRequestDescriptionBody(
     "",
     "## Changes",
     ...(changes.length > 0 ? changes : ["No changes were provided."]),
-    "",
-    "## Validation",
-    ...validation,
     AGENT_ORCHESTRATOR_DESCRIPTION_END,
     "",
     "## Task",

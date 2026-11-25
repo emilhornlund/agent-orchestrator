@@ -572,20 +572,21 @@ The `remediation` stage also accepts the optional `maxPasses` setting:
 | `validationMaxPasses` | Non-negative integer maximum number of local validation/coverage repair passes; defaults to `2` when omitted      |
 | `ciMaxPasses`         | Non-negative safe integer maximum number of CI correction passes per repair episode; defaults to `2` when omitted |
 
-The initial implementation review is not counted. A value of `0` runs the initial review with no
-repair; `1` permits one repair followed by one final review; `2` permits two repairs followed by a
-final review. If review still fails when the limit is reached, the latest verified implementation
-proceeds to PR publication for **Human Review only**: unresolved findings are recorded in the task
-execution state and disclosed in the PR description, without sending an Attention Required
-notification. Failed or unavailable local validation and coverage are disclosed in a draft PR, not
-used as publication gates. An unresolved review never changes human ownership of the pull request
-outcome. Automatic merging is not supported. The attempt count and final reviewed snapshot are
-persisted outside the Git worktree for crash-safe resumption.
+Independent review executions do not count toward `maxPasses`. A value of `0` runs the initial
+review with no repair; `1` permits one repair and a follow-up review of changed source; `2` permits
+up to two repairs, each followed by independent review if the source changed. A failing review can
+trigger another repair while budget remains. If review still fails when the limit is reached, the
+latest verified implementation proceeds to PR publication for **Human Review only**: unresolved
+findings are recorded in the task execution state and disclosed in the PR description, without
+sending an Attention Required notification. Failed or unavailable local validation and coverage are
+disclosed in a draft PR, not used as publication gates. An unresolved review never changes human
+ownership of the pull request outcome. Automatic merging is not supported. The attempt count and
+final reviewed snapshot are persisted outside the Git worktree for crash-safe resumption.
 
 Local validation/coverage repair has its own `validationMaxPasses` maximum and is persisted per
 validation cycle. A completed repair attempt that makes no exact source-content change ends the
-cycle without rerunning unchanged quality commands; the primary session may also explicitly finish
-early when no further repair is useful. Failing quality results remain advisory and are retained for
+cycle without rerunning unchanged quality commands. A stop request from the primary session does not
+override a subsequent failed check. Failing quality results remain advisory and are retained for
 accurate draft publication.
 
 CI correction has a separate `ciMaxPasses` maximum (`0` observes without correcting). The episode

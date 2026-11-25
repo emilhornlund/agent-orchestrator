@@ -1166,10 +1166,10 @@ describe("production workflow recovery of reserved review repairs", () => {
         expect(taskCommitCreated).toBe(true);
         expect(github.createPullRequest).toHaveBeenCalledOnce();
         expect(publishedDraft).toBe(true);
-        expect(publishedBody).toContain("Prior review concern");
+        expect(publishedBody).toContain("Earlier review concerns");
         expect(publishedBody).toContain("The requested persistence behavior is incomplete.");
         expect(publishedBody).toContain("A concrete reload failure leaves the value at default.");
-        expect(publishedBody).toContain("REQ-1");
+        expect(publishedBody).toContain("Unmet requirement:");
         expect(publishedBody).toContain("follow-up review");
         expect(
           runOpenCode.mock.calls.filter(
@@ -1194,7 +1194,7 @@ describe("production workflow recovery of reserved review repairs", () => {
         expect(github.createPullRequest).toHaveBeenCalledOnce();
         expect(publishedDraft).toBe(true);
         expect(publishedBody).toContain("Current prepared source has a material defect");
-        expect(publishedBody).toContain("Review: Failed (human review required");
+        expect(publishedBody).toMatch(/Independent AI review: failed/iu);
         expect(store.read(card.id)?.publicationQuality?.review).toMatchObject({
           verdict: "fail",
         });
@@ -1301,7 +1301,7 @@ describe("production workflow recovery of reserved review repairs", () => {
         expect(github.findPullRequestState).toHaveBeenCalled();
         expect(resumed.reviewRepair).toMatchObject({
           status: "exhausted",
-          stopReason: "finished-early",
+          stopReason: "attempt-limit",
           finalReview: { verdict: "fail" },
           requirementDispositions: [
             {
@@ -1318,7 +1318,7 @@ describe("production workflow recovery of reserved review repairs", () => {
         expect(resumed.phase).toBe("ci");
         expect(resumed.reviewUnavailable).toBeUndefined();
         expect(publishedDraft).toBe(true);
-        expect(publishedBody).toContain("Unsatisfied requirement: REQ-1");
+        expect(publishedBody).toContain("Unmet requirement:");
         return;
       }
 
@@ -1405,14 +1405,12 @@ describe("production workflow recovery of reserved review repairs", () => {
           verdict: "fail",
         });
         expect(store.read(card.id)?.reviewRepair?.finalReview).toBeUndefined();
-        expect(publishedBody).toContain(
-          "AI implementation review unavailable: Independent implementation review exited with code 1",
-        );
-        expect(publishedBody).toContain("Prior review concern");
+        expect(publishedBody).toContain("Independent AI review: unavailable.");
+        expect(publishedBody).toContain("Earlier review concerns");
         expect(publishedBody).toContain("Correct the failing behavior.");
         expect(publishedBody).toContain("A concrete failure was reproduced.");
-        expect(publishedBody).toContain("REQ-1");
-        expect(publishedBody).toContain("No matching primary-session disposition is recorded");
+        expect(publishedBody).toContain("Unmet requirement:");
+        expect(publishedBody).not.toContain("No matching primary-session disposition is recorded");
         expect(publishedDraft).toBe(true);
       }
     },

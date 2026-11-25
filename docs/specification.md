@@ -88,7 +88,8 @@ finish improvement attempts without requiring reviewer approval.
 **Acceptance criteria**
 
 - Configured remediation limits are maximum attempts, not mandatory iterations.
-- An agent may end remediation early.
+- A stop request or disputed finding is advisory. If a completed attempt changes the source and the
+  next independent review or check is still negative, continue within the remaining budget.
 - A remediation attempt that makes no implementation changes ends that remediation cycle without
   reviewing unchanged code repeatedly.
 - Exhaustion advances toward publication rather than moving the task to `Failed` because of review
@@ -172,6 +173,13 @@ The PR description must reflect the current implementation and its known quality
   unresolved issues, and a Trello link.
 - After relevant updates, including review corrections, CI fixes, and target-branch synchronization,
   the description is refreshed to describe the current PR.
+- One managed quality section shows current local checks, CI, independent review, and remediation
+  outcomes, distinguishing pending, passed, failed, skipped, unavailable and outdated evidence.
+  Updates preserve human-authored content, task links, attribution and ownership markers.
+- Current material findings show the issue, its impact, a location and a suggested correction when
+  available; associated unmet requirements are described in plain language. Resolved findings are
+  removed and any omissions for length are explicit. Full execution diagnostics are retained outside
+  the PR description.
 - While an agent works on an existing PR, a temporary activity status appears at the top of the
   description and is removed when the activity finishes without overwriting the underlying content.
 
@@ -442,11 +450,14 @@ counts.
 **Acceptance criteria**
 
 - Repeated failures stop correction attempts when the relevant configured limit is reached.
-- The implementation agent may end remediation early when further changes would not be useful.
+- A review repair attempt counts once; initial and follow-up reviews do not count. A primary dispute
+  or stop request does not override a negative independent result or a failed local check.
 - If remediation produces no implementation changes, its cycle stops without repeatedly reviewing
   unchanged code.
 - Exhaustion leads toward publishing the available implementation, not to `Failed` solely because
   quality findings remain.
+- Logs distinguish a negative verdict from review execution or parsing failures, summarize
+  actionable findings, and explain continuation or termination with the used and remaining budget.
 
 ### REQ-VAL-004 — Advisory process failures do not block delivery
 

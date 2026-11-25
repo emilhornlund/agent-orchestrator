@@ -26,7 +26,10 @@ import { TaskPlanStore } from "./task-plan-store.js";
 import { transitionTaskExecutionRecord } from "./task-execution-transition.js";
 import type { ImplementationReviewResult } from "./implementation-review-result.js";
 import type { ImplementationReviewExpectations } from "./implementation-review-result.js";
-import { parseImplementationReviewResult } from "./implementation-review-result.js";
+import {
+  parseImplementationReviewResult,
+  withReviewRequirementText,
+} from "./implementation-review-result.js";
 import type { TrelloCard } from "../trello/trello-client.js";
 import { getSessionLogPath } from "../logging/session-log.js";
 import type { TaskExecutionRecord } from "./task-execution-record.js";
@@ -44,7 +47,12 @@ export class TaskSessionReviewError extends Error {
 
 /** Only execution and format failures qualify for the missing-review fallback. */
 export class TaskSessionReviewUnavailableError extends TaskSessionReviewError {
-  constructor(message: string, runResult?: OpenCodeRunResult, options?: ErrorOptions) {
+  constructor(
+    message: string,
+    runResult?: OpenCodeRunResult,
+    options?: ErrorOptions,
+    public readonly stage: "execution" | "result-parsing" = "execution",
+  ) {
     super(message, runResult, options);
     this.name = "TaskSessionReviewUnavailableError";
   }
@@ -273,6 +281,11 @@ export async function runTaskSessionReview(
     validation,
     coverage,
     ...(previousFindings === undefined ? {} : { previousFindings }),
+    ...(record.reviewRepair?.requirementDispositions === undefined
+      ? {}
+      : {
+          priorRequirementDispositions: record.reviewRepair.requirementDispositions,
+        }),
     ...(attachmentContext === undefined ? {} : { attachmentContext }),
   });
 
@@ -367,6 +380,7 @@ export async function runTaskSessionReview(
         "Independent implementation review returned malformed, stale, or out-of-scope output",
         runResult,
         { cause: error },
+        "result-parsing",
       );
     }
   }
@@ -385,7 +399,7 @@ export async function runTaskSessionReview(
   }
 
   return {
-    review,
+    review: withReviewRequirementText(review, storedPlan?.plan.requirements ?? []),
     runResult,
     contentIdentity,
     previousFindings: (previousFindings ?? []).map(

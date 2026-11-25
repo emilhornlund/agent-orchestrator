@@ -517,6 +517,8 @@ const reviewRepairSchema = z.strictObject({
         kind: z.enum(["defect", "incomplete", "contract-violation"]),
         summary: z.string().min(1),
         detail: z.string().min(1),
+        recommendation: z.string().min(1).optional(),
+        requirementIds: z.array(nonBlankIdentifier).optional(),
         location: z
           .strictObject({
             filePath: z.string().min(1),

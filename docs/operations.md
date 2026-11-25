@@ -734,11 +734,11 @@ planning JSON and values split across stream chunks. Intentional review or reque
 cancellation is logged as cancellation with its checkpoint preserved; a genuine concurrent failure
 continues to be reported as a failure.
 
-PR quality sections summarize observed check status, commands, exit codes, source identity, advisory
-review findings, CI state and outstanding feedback. They use bounded, redacted text without terminal
-control sequences. Full command diagnostics and structured result JSON stay in retained artifacts;
-the PR points to diagnostics rather than embedding raw output. Missing, stale or unverified checks
-are disclosed explicitly, including when the description is refreshed after CI or feedback work.
+One managed PR quality section reports observed local checks, independent review, CI, remediation
+and outstanding feedback. It shows actionable findings and clearly marks earlier concerns that could
+not be reassessed. Commands, source identities and full diagnostics remain in session logs and
+structured execution evidence. Subsequent updates replace the quality results while retaining
+human-authored content.
 
 Vitest suppresses shared logger console output by default while retaining the daily test log.
 Temporarily enable application logger output for a debugging run with `TEST_LOGS=true yarn test`.
@@ -819,18 +819,19 @@ procedures, keep that project blocked and escalate rather than creating a replac
 Validation/coverage repair honors its independently configured
 `opencode.remediation.validationMaxPasses` limit (default two); the maximum, attempt counter,
 original prompt, pre-dispatch content identity, and final quality evidence are persisted for
-restart-safe continuation. An exact-content no-op ends the cycle without repeating unchanged checks,
-and early finish is explicit. CI repair uses `opencode.remediation.ciMaxPasses` (default two),
-pinned per episode across own commits, reruns, target merges and restarts. Implementation review
-repair honors `opencode.remediation.maxPasses` (default one). On exhaustion, the last structured
-failed review and its source identity are persisted and meaningful safe initial implementation is
-published for Human Review as a draft when local validation/coverage failed, were skipped or remain
-uncertain, or material issues remain. Passing quality checks are not required for initial delivery.
-No Attention Required email is generated for review exhaustion alone; polling and restart reuse the
-persisted final review without consuming more attempts. Legacy exhausted records lacking final
-review evidence perform at most one read-only verification review during recovery, persist it, and
-continue without a new repair cycle. PRs with unresolved automated review findings are preserved and
-surfaced for human review. No PR is automatically merged.
+restart-safe continuation. An exact-content no-op ends the cycle without repeating unchanged checks.
+Agent stop requests do not override verified check results. CI repair uses
+`opencode.remediation.ciMaxPasses` (default two), pinned per episode across own commits, reruns,
+target merges and restarts. Implementation review repair honors `opencode.remediation.maxPasses`
+(default one). On exhaustion, the last structured failed review and its source identity are
+persisted and meaningful safe initial implementation is published for Human Review as a draft when
+local validation/coverage failed, were skipped or remain uncertain, or material issues remain.
+Passing quality checks are not required for initial delivery. No Attention Required email is
+generated for review exhaustion alone; polling and restart reuse the persisted final review without
+consuming more attempts. Legacy exhausted records lacking final review evidence perform at most one
+read-only verification review during recovery, persist it, and continue without a new repair cycle.
+PRs with unresolved automated review findings are preserved and surfaced for human review. No PR is
+automatically merged.
 
 Complete CI failures are collected together; pending or uncertain expected checks have a persisted
 30-minute observation window without consuming repair attempts. Expiry reports uncertainty and ends

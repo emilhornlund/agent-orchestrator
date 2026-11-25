@@ -163,7 +163,7 @@ describe("publishCard", () => {
         verifiedDescriptionFacts: () => ["Validation passed on initial content"],
       };
       await publishCard(options);
-      body = `Human release notes\n${body}\n<!-- agent-orchestrator-outcome:start -->\n## Current automation outcome\nRevision: ${originalHead}\n- Expected checks passed: Validate.\n<!-- agent-orchestrator-outcome:end -->\nHuman checklist`;
+      body = `Human release notes\n${body.replace(/<!-- agent-orchestrator-outcome:start -->[\s\S]*?<!-- agent-orchestrator-outcome:end -->/u, `<!-- agent-orchestrator-outcome:start -->\n<!-- Revision: ${originalHead} -->\n## Quality checks\n- CI: passed (1 expected checks).\n<!-- agent-orchestrator-outcome:end -->`)}\nHuman checklist`;
       getHeadSha.mockResolvedValue(correctionHead);
       await publishCard({
         ...options,
@@ -181,9 +181,9 @@ describe("publishCard", () => {
       expect(body).toContain(`Revision: ${correctionHead}`);
       if (newHead) {
         expect(body).not.toContain(`Revision: ${originalHead}`);
-        expect(body).not.toContain("Expected checks passed");
-        expect(body).toContain("CI results for this revision have not yet been observed");
-      } else expect(body).toContain("Expected checks passed: Validate.");
+        expect(body).not.toContain("CI: passed");
+        expect(body).toContain("CI: pending.");
+      } else expect(body).toContain("CI: passed");
       expect(options.emailNotifier.send).toHaveBeenLastCalledWith(
         expect.objectContaining({
           text: expect.stringContaining("Validation failed on current content (exit 1)"),
@@ -283,9 +283,9 @@ describe("publishCard", () => {
     });
 
     expect(publication?.draft).toBe(true);
-    expect(publication?.body).toContain("The current independent AI review");
+    expect(publication?.body).toContain("Outstanding review findings:");
     expect(publication?.body).toContain("Reload loses the saved setting");
-    expect(publication?.body).toContain("Unsatisfied requirement: REQ-1");
+    expect(publication?.body).toContain("Unmet requirement:");
   });
 
   it("keeps an unavailable prepared review in draft without claiming a pass", async () => {
@@ -323,8 +323,10 @@ describe("publishCard", () => {
     });
 
     expect(publication?.draft).toBe(true);
-    expect(publication?.body).toContain("Review: Unavailable (current-source review timed out)");
-    expect(publication?.body).not.toContain("Review: Passed");
+    expect(publication?.body).toContain(
+      "Independent AI review: Unavailable (current-source review timed out)",
+    );
+    expect(publication?.body).not.toContain("Independent AI review: Passed");
   });
 
   it("publishes to Human Review even when passed a forged autoMerge value", async () => {
@@ -723,7 +725,7 @@ describe("publishCard", () => {
       "--title",
       "Example task",
       "--body",
-      expect.stringContaining("## Outstanding issues"),
+      expect.stringContaining("## Quality checks"),
     ]);
 
     expect(moveCard).toHaveBeenCalledWith("card-1", "review-list");
@@ -896,14 +898,6 @@ describe("publishCard", () => {
           "",
           "## Changes",
           "- Added structured PR content.",
-          "",
-          "## Validation",
-          "- yarn validate passed.",
-          "",
-          "",
-          "## Outstanding issues",
-          "Review: Passed",
-          "Remediation: Not required",
           "<!-- agent-orchestrator-description:end -->",
           "",
           "## Task",
@@ -913,6 +907,15 @@ describe("publishCard", () => {
           "",
           "<!-- agent-orchestrator-status:start -->",
           "<!-- agent-orchestrator-status:end -->",
+          "",
+          "<!-- agent-orchestrator-outcome:start -->",
+          "## Quality checks",
+          "- yarn validate passed.",
+          "- Validation: unavailable.",
+          "- Coverage: unavailable.",
+          "- Independent AI review: Passed.",
+          "- CI: pending.",
+          "<!-- agent-orchestrator-outcome:end -->",
         ].join("\n"),
       }),
     );
@@ -952,7 +955,7 @@ describe("publishCard", () => {
 
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: expect.stringContaining("No verified validation or test results are available."),
+        body: expect.stringContaining("Validation: unavailable."),
       }),
     );
     expect(createPullRequest).toHaveBeenCalledWith(
@@ -1248,7 +1251,7 @@ describe("publishCard", () => {
     expect(git.push).toHaveBeenCalled();
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: expect.stringContaining("## Outstanding issues"),
+        body: expect.stringContaining("## Quality checks"),
       }),
     );
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
@@ -1293,7 +1296,7 @@ describe("publishCard", () => {
     expect(github.findPullRequest).toHaveBeenCalled();
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: expect.stringContaining("## Outstanding issues"),
+        body: expect.stringContaining("## Quality checks"),
       }),
     );
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
@@ -1340,7 +1343,7 @@ describe("publishCard", () => {
     expect(opencode.run).toHaveBeenCalledTimes(1);
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: expect.stringContaining("## Outstanding issues"),
+        body: expect.stringContaining("## Quality checks"),
       }),
     );
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");
@@ -1399,7 +1402,7 @@ describe("publishCard", () => {
 
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: expect.stringContaining("## Outstanding issues"),
+        body: expect.stringContaining("## Quality checks"),
       }),
     );
     expect(runDescription).toHaveBeenCalledTimes(2);
@@ -1452,7 +1455,7 @@ describe("publishCard", () => {
 
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: expect.stringContaining("## Outstanding issues"),
+        body: expect.stringContaining("## Quality checks"),
       }),
     );
     expect(opencode.run).toHaveBeenCalledTimes(1);
@@ -1500,7 +1503,7 @@ describe("publishCard", () => {
 
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: expect.stringContaining("## Outstanding issues"),
+        body: expect.stringContaining("## Quality checks"),
       }),
     );
     expect(trello.moveCard).toHaveBeenCalledWith("card-1", "review-list");

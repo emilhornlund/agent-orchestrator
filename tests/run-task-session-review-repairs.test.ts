@@ -10,7 +10,6 @@ import { Logger } from "../src/logging/logger.js";
 import { withProcessCancellationSignal } from "../src/process/process-runtime.js";
 import { OpenCodeRunAbortedError } from "../src/opencode/opencode-client.js";
 import {
-  hasUndisposedReviewConcerns,
   parsePrimaryReviewDispositionReport,
   type ImplementationReviewResult,
 } from "../src/task-session/implementation-review-result.js";
@@ -294,26 +293,16 @@ describe("runTaskSessionReviewWithRepairs", () => {
     ]);
     const restartedStore = new TaskExecutionStore(path.join(root, "state"), f.project);
     const recovered = restartedStore.read("card")!;
-    const requirementOnlyNegativeReview = {
-      ...f.makeReview("fail"),
-      reviewedContentIdentity: firstReviewedIdentity,
-      blockingFindings: [],
-      requirementAssessments: [
+    expect(recovered.reviewRepair).toMatchObject({
+      finalReview: { verdict: "pass" },
+      requirementDispositions: [
         {
           requirementId: "REQ-1",
-          status: "unsatisfied" as const,
-          details: "The reviewer assessment remains negative.",
-          evidence: [],
+          reviewedContentIdentity: firstReviewedIdentity,
+          status: "dismissed",
         },
       ],
-    };
-    expect(
-      hasUndisposedReviewConcerns(
-        requirementOnlyNegativeReview,
-        recovered.reviewRepair?.findings ?? [],
-        recovered.reviewRepair?.requirementDispositions ?? [],
-      ),
-    ).toBe(false);
+    });
   });
 
   it("treats an oversized primary disposition as absent and clears the completed reservation", async () => {
@@ -563,11 +552,15 @@ describe("runTaskSessionReviewWithRepairs", () => {
         omitted: 0,
       },
     });
-    expect(events.some((message) => message.includes('"event":"cycle-passed"'))).toBe(true);
-    expect(events.join(" ")).not.toContain("Fix requirement");
+    expect(events.some((message) => message.includes('"verdict":"pass"'))).toBe(true);
     const summaries = consoleEvents.mock.calls.map(([message]) => message);
-    expect(summaries).toContain("Review repair attempt 1 started");
-    expect(summaries.some((message) => message.startsWith("Review cycle completed"))).toBe(true);
+    expect(summaries).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Independent review (iteration 1): failed"),
+        expect.stringContaining("Continuing remediation: starting review repair 1 of 2"),
+        expect.stringContaining("Independent review (iteration 2): passed"),
+      ]),
+    );
     expect(summaries.join(" ")).not.toMatch(/review-cycle|sha256:|\{|finding-/u);
   });
 
@@ -1074,19 +1067,13 @@ describe("runTaskSessionReviewWithRepairs", () => {
         },
       ],
     });
-    expect(
-      hasUndisposedReviewConcerns(
-        result.review,
-        result.record.reviewRepair?.findings ?? [],
-        result.record.reviewRepair?.requirementDispositions ?? [],
-      ),
-    ).toBe(false);
+    expect(result.review.verdict).toBe("fail");
     await run();
     expect(reviewRun).toHaveBeenCalledOnce();
     expect(repair).toHaveBeenCalledOnce();
   });
 
-  it("honors a primary early-finish decision after one current-source review", async () => {
+  it("continues after a primary stop request and a failed independent review until the budget is exhausted", async () => {
     const f = fixture();
     let reviews = 0;
     const result = await runTaskSessionReviewWithRepairs({
@@ -1160,11 +1147,11 @@ describe("runTaskSessionReviewWithRepairs", () => {
       getCurrentContentIdentity: async () => f.identity,
     });
 
-    expect(reviews).toBe(2);
-    expect(result.attempts).toBe(1);
+    expect(reviews).toBe(4);
+    expect(result.attempts).toBe(3);
     expect(result.record.reviewRepair).toMatchObject({
       status: "exhausted",
-      stopReason: "finished-early",
+      stopReason: "attempt-limit",
       maxAttempts: 3,
     });
     const recovered = await runTaskSessionReviewWithRepairs({
@@ -1182,11 +1169,11 @@ describe("runTaskSessionReviewWithRepairs", () => {
       rerunQuality: async () => undefined,
       getCurrentContentIdentity: async () => f.identity,
     });
-    expect(recovered.attempts).toBe(1);
-    expect(reviews).toBe(2);
+    expect(recovered.attempts).toBe(3);
+    expect(reviews).toBe(4);
   });
 
-  it("ends a no-op review correction even when subsequent quality work changes source", async () => {
+  it("continues when checks change source after an initially no-op review correction", async () => {
     const f = fixture();
     let reviews = 0;
     const repair = vi.fn(async () => undefined);
@@ -1225,11 +1212,11 @@ describe("runTaskSessionReviewWithRepairs", () => {
       },
       getCurrentContentIdentity: async () => f.identity,
     });
-    expect(repair).toHaveBeenCalledOnce();
-    expect(reviews).toBe(2);
+    expect(repair).toHaveBeenCalledTimes(3);
+    expect(reviews).toBe(4);
     expect(result.record.reviewRepair).toMatchObject({
       status: "exhausted",
-      stopReason: "no-change",
+      stopReason: "attempt-limit",
       maxAttempts: 3,
     });
     expect(result.review.reviewedContentIdentity).toBe(f.identity);

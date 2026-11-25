@@ -83,9 +83,8 @@ describe("runPrMaintenanceReview", () => {
       "Do not report unrelated refactoring opportunities, stylistic preferences without an applicable contract, optional enhancements beyond approved scope, unsupported hypothetical problems, or requests to redesign an otherwise correct implementation as blocking findings.",
     );
     expect(call.prompt).toContain("Return ONLY one JSON object with exactly");
-    expect(call.prompt).toContain(
-      "explain concrete evidence demonstrating why it is material and blocks",
-    );
+    expect(call.prompt).toContain("Explain concrete evidence and impact.");
+    expect(call.prompt).toContain("Include an actionable correction and location when available");
     expect(call.prompt).toContain("Serious demonstrable defects remain blocking");
   });
 

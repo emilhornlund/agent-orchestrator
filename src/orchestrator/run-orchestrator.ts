@@ -824,7 +824,7 @@ async function runProjectWorkerLoop(
                     trigger: "initial-implementation",
                   },
                   review: {
-                    limit: project.opencode.remediation.maxPasses + 1,
+                    limit: project.opencode.remediation.maxPasses,
                     used: 0,
                     episodeId: `${selected.id}:initial-review`,
                     trigger: "initial-implementation",

@@ -76,10 +76,10 @@ cover the lifecycle; the recovery reference records the scope and limits of live
 [Recovery](recovery.md#restart-and-task-ownership).
 
 Local validation and coverage repair has a separate maximum, configured by
-`opencode.remediation.validationMaxPasses` (default `2`). Its limit is persisted before dispatch,
-the primary session may finish early, and an attempt that leaves exact source content unchanged ends
-the cycle without rerunning unchanged checks. Exhaustion proceeds toward publication with observed
-quality results; it does not fail the task by itself.
+`opencode.remediation.validationMaxPasses` (default `2`). Its limit is persisted before dispatch, an
+agent's stop request does not override a failed check, and an attempt that leaves exact source
+content unchanged ends the cycle without rerunning unchanged checks. Exhaustion proceeds toward
+publication with observed quality results; it does not fail the task by itself.
 
 Implementation-review improvement uses its own persisted `opencode.remediation.maxPasses` maximum
 (default `1`), with the same early-finish and exact-content no-op rules. Restart preserves both

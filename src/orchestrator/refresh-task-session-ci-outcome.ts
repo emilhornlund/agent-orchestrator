@@ -7,12 +7,13 @@ import type { PrMaintenanceStore } from "../task-session/pr-maintenance-store.js
 import { refreshPrAutomationOutcome } from "./refresh-pr-automation-outcome.js";
 import { decideValidatedHumanReviewPublication } from "../task-session/verified-publication-decision.js";
 import { restorePersistedTaskSessionQualityEvidence } from "../task-session/run-task-session-validation.js";
-import { publicationQualityFacts, ciOutcomeFacts } from "./publication-quality-summary.js";
-import { getSessionLogReference } from "../logging/session-log.js";
 import {
-  implementationReviewResultSchema,
-  hasUndisposedReviewConcerns,
-} from "../task-session/implementation-review-result.js";
+  recordedTaskQualityFacts,
+  maintenanceQualityFacts,
+  ciOutcomeFacts,
+  repairSummary,
+} from "./publication-quality-summary.js";
+import { implementationReviewResultSchema } from "../task-session/implementation-review-result.js";
 import { ProjectRunAuthority } from "../task-session/project-run-authority.js";
 import { FeedbackLedgerStore } from "../task-session/feedback-ledger-store.js";
 import { isOutstandingFeedback } from "../task-session/feedback-ledger.js";
@@ -53,23 +54,6 @@ export async function refreshTaskSessionCiOutcome(options: {
       ? retainedReview
       : undefined;
   const review = implementationReviewResultSchema.safeParse(quality?.review ?? reusableReview);
-  const localEvidence = !quality
-    ? null
-    : {
-        currentContentIdentity: quality.contentIdentity,
-        ...(project.repository.validationCommand === undefined
-          ? {}
-          : { validationCommand: project.repository.validationCommand }),
-        ...(project.repository.coverageCommand === undefined
-          ? {}
-          : { coverageCommand: project.repository.coverageCommand }),
-        validation: restorePersistedTaskSessionQualityEvidence(quality.validation),
-        coverage:
-          quality.coverageEvidence === undefined
-            ? null
-            : restorePersistedTaskSessionQualityEvidence(quality.coverageEvidence),
-        review: review.success ? review.data : null,
-      };
   const qualityUnresolved = maintenance
     ? maintenance.qualityVerification?.status !== "passed"
     : !quality ||
@@ -90,11 +74,7 @@ export async function refreshTaskSessionCiOutcome(options: {
       }).allowed ||
       !review.success ||
       review.data.reviewedContentIdentity !== quality.contentIdentity ||
-      hasUndisposedReviewConcerns(
-        review.data,
-        record.reviewRepair?.findings ?? [],
-        record.reviewRepair?.requirementDispositions ?? [],
-      );
+      review.data.verdict === "fail";
   const authority = ProjectRunAuthority.current(project.id);
   const feedback = authority
     ? new FeedbackLedgerStore(authority.store.storageRoot, project, authority).read(card.id)
@@ -116,43 +96,26 @@ export async function refreshTaskSessionCiOutcome(options: {
       : {}),
     facts: [
       ...ciOutcomeFacts(evaluation),
-      ...(quality?.review == null && reusableReview && review.success
-        ? [
-            "Reused the completed independent review of this exact source snapshot; no additional review execution is claimed.",
-          ]
-        : []),
       ...(unresolvedHumanRequests
         ? ["Human-requested changes remain unresolved or unverified."]
         : []),
       ...(record.ciObservationWindow?.headSha === record.pullRequest.headSha &&
       record.ciObservationWindow.timedOut
-        ? [
-            "The bounded CI observation deadline expired. Missing, pending or undiscovered checks remain uncertain, not passed.",
-          ]
+        ? ["The wait for CI results ended before all checks could be verified."]
         : []),
       ...(episode
         ? [
-            `CI repair episode: ${episode.status}; attempts ${record.retryCounters.ci}/${episode.maxAttempts ?? 2}${episode.stopReason ? `; stop reason: ${episode.stopReason}` : ""}.`,
-          ]
-        : []),
-      ...(episode?.stopReason === "no-change"
-        ? [
-            "The CI correction produced no repository changes; no new commit, validation run or fulfilled fix is claimed.",
+            repairSummary(
+              "CI remediation",
+              record.retryCounters.ci,
+              episode.maxAttempts ?? 2,
+              episode.stopReason ?? (episode.status === "passed" ? "passed" : undefined),
+            ),
           ]
         : []),
       ...(maintenance
-        ? [
-            `Target synchronization merged ${maintenance.targetBaseHead} into ${maintenance.expectedRemoteHead} without rewriting published commits.`,
-            `Maintenance quality: ${maintenance.qualityVerification?.status ?? "unavailable"}; operator diagnostics: ${getSessionLogReference(project.id, card.id)} under the runtime storage root.`,
-          ]
-        : [
-            ...(localEvidence
-              ? publicationQualityFacts(localEvidence, {
-                  diagnosticLogReference: getSessionLogReference(project.id, card.id),
-                })
-              : ["Recorded local quality evidence: unavailable; not represented as passed."]),
-          ]),
-      "AI advice is not approval to merge. Human merge or closure controls the task outcome.",
+        ? maintenanceQualityFacts(project, maintenance.qualityVerification)
+        : recordedTaskQualityFacts(project, record)),
     ],
   });
 }
