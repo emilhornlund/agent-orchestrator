@@ -11,6 +11,10 @@ services:
     cpus: 6.0
     mem_limit: 12g
     pids_limit: 2048
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
     cap_add: [SYS_ADMIN]
     security_opt: [seccomp=unconfined, apparmor=unconfined, systempaths=unconfined]
     labels:

@@ -7,6 +7,10 @@ uses your existing OpenCode config, auth and sessions directly from your home di
 `up` builds the current checkout and starts the worker. `yarn local logs` shows startup and polling;
 `yarn local down` stops the stack and keeps its data. Use `yarn local up` again to rebuild.
 
+The worker uses a size-bounded container log (`json-file`, called `k8s-file` by Podman) so a
+throttled host journal cannot hide its console output. Persistent task and service logs still live
+in the context volume.
+
 The default stack persists Playwright's browser cache across rebuilds so that a resumed task can
 reuse browsers installed by a completed setup command. If you use a custom Compose file for such
 projects, persist `/root/.cache/ms-playwright` (or the browser cache path configured for your
