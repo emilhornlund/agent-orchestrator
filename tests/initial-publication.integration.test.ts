@@ -352,7 +352,7 @@ describe("setup-aware initial publication commit scope", () => {
   });
 
   it.each(["passed", "dismissed", "failed", "skipped", "uncertain", "stale", "material"] as const)(
-    "updates the same draft PR using current readiness, not reviewer approval (%s)",
+    "updates the same draft PR without promoting it during publication (%s)",
     async (outcome) => {
       const f = fixture();
       await begin(f, "feat: initial draft", undefined, true);
@@ -360,21 +360,9 @@ describe("setup-aware initial publication commit scope", () => {
       const pr = f.services.read().prs[0]!;
       let body = `Human introduction\n${pr.body}`;
       const evidence = await publicationEvidence(f);
-      evidence.coverage = { ...evidence.validation! };
-      evidence.coverageCommand = "true";
-      if (["failed", "skipped", "uncertain"].includes(outcome))
-        evidence.validation = {
-          ...evidence.validation!,
-          status: outcome as "failed" | "skipped" | "uncertain",
-          exitCode: 1,
-        };
-      if (outcome === "stale")
-        evidence.validation = {
-          ...evidence.validation!,
-          contentIdentity: `sha256:${"f".repeat(64)}`,
-        };
-      if (outcome === "dismissed") evidence.review = { ...evidence.review!, verdict: "fail" };
+      const qualityNeedsDraft = ["failed", "skipped", "uncertain", "stale"].includes(outcome);
       const ready = vi.fn();
+      const draft = vi.fn();
       const github = {
         ...f.services.github,
         findPullRequest: async () => ({ url: pr.url }),
@@ -383,7 +371,7 @@ describe("setup-aware initial publication commit scope", () => {
           body = options.body;
         },
         ensurePullRequestReady: ready,
-        ensurePullRequestDraft: vi.fn(),
+        ensurePullRequestDraft: draft,
       };
       await publishCard({
         project: f.project,
@@ -405,19 +393,11 @@ describe("setup-aware initial publication commit scope", () => {
               : "Passed",
           reviewDisclosure:
             outcome === "material" ? { ...evidence.review!, verdict: "fail" } : null,
-          qualityNeedsDraft: ["failed", "skipped", "uncertain"].includes(outcome),
-          readinessEvidence: evidence,
+          qualityNeedsDraft,
         }),
       });
-      expect(ready).toHaveBeenCalledTimes(["passed", "dismissed"].includes(outcome) ? 1 : 0);
-      if (ready.mock.calls.length)
-        expect(ready).toHaveBeenCalledWith(
-          expect.objectContaining({
-            pullRequestUrl: pr.url,
-            expectedHeadSha: pr.head,
-            expectedBody: body,
-          }),
-        );
+      expect(ready).not.toHaveBeenCalled();
+      expect(draft).toHaveBeenCalledTimes(qualityNeedsDraft || outcome === "material" ? 1 : 0);
       expect(body).toContain("Human introduction");
       expect(body).toContain(`Current validation: ${outcome}`);
       expect(f.services.read().prs).toHaveLength(1);

@@ -146,10 +146,9 @@ describe("publishTaskSessionCard", () => {
 
     const publicationOptions = vi.mocked(publishCard).mock.calls[0]?.[0];
     expect(publicationOptions?.reviewResult).toBe("Passed");
-    await expect(publicationOptions?.beforePushVerification?.()).resolves.toEqual({
-      ...preparedReviewPublication,
-      readinessEvidence: currentEvidence,
-    });
+    await expect(publicationOptions?.beforePushVerification?.()).resolves.toEqual(
+      preparedReviewPublication,
+    );
   });
 
   it("keeps an explicitly cleared review disclosure after current verification", async () => {

@@ -7121,7 +7121,6 @@ async function runTaskSessionWorkflowAttempt(
             );
           return {
             ...preparedReviewPublication,
-            readinessEvidence: preparedEvidence,
           };
         },
       });

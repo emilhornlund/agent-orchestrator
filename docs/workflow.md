@@ -93,8 +93,8 @@ Descriptions include purpose, significant changes, orchestrator-observed checks,
 and the Trello link, even when AI description generation fails. Updates replace only the managed
 description region and preserve human text. The same draft PR can become ready when current
 source-bound passing evidence and recorded issue dispositions support it, no unresolved human
-requests remain, and the open PR's exact published head and refreshed description are verified.
-Stale or uncertain evidence cannot promote it.
+requests remain, and the open PR's exact published head, refreshed description, and passing CI are
+verified. Updating an existing draft does not itself promote it.
 
 Automatic CI expectations come from available branch-protection policies and static repository-owned
 pull-request workflow contracts. Conditional jobs, dynamic matrices, unsupported workflow
