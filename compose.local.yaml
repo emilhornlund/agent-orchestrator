@@ -1,0 +1,70 @@
+services:
+  agent-orchestrator:
+    image: ${LOCAL_IMAGE:-localhost/agent-orchestrator:dev}
+    pull_policy: never
+    build:
+      context: .
+      dockerfile: containers/local.Dockerfile
+    platform: linux/amd64
+    restart: unless-stopped
+    stop_grace_period: 120s
+    cpus: 6.0
+    mem_limit: 12g
+    pids_limit: 2048
+    cap_add: [SYS_ADMIN]
+    security_opt: [seccomp=unconfined, apparmor=unconfined, systempaths=unconfined]
+    labels:
+      local.agent-orchestrator.rebuild: ${LOCAL_REBUILD:-manual}
+    env_file: ./.local/container/stack.env
+    environment:
+      TEST_REDIS_HOST: redis
+      TEST_REDIS_PORT: "6379"
+      TEST_REDIS_URL: redis://redis:6379
+      TEST_MONGODB_HOST: mongodb
+      TEST_MONGODB_PORT: "27017"
+      TEST_MONGODB_URI: mongodb://mongodb:27017/orchestrator_test
+      BUILD_JOBS: "6"
+      SDL_VIDEODRIVER: dummy
+      SDL_AUDIODRIVER: dummy
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    volumes:
+      - repositories:/opt/repositories
+      - worktrees:/opt/.agent-worktrees
+      - context:/opt/.agent-context
+      - logs:/opt/agent-orchestrator/logs
+      - coordination:/var/lib/agent-orchestrator/coordination
+      - ./.local/container/config.yaml:/opt/agent-orchestrator/config.yaml:ro
+      - ./.local/container/secrets:/run/secrets:ro
+      - ${HOME}/.config/opencode:/root/.config/opencode
+      - ${HOME}/.local/share/opencode:/root/.local/share/opencode
+      - ${HOME}/.cache/opencode:/root/.cache/opencode
+      - ${HOME}/.local/state/opencode:/root/.local/state/opencode
+
+  redis:
+    image: docker.io/library/redis:8.0.1
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  mongodb:
+    image: docker.io/library/mongo:8.0.9
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, mongosh, --quiet, --eval, "db.runCommand({ ping: 1 }).ok"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  repositories:
+  worktrees:
+  context:
+  logs:
+  coordination:

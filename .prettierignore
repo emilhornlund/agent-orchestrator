@@ -2,3 +2,4 @@ node_modules/
 dist/
 LICENSE
 yarn.lock
+.local/container/

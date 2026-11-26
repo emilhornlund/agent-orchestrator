@@ -10,3 +10,6 @@
 !scripts/github-git-askpass.mjs
 !scripts/contained-process-supervisor.mjs
 !Containerfile
+!containers
+!containers/local.Dockerfile
+!containers/local-entrypoint.sh
