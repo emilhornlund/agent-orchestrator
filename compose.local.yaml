@@ -43,6 +43,7 @@ services:
       - ${HOME}/.local/share/opencode:/root/.local/share/opencode
       - ${HOME}/.cache/opencode:/root/.cache/opencode
       - ${HOME}/.local/state/opencode:/root/.local/state/opencode
+      - playwright-cache:/root/.cache/ms-playwright
 
   redis:
     image: docker.io/library/redis:8.0.1
@@ -68,3 +69,4 @@ volumes:
   context:
   logs:
   coordination:
+  playwright-cache:
