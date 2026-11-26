@@ -1,0 +1,4 @@
+services:
+  agent-orchestrator:
+    # The host's container label can prohibit nested procfs and devpts mounts.
+    security_opt: [label=disable]

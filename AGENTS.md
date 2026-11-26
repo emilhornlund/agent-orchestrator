@@ -129,6 +129,14 @@ task-specific test commands/scripts. Vitest owns a private run directory and rem
 Release owned child processes in fixture cleanup and do not retain test repositories/artifact trees
 by default. Name and maintain regression tests by product behavior.
 
+## Container deployment defects
+
+For container runtime defects, use `yarn local up` and the
+[local container environment](docs/local-container.md). Rebuild from the current source and verify
+the original scenario and relevant recovery behavior in running containers. Preserve logs, worktrees
+and session evidence across restarts. Use resources authorized for the run and report which
+scenarios ran and any host or runtime differences.
+
 ## Git
 
 Do not commit, push, create pull requests, merge, force-push, or rewrite history unless the task

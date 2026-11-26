@@ -265,6 +265,12 @@ interrupted, use [Recovery](docs/recovery.md) before changing cards, branches, o
 compiled local execution and the supplied non-root container image, see
 [local and container installation](docs/operations.md#local-and-container-installation).
 
+## Local container development
+
+Run `yarn local up` to build the current checkout and start the
+[local container stack](docs/local-container.md). It uses your existing OpenCode settings and keeps
+local state across rebuilds and restarts.
+
 ## Development
 
 Run the complete validation suite:

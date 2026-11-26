@@ -1,0 +1,48 @@
+projects:
+  - id: sample
+    trello:
+      boardId: test-board-id
+      backlogListId: test-backlog-id
+      readyListId: test-ready-id
+      workingListId: test-working-id
+      reviewListId: test-review-id
+      failedListId: test-failed-id
+      doneListId: test-done-id
+      refinementLabelId: test-refinement-id
+      featureLabelId: test-feature-id
+      improvementLabelId: test-improvement-id
+      bugLabelId: test-bug-id
+    repository:
+      path: /opt/repositories/sample
+      github: owner/sample-e2e
+      defaultBranch: main
+      worktreeRoot: /opt/.agent-worktrees/sample
+      setupCommand: yarn install --frozen-lockfile
+      validationCommand: yarn build && yarn validate
+      gitIdentity:
+        name: Orchestrator Test
+        email: test@example.invalid
+        signingKey: /run/secrets/signing-key
+      githubApp:
+        appId: "123"
+        installationId: "456"
+        privateKeyPath: /run/secrets/github-app.pem
+    opencode:
+      refinement: {}
+      implementation: {}
+      review: {}
+      remediation: {}
+      commit: {}
+    # Map only the variables a task needs. Values come from compose.local.yaml.
+    # taskEnvironment:
+    #   REDIS_URL: TEST_REDIS_URL
+    #   MONGODB_URI: TEST_MONGODB_URI
+
+workflow:
+  contextRoot: /opt/.agent-context
+  coordinationRoot: /var/lib/agent-orchestrator/coordination
+  coordinationNamespaceId: local-container-v1
+
+notifications:
+  email:
+    enabled: false

@@ -11,3 +11,6 @@ logs/
 
 # Retained local specification audit evidence (never implementation commits).
 .local/spec-audits/
+
+# Private local container configuration, credentials and session state.
+.local/container/
