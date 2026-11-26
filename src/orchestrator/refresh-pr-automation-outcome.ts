@@ -16,7 +16,8 @@ export async function refreshPrAutomationOutcome(options: {
   headSha: string;
   facts: readonly string[];
   retain?: NonNullable<Parameters<typeof updatePullRequestQuality>[3]>;
-  draft: boolean;
+  /** Omit to report the outcome without changing the PR's current readiness. */
+  draft?: boolean;
   readiness?: {
     headBranch: string;
   };
@@ -38,7 +39,7 @@ export async function refreshPrAutomationOutcome(options: {
     });
   if ((await options.github.getPullRequestDescription(request)) !== next)
     throw new Error("PR outcome description was not verified; preserving pending presentation");
-  if (!options.draft && options.readiness) {
+  if (options.draft === false && options.readiness) {
     if (!options.github.ensurePullRequestReady)
       throw new Error("PR readiness promotion capability is unavailable");
     await options.github.ensurePullRequestReady({

@@ -322,6 +322,9 @@ human merge permits the card to move to `Done` with `dueComplete: true`; a human
 routes it to `Backlog`. A publication or card-transition failure does not produce a successful
 completion.
 
+During the observation window, CI alone does not change PR readiness unless an observed check
+failed. Pending or uncertain checks cannot promote an existing draft.
+
 Expected checks combine supported target-branch rules with workflow documents read through GitHub at
 the exact PR head, never the source checkout's potentially stale files. A dynamic/conditional
 workflow is resolved only by terminal jobs from a verified PR-associated run for that workflow path

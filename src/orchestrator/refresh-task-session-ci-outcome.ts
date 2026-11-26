@@ -80,13 +80,24 @@ export async function refreshTaskSessionCiOutcome(options: {
     ? new FeedbackLedgerStore(authority.store.storageRoot, project, authority).read(card.id)
     : null;
   const unresolvedHumanRequests = feedback?.entries.some(isOutstandingFeedback) ?? false;
+  const ciWaitExpired =
+    record.ciObservationWindow?.headSha === record.pullRequest.headSha &&
+    record.ciObservationWindow?.timedOut === true;
+  const requiresDraft =
+    qualityUnresolved ||
+    unresolvedHumanRequests ||
+    evaluation.status === "failed" ||
+    (evaluation.status === "uncertain" && (evaluation.failures?.length ?? 0) > 0) ||
+    (evaluation.status !== "passed" && ciWaitExpired);
   await refreshPrAutomationOutcome({
     github,
     project,
     card,
     pullRequestUrl: record.pullRequest.url,
     headSha: record.pullRequest.headSha!,
-    draft: evaluation.status !== "passed" || qualityUnresolved || unresolvedHumanRequests,
+    // Pending registration or execution is not a reason to downgrade a normal
+    // PR. Neither pending nor uncertain evidence can promote an existing draft.
+    ...(requiresDraft ? { draft: true } : evaluation.status === "passed" ? { draft: false } : {}),
     ...(authority && record.expectedBranch && typeof github.ensurePullRequestReady === "function"
       ? {
           readiness: {
@@ -99,8 +110,7 @@ export async function refreshTaskSessionCiOutcome(options: {
       ...(unresolvedHumanRequests
         ? ["Human-requested changes remain unresolved or unverified."]
         : []),
-      ...(record.ciObservationWindow?.headSha === record.pullRequest.headSha &&
-      record.ciObservationWindow.timedOut
+      ...(ciWaitExpired
         ? ["The wait for CI results ended before all checks could be verified."]
         : []),
       ...(episode
