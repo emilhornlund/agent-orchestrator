@@ -54,6 +54,8 @@ function compose(command, args) {
   if (engine === "podman") {
     if (env.CONTAINER_HOST || env.CONTAINER_CONNECTION) throw new Error("Use local Podman");
     env.PODMAN_COMPOSE_PROVIDER = "podman-compose";
+    // Podman Compose's prefix formatter buffers followed logs on non-TTY stdout.
+    if (command === "logs") args = ["logs", "-f", "--no-log-prefix", service];
     if (!custom && inspect("info", "--format", "{{.Host.Security.SELinuxEnabled}}") === "true") {
       files.push("-f", "containers/local-selinux.yaml");
     }
