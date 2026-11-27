@@ -11,6 +11,10 @@ services:
     cpus: 6.0
     mem_limit: 12g
     pids_limit: 2048
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
     cap_add: [SYS_ADMIN]
     security_opt: [seccomp=unconfined, apparmor=unconfined, systempaths=unconfined]
     labels:
@@ -43,6 +47,7 @@ services:
       - ${HOME}/.local/share/opencode:/root/.local/share/opencode
       - ${HOME}/.cache/opencode:/root/.cache/opencode
       - ${HOME}/.local/state/opencode:/root/.local/state/opencode
+      - playwright-cache:/root/.cache/ms-playwright
 
   redis:
     image: docker.io/library/redis:8.0.1
@@ -68,3 +73,4 @@ volumes:
   context:
   logs:
   coordination:
+  playwright-cache:

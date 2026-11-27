@@ -93,8 +93,8 @@ Descriptions include purpose, significant changes, orchestrator-observed checks,
 and the Trello link, even when AI description generation fails. Updates replace only the managed
 description region and preserve human text. The same draft PR can become ready when current
 source-bound passing evidence and recorded issue dispositions support it, no unresolved human
-requests remain, and the open PR's exact published head and refreshed description are verified.
-Stale or uncertain evidence cannot promote it.
+requests remain, and the open PR's exact published head, refreshed description, and passing CI are
+verified. Updating an existing draft does not itself promote it.
 
 Automatic CI expectations come from available branch-protection policies and static repository-owned
 pull-request workflow contracts. Conditional jobs, dynamic matrices, unsupported workflow
@@ -321,6 +321,9 @@ Review; approval and passing checks do not merge or complete it. Only an indepen
 human merge permits the card to move to `Done` with `dueComplete: true`; a human unmerged closure
 routes it to `Backlog`. A publication or card-transition failure does not produce a successful
 completion.
+
+During the observation window, CI alone does not change PR readiness unless an observed check
+failed. Pending or uncertain checks cannot promote an existing draft.
 
 Expected checks combine supported target-branch rules with workflow documents read through GitHub at
 the exact PR head, never the source checkout's potentially stale files. A dynamic/conditional

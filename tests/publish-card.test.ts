@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -11,8 +12,10 @@ import type { OpenCodeClient } from "../src/opencode/opencode-client.js";
 import { MAX_PULL_REQUEST_DESCRIPTION_SUMMARY_LENGTH } from "../src/opencode/pull-request-description.js";
 import { Logger } from "../src/logging/logger.js";
 import { formatFailureDiagnostic } from "../src/orchestrator/failure-diagnostic.js";
-import { publishCard } from "../src/orchestrator/publish-card.js";
+import { prepareInitialPublicationBody, publishCard } from "../src/orchestrator/publish-card.js";
+import { publishTaskSessionCard } from "../src/orchestrator/publish-task-session-card.js";
 import { reviewConcernsDismissedAsNonMaterialLabel } from "../src/task-session/implementation-review-result.js";
+import { getTaskSessionSourceSnapshotIdentity } from "../src/task-session/source-snapshot.js";
 import { WorkflowError } from "../src/orchestrator/workflow-error.js";
 import type { ImplementationReviewResult } from "../src/task-session/implementation-review-result.js";
 import { type TrelloCard, TrelloClient } from "../src/trello/trello-client.js";
@@ -119,6 +122,89 @@ afterEach(() => {
 });
 
 describe("publishCard", () => {
+  it("publishes a passing correction on the same draft without promoting it before CI", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "publish-correction-"));
+    try {
+      const project = createProject();
+      project.repository.worktreeRoot = root;
+      const card = createCard();
+      const url = "https://github.com/example/repository/pull/123";
+      const baseHead = "a".repeat(40);
+      const nextHead = "b".repeat(40);
+      let head = baseHead;
+      let remote = baseHead;
+      let body = "";
+      const github = {
+        findPullRequest: vi.fn(async () => ({ url })),
+        findPullRequestState: vi.fn(async () => ({ url, state: "OPEN", headRefOid: remote })),
+        getPullRequestDescription: vi.fn(async () => body),
+        editPullRequestDescription: vi.fn(async (options: { body: string }) => {
+          body = options.body;
+        }),
+        createPullRequest: vi.fn(),
+        ensurePullRequestDraft: vi.fn(),
+        ensurePullRequestReady: vi.fn(),
+      } as unknown as GitHubClient;
+      const git = createPublicationGit({
+        getHeadSha: vi.fn(async () => head),
+        getRemoteBranchSha: vi.fn(async () => remote),
+        isAncestor: vi.fn(async () => true),
+        stageAllExcept: vi.fn(),
+        commit: vi.fn(async () => {
+          head = nextHead;
+        }),
+        getCommitCountBetween: vi.fn(async () => 1),
+        getIndexEntries: vi.fn(async () => ""),
+        getHeadTrackedFiles: vi.fn(async () => []),
+        push: vi.fn(async () => {
+          remote = head;
+        }),
+      });
+      const identity = await getTaskSessionSourceSnapshotIdentity(git, root);
+      const evidence = {
+        currentContentIdentity: identity,
+        validation: null,
+        coverage: null,
+        review: {
+          version: 1 as const,
+          projectId: project.id,
+          cardId: card.id,
+          verdict: "pass" as const,
+          requirementAssessments: [],
+          blockingFindings: [],
+          reviewedContentIdentity: identity,
+        },
+      };
+      const options = {
+        trello: { moveCard: vi.fn(), addComment: vi.fn() } as unknown as TrelloClient,
+        github,
+        git,
+        project,
+        card,
+        worktreePath: root,
+        branch: "agent/card-1",
+        reviewResult: "Passed",
+        remediationResult: "Feedback verified",
+        expectedExistingPullRequestUrl: url,
+      };
+      body = await prepareInitialPublicationBody(options, false, baseHead);
+      await publishTaskSessionCard({
+        ...options,
+        commitMessage: "fix: address feedback",
+        initialEvidence: evidence,
+        verifyPreparedContent: async () => evidence,
+      });
+      expect(remote).toBe(nextHead);
+      expect(body).toContain(`Revision: ${nextHead}`);
+      expect(body).toContain("CI: pending.");
+      expect(github.createPullRequest).not.toHaveBeenCalled();
+      expect(github.ensurePullRequestReady).not.toHaveBeenCalled();
+      expect(options.trello.moveCard).toHaveBeenCalledWith(card.id, project.trello.reviewListId);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it.each([true, false])(
     "refreshes evidence, preserves human text and replaces CI from a previous head (%s)",
     async (newHead) => {

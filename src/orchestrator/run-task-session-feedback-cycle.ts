@@ -1430,7 +1430,6 @@ export async function runTaskSessionFeedbackCycle(
             preparedEvidence.review === null ? "Unavailable" : material ? "Failed" : "Passed",
           reviewDisclosure: material ? preparedEvidence.review : null,
           qualityNeedsDraft: !decideValidatedHumanReviewPublication(preparedEvidence).allowed,
-          readinessEvidence: preparedEvidence,
         };
       },
       verifyPreparedContent: async () => {

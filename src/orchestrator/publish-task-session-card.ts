@@ -347,7 +347,6 @@ export async function publishTaskSessionCard(
         qualityNeedsDraft:
           preparedReviewPublication?.qualityNeedsDraft ??
           !decideValidatedHumanReviewPublication(preparedEvidence).allowed,
-        readinessEvidence: preparedEvidence,
       };
     },
   });
