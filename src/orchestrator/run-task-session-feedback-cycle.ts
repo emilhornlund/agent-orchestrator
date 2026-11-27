@@ -44,8 +44,11 @@ import {
   CommitMessageRecoveryBlockedError,
   runTaskSessionCommitMessage,
 } from "../task-session/run-task-session-commit-message.js";
-import type { TaskSessionValidationResult } from "../task-session/run-task-session-validation.js";
-import { runTaskSessionValidation } from "../task-session/run-task-session-validation.js";
+import {
+  hasLiveTaskSessionCheckEvidence,
+  runTaskSessionValidation,
+  type TaskSessionValidationResult,
+} from "../task-session/run-task-session-validation.js";
 import { runTaskSessionCoverage } from "../task-session/run-task-session-coverage.js";
 import {
   runTaskSessionReview,
@@ -1436,7 +1439,10 @@ export async function runTaskSessionFeedbackCycle(
         signal.throwIfAborted();
         const preparedIdentity = await getTaskSessionSourceSnapshotIdentity(git, worktreePath);
         const canReuseQuality =
-          !resumingReservedRound &&
+          (project.repository.validationCommand === undefined ||
+            hasLiveTaskSessionCheckEvidence(liveQuality.validation, validationOptions)) &&
+          (project.repository.coverageCommand === undefined ||
+            hasLiveTaskSessionCheckEvidence(liveQuality.coverage, validationOptions)) &&
           decideValidatedHumanReviewPublication({
             ...qualityEvidence,
             currentContentIdentity: preparedIdentity,

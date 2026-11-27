@@ -3039,6 +3039,7 @@ describe("task lifecycle through pollProject", () => {
         feedbackBody =
           "A different human request arrived while the original correction was paused.";
         git = new GitClient(runGit);
+        const commandsAtRestart = observedCommands.length;
         for (let pass = 0; pass < 5; pass += 1) {
           await poll();
           if (
@@ -3066,6 +3067,17 @@ describe("task lifecycle through pollProject", () => {
             reviewedSource,
           );
         } else {
+          if (feedbackReviewRecovery === "validation") {
+            const recoveryCommands = observedCommands.slice(commandsAtRestart);
+            expect(
+              recoveryCommands.filter(
+                (command) => command === project.repository.validationCommand,
+              ),
+            ).toHaveLength(1);
+            expect(
+              recoveryCommands.filter((command) => command === project.repository.coverageCommand),
+            ).toHaveLength(1);
+          }
           expect(feedbackReviewDispatches).toHaveLength(1);
           if (reservation !== undefined)
             expect(feedbackReviewDispatches[0]).toEqual({

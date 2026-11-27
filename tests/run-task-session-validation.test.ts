@@ -16,6 +16,7 @@ import {
 } from "../src/process/command-runner.js";
 import { TaskExecutionStore } from "../src/task-session/task-execution-store.js";
 import {
+  hasLiveTaskSessionCheckEvidence,
   restorePersistedTaskSessionQualityEvidence,
   runTaskSessionValidation,
 } from "../src/task-session/run-task-session-validation.js";
@@ -29,6 +30,7 @@ let additionalTemporaryRoots: string[] = [];
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   configureProcessRuntime({
     runtimeRoot: getProcessRuntime().artifactRoot,
     signal: new AbortController().signal,
@@ -153,6 +155,35 @@ function runValidation(
 }
 
 describe("runTaskSessionValidation", () => {
+  it("reuses only locally executed evidence for the same task and effective environment", async () => {
+    const fixture = createFixture();
+    const { project, worktreePath } = fixture;
+    project.taskEnvironment = { NODE_ENV: "VALIDATION_TEST_PROFILE" };
+    vi.stubEnv("VALIDATION_TEST_PROFILE", "test");
+    const scope = {
+      project,
+      worktreePath,
+      cardId: "card-one",
+      expectedBranch: "agent/card-one",
+      operationKey: "implementation-one",
+    };
+    const result = await runValidation(fixture);
+
+    expect(result.status).toBe("passed");
+    expect(hasLiveTaskSessionCheckEvidence(result, scope)).toBe(true);
+    expect(
+      hasLiveTaskSessionCheckEvidence(restorePersistedTaskSessionQualityEvidence(result), scope),
+    ).toBe(false);
+    expect(hasLiveTaskSessionCheckEvidence(result, { ...scope, operationKey: "other-task" })).toBe(
+      false,
+    );
+    vi.stubEnv("VALIDATION_TEST_PROFILE", "another-profile");
+    expect(hasLiveTaskSessionCheckEvidence(result, scope)).toBe(false);
+    vi.stubEnv("VALIDATION_TEST_PROFILE", "test");
+    project.repository.validationCommand = "yarn validate:other";
+    expect(hasLiveTaskSessionCheckEvidence(result, scope)).toBe(false);
+  });
+
   it.each(["validation", "coverage"] as const)(
     "runs actual verbose %s output without mistaking a full summary for an output limit",
     async (gate) => {
