@@ -728,6 +728,11 @@ work in that pass before the step-specific read, including time in the setup sco
 fingerprint checks. `readbackMs` measures the step-specific read itself. Compare these durations
 before changing the poll interval.
 
+Requested-changes publication can reuse validation and coverage that passed in the current worker,
+including checks that ran after recovery. The prepared source, configured commands, task scope and
+effective command environment must match. Evidence restored from disk does not qualify for this
+reuse.
+
 Publication decodes and verifies immutable setup inventories once per matching leased checkpoint. It
 reuses the derived scope across readbacks, rehashes current setup-affected bytes and modes, and
 still checks the live source, index and Git identities. A new authority or changed scope binding
@@ -738,6 +743,11 @@ in `active-pr-observation-health-v1` in the attempt. Each observation has a 90-s
 Failures back off exponentially up to five minutes, with degraded status after two failures. A
 complete, stable observation restores healthy monitoring; partial reads retain previous arrivals and
 cannot cancel the serialized writer. Verified terminal PR outcomes still fence writes.
+
+CI observation reuses successfully read workflow documents for the same revision and base branch in
+a bounded in-memory cache. Each observation still verifies the workflow directory and reads current
+branch protection, workflow runs and jobs, check runs, and commit statuses. Unavailable workflow
+documents are rechecked on later observations.
 
 Credential redaction retains quoted escape boundaries in serialized tool output, including nested
 planning JSON and values split across stream chunks. Intentional review or requested-changes

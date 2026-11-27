@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { actionsJobIdentity, actionsFailureExcerpt } from "./actions-job-diagnostics.js";
 import { containedProcess, observeContainedProcess } from "../process/contained-process.js";
 import { StringDecoder } from "node:string_decoder";
@@ -53,6 +54,8 @@ import {
 } from "./pull-request-status.js";
 
 const GITHUB_TERMINATION_GRACE_MS = 5_000;
+const MAX_CACHED_WORKFLOW_CONTRACTS = 32;
+const MAX_CACHED_CONTRACT_BYTES = 256 * 1024;
 
 export interface CreatePullRequestOptions {
   cwd: string;
@@ -1466,6 +1469,7 @@ export class GitHubClient {
   }
   private readonly credentials: GitHubCredentialProvider;
   private readonly credentialProjects = new WeakMap<GitHubCredential, ProjectConfig>();
+  private readonly workflowContractsByRevision = new Map<string, string>();
 
   constructor(
     private readonly runGitHubCommand: RunGitHubCommand = defaultRunGitHubCommand,
@@ -1823,7 +1827,7 @@ export class GitHubClient {
     }
     if (!Array.isArray(listing) || listing.length >= 1000)
       throw new Error("Workflow directory discovery is incomplete");
-    const documents: { path: string; content: string | null }[] = [];
+    const files: { path: string; type: string; blob: string | null }[] = [];
     for (const entry of listing) {
       if (
         !isRecord(entry) ||
@@ -1835,6 +1839,40 @@ export class GitHubClient {
       if (!/\.ya?ml$/iu.test(entry.name)) continue;
       if (entry.name.includes("/") || entry.path !== `.github/workflows/${entry.name}`)
         throw new Error("Unexpected workflow file path");
+      files.push({
+        path: entry.path,
+        type: entry.type,
+        blob: typeof entry.sha === "string" ? entry.sha : null,
+      });
+    }
+    if (files.length === 0) return [];
+    const baseBranch = options.baseBranch ?? options.defaultBranch;
+    // Keep the directory read live as an access and revision check. Only the
+    // immutable workflow documents in that listing can be reused; live policy,
+    // runs, jobs, check runs and statuses still come from this observation.
+    const cacheKey = createHash("sha256")
+      .update(
+        JSON.stringify([
+          options.repository,
+          options.cwd,
+          options.headSha,
+          baseBranch,
+          this.credentialProjects.get(credential)?.id,
+          credential.mode,
+          buildChildEnvironment("github", credential.environment),
+          files,
+        ]),
+      )
+      .digest("hex");
+    const cached = this.workflowContractsByRevision.get(cacheKey);
+    if (cached !== undefined) {
+      this.workflowContractsByRevision.delete(cacheKey);
+      this.workflowContractsByRevision.set(cacheKey, cached);
+      return JSON.parse(cached) as CiCheckExpectationSource[];
+    }
+
+    const documents: { path: string; content: string | null }[] = [];
+    for (const entry of files) {
       let content: string | null = null;
       if (entry.type === "file") {
         try {
@@ -1860,10 +1898,18 @@ export class GitHubClient {
       }
       documents.push({ path: entry.path, content });
     }
-    return collectCiWorkflowDocumentExpectationSources(
-      documents,
-      options.baseBranch ?? options.defaultBranch,
-    );
+    const sources = collectCiWorkflowDocumentExpectationSources(documents, baseBranch);
+    if (documents.every(({ content }) => content !== null)) {
+      const serialized = JSON.stringify(sources);
+      if (Buffer.byteLength(serialized) <= MAX_CACHED_CONTRACT_BYTES) {
+        if (this.workflowContractsByRevision.size >= MAX_CACHED_WORKFLOW_CONTRACTS)
+          this.workflowContractsByRevision.delete(
+            this.workflowContractsByRevision.keys().next().value!,
+          );
+        this.workflowContractsByRevision.set(cacheKey, serialized);
+      }
+    }
+    return sources;
   }
 
   private async getWorkflowRunJobs(options: {

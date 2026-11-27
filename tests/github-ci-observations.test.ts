@@ -47,6 +47,164 @@ function withWorkflowApi(command: RunGitHubCommand): RunGitHubCommand {
 }
 
 describe("GitHubClient.getCiObservations", () => {
+  it("reads workflow files once while polling current policy, checks and runtime jobs", async () => {
+    const cwd = workingDirectory();
+    const files: Record<string, string> = {
+      "ci.yml": "on: [pull_request]\njobs:\n  build:\n    if: always()\n",
+      "deploy.yml": "on: [push]\njobs:\n  deploy: {}\n",
+      "release.yml": "on: [release]\njobs:\n  release: {}\n",
+    };
+    let completed = false;
+    const run = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
+      const endpoint = args.at(-1)!;
+      const status = completed ? "completed" : "in_progress";
+      const conclusion = completed ? "success" : null;
+      if (endpoint.endsWith(`/contents/.github/workflows?ref=${headSha}`))
+        return JSON.stringify(
+          Object.keys(files).map((name) => ({
+            name,
+            path: `.github/workflows/${name}`,
+            type: "file",
+          })),
+        );
+      if (endpoint.includes("/contents/")) {
+        const name = endpoint.split("?")[0]!.split("/").at(-1)!;
+        return JSON.stringify({
+          encoding: "base64",
+          content: Buffer.from(files[name]!).toString("base64"),
+        });
+      }
+      if (endpoint.includes("/protection/")) return JSON.stringify({ contexts: ["coverage"] });
+      if (endpoint.includes("/check-runs?"))
+        return JSON.stringify([
+          {
+            check_runs: [
+              { id: 1, name: "Build", head_sha: headSha, status, conclusion, html_url: null },
+            ],
+          },
+        ]);
+      if (endpoint.includes("/statuses?"))
+        return JSON.stringify([
+          [
+            {
+              id: 1,
+              context: "coverage",
+              state: completed ? "success" : "pending",
+              created_at: "2026-11-26T22:50:08Z",
+              updated_at: "2026-11-26T22:50:08Z",
+              target_url: null,
+              description: null,
+            },
+          ],
+        ]);
+      if (endpoint.includes("/actions/runs?"))
+        return JSON.stringify([
+          {
+            workflow_runs: [
+              {
+                id: 7,
+                path: ".github/workflows/ci.yml",
+                head_sha: headSha,
+                event: "pull_request",
+                status,
+                pull_requests: [{ number: 123 }],
+              },
+            ],
+          },
+        ]);
+      if (endpoint.includes("/actions/runs/7/jobs?"))
+        return JSON.stringify([{ jobs: [{ name: "Build", status, conclusion }] }]);
+      throw new Error(`Unexpected endpoint: ${endpoint}`);
+    });
+    const github = new GitHubClient(run);
+    const options = {
+      cwd,
+      repository: "owner/repo",
+      headSha,
+      defaultBranch: "main",
+      pullRequestNumber: 123,
+    };
+    const observe = async () => {
+      const current = await github.getCiObservations(options);
+      return evaluateCiChecks({
+        expectedHeadSha: headSha,
+        observedHeadSha: current.headSha,
+        expectations: establishCiCheckExpectations(current.expectationSources),
+        checks: current.checks,
+      });
+    };
+    expect(await observe()).toMatchObject({ status: "uncertain" });
+    const coldRequests = run.mock.calls.length;
+    completed = true;
+    expect(await observe()).toMatchObject({
+      status: "passed",
+      expectedCheckNames: ["Build", "coverage"],
+    });
+    const warmEndpoints = run.mock.calls.slice(coldRequests).map(([, args]) => args.at(-1));
+    expect(coldRequests - warmEndpoints.length).toBe(Object.keys(files).length);
+    expect(warmEndpoints).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("/workflows?ref="),
+        expect.stringContaining("/protection/"),
+        expect.stringContaining("/check-runs?"),
+        expect.stringContaining("/statuses?"),
+        expect.stringContaining("/actions/runs?"),
+        expect.stringContaining("/actions/runs/7/jobs?"),
+      ]),
+    );
+    expect(warmEndpoints.some((endpoint) => endpoint?.includes("/workflows/"))).toBe(false);
+  });
+
+  it("rechecks unreadable files and scopes workflow contracts to the revision, base, and live listing", async () => {
+    const cwd = workingDirectory();
+    let missingFile = true;
+    let directoryDenied = false;
+    const nextHead = "b".repeat(40);
+    const run = vi.fn<RunGitHubCommand>(async (_cwd, args) => {
+      const endpoint = args.at(-1)!;
+      if (endpoint.includes("/protection/")) return JSON.stringify({ contexts: [] });
+      if (endpoint.includes("/check-runs?")) return '[{"check_runs":[]}]';
+      if (endpoint.includes("/statuses?")) return "[[]]";
+      if (endpoint.includes("/workflows?")) {
+        if (directoryDenied) throw new Error("HTTP 403: forbidden");
+        return JSON.stringify([{ name: "ci.yml", path: ".github/workflows/ci.yml", type: "file" }]);
+      }
+      if (endpoint.includes("/workflows/ci.yml?")) {
+        if (missingFile) throw new Error("HTTP 404: file not found");
+        const name = endpoint.endsWith(nextHead) ? "NewBuild" : "Build";
+        const content = Buffer.from(
+          `on:\n  pull_request:\n    branches: [main]\njobs:\n  ${name}: {}\n`,
+        ).toString("base64");
+        return JSON.stringify({ encoding: "base64", content });
+      }
+      throw new Error(`Unexpected endpoint: ${endpoint}`);
+    });
+    const github = new GitHubClient(run);
+    const observe = async (sha = headSha, baseBranch = "main") => {
+      const result = await github.getCiObservations({
+        cwd,
+        repository: "owner/repo",
+        headSha: sha,
+        defaultBranch: "main",
+        baseBranch,
+      });
+      return establishCiCheckExpectations(result.expectationSources);
+    };
+    expect(await observe()).toMatchObject({ status: "uncertain" });
+    missingFile = false;
+    expect(await observe()).toMatchObject({ status: "complete", expectedCheckNames: ["Build"] });
+    expect(await observe(headSha, "release")).toMatchObject({
+      status: "uncertain",
+      expectedCheckNames: [],
+    });
+    expect(await observe(nextHead)).toMatchObject({
+      status: "complete",
+      expectedCheckNames: ["NewBuild"],
+    });
+    directoryDenied = true;
+    expect(await observe()).toMatchObject({ status: "uncertain" });
+  });
+
   it.each([true, false])(
     "connects observed check details to same-head Actions logs only for the owned repository (trusted=%s)",
     async (trusted) => {

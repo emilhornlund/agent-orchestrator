@@ -1,5 +1,7 @@
+import { createHash } from "node:crypto";
 import type { ProjectConfig } from "../config/config.js";
 import type { GitClient } from "../git/git-client.js";
+import { buildChildEnvironment } from "../process/child-environment.js";
 import {
   CommandRunAbortedError,
   CommandRunInterruptedError,
@@ -71,6 +73,47 @@ export interface RunTaskSessionValidationOptions {
   commandLabel?: string;
   secretValues?: readonly string[];
   sessionLogPath?: string;
+}
+
+type ValidationScope = Pick<
+  RunTaskSessionValidationOptions,
+  "project" | "cardId" | "expectedBranch" | "operationKey" | "worktreePath"
+>;
+
+// Execution provenance is process-local. A restored result cannot carry it,
+// and the effective environment is never persisted with a quality result.
+const liveCheckScopes = new WeakMap<TaskSessionValidationResult, string>();
+
+function validationScopeIdentity(scope: ValidationScope): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        scope.project.id,
+        scope.cardId,
+        scope.expectedBranch,
+        scope.operationKey,
+        scope.worktreePath,
+        scope.project.repository.validationCommand,
+        scope.project.repository.coverageCommand,
+        buildChildEnvironment("command", {}, process.env, undefined, scope.project.taskEnvironment),
+      ]),
+    )
+    .digest("hex");
+}
+
+/** Check live execution provenance independently of the configured command and source checks. */
+export function hasLiveTaskSessionCheckEvidence(
+  result: TaskSessionValidationResult,
+  scope: ValidationScope,
+): boolean {
+  const observedScope = liveCheckScopes.get(result);
+  if (observedScope === undefined) return false;
+  try {
+    return observedScope === validationScopeIdentity(scope);
+  } catch {
+    // Fresh execution reports the environment failure through the normal quality path.
+    return false;
+  }
 }
 
 function buildCommandOptions(
@@ -165,6 +208,7 @@ export async function runTaskSessionValidation(
   const startedAt = new Date().toISOString();
 
   try {
+    const scope = validationScopeIdentity(options);
     const result = await options.commands.run(buildCommandOptions(options, command));
     const diagnostic = presentExternalDiagnostic(
       [result.output, result.errorOutput].filter(Boolean).join("\n"),
@@ -172,7 +216,7 @@ export async function runTaskSessionValidation(
     );
     const passed = result.exitCode === 0;
 
-    return {
+    const observation: TaskSessionValidationResult = {
       command,
       startedAt,
       completedAt: new Date().toISOString(),
@@ -183,6 +227,8 @@ export async function runTaskSessionValidation(
       diagnostic,
       contentIdentity,
     };
+    if (passed && !options.signal.aborted) liveCheckScopes.set(observation, scope);
+    return observation;
   } catch (error) {
     const timedOut = error instanceof CommandTimeoutError;
     const aborted = error instanceof CommandRunAbortedError;
